@@ -15,6 +15,7 @@ type Props = {
 type FormState = {
   itemCode: string;
   keyword: string;
+  searchKeywords: string;
   owner: string;
   ctrGoal: string;
   cvrGoal: string;
@@ -27,6 +28,7 @@ type FormState = {
 const blank: FormState = {
   itemCode: "",
   keyword: "",
+  searchKeywords: "",
   owner: "",
   ctrGoal: "5",
   cvrGoal: "5",
@@ -40,6 +42,7 @@ function toForm(row: RppAlertTarget): FormState {
   return {
     itemCode: row.itemCode,
     keyword: row.keyword,
+    searchKeywords: (row.searchKeywords ?? []).join("\n"),
     owner: row.owner,
     ctrGoal: String(row.ctrGoal),
     cvrGoal: String(row.cvrGoal),
@@ -51,7 +54,8 @@ function toForm(row: RppAlertTarget): FormState {
 }
 
 function configuredToForm(row: RppConfiguredTarget): FormState {
-  return { ...blank, itemCode: row.itemCode, keyword: row.keyword, owner: row.owner ?? "" };
+  const defaultSearchKeyword = row.keyword === "商品CPC" ? (row.rppPositionKeyword?.replace("（代表KW）", "") ?? "") : row.keyword;
+  return { ...blank, itemCode: row.itemCode, keyword: row.keyword, searchKeywords: defaultSearchKeyword, owner: row.owner ?? "" };
 }
 
 function positionGoalLabel(goal: RppPositionGoal) {
@@ -195,6 +199,7 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
     try {
       const payload = {
         ...form,
+        searchKeywords: form.searchKeywords.split(/[\n,、]+/).map((kw) => kw.trim()).filter(Boolean),
         ctrGoal: Number(form.ctrGoal),
         cvrGoal: Number(form.cvrGoal),
         roasFloor: Number(form.roasFloor),
@@ -350,7 +355,7 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
                   <span className="metric-wide"><small>検索位置{positionKeyword ? `（${positionKeyword}）` : ""}</small><strong>{position}</strong></span>
                 </div>
                 <div className="product-card-status">
-                  {row ? <small>CTR {row.ctrGoal}% / CVR {row.cvrGoal}% / ROAS最低 {row.roasFloor}%<br />{positionGoalLabel(row.positionGoal)} / {row.policy}</small> : <span className="status-pill approval-held">目標未設定</span>}
+                  {row ? <small>検索調査KW {(row.searchKeywords ?? []).join(" / ") || "未設定"}<br />CTR {row.ctrGoal}% / CVR {row.cvrGoal}% / ROAS最低 {row.roasFloor}%<br />{positionGoalLabel(row.positionGoal)} / {row.policy}</small> : <span className="status-pill approval-held">目標未設定</span>}
                 </div>
                 <div className="approval-actions card-actions">
                   <div className="product-exclusion-action">
@@ -419,8 +424,9 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
         <form className="target-form" onSubmit={saveTarget}>
           <div className="form-row two-cols">
             <label>商品管理番号<input value={form.itemCode} onChange={(e) => patchForm("itemCode", e.target.value)} placeholder="r0606" required /></label>
-            <label>キーワード<input value={form.keyword} onChange={(e) => patchForm("keyword", e.target.value)} placeholder="まな板 / 商品CPC" required /></label>
+            <label>RPP設定KW<input value={form.keyword} onChange={(e) => patchForm("keyword", e.target.value)} placeholder="まな板 / 商品CPC" required /></label>
           </div>
+          <label>検索調査キーワード（複数可・改行/カンマ区切り）<textarea value={form.searchKeywords} onChange={(e) => patchForm("searchKeywords", e.target.value)} placeholder="まな板\nまな板 フチ付き\nかまぼこ型 まな板" /></label>
           <div className="form-row two-cols">
             <label>担当<input value={form.owner} onChange={(e) => patchForm("owner", e.target.value)} placeholder="森下" /></label>
             <label>運用方針
@@ -456,7 +462,7 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
           <ul className="meta-list compact">
             <li><b>対象</b><small>自動調整候補だけでなく、RPP設定中の全商品CPC/キーワードCPC</small></li>
             <li><b>除外ON/OFF</b><small>商品単位でCSV出力。RMS本番反映はCSV確認後に別途実行</small></li>
-            <li><b>検索位置</b><small>「1ページ目にいるか/いないか」を最重要で判定</small></li>
+            <li><b>検索位置</b><small>目標に登録した検索調査KWを全て測定。「1ページ目にいるか/いないか」を最重要で判定</small></li>
             <li><b>担当別保存済み</b><small>{Object.entries(grouped).map(([owner, count]) => `${owner}:${count}`).join(" / ") || "未設定"}</small></li>
           </ul>
         </div>

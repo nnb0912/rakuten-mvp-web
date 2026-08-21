@@ -16,6 +16,7 @@ export type RppAlertTarget = {
   positionGoal: RppPositionGoal;
   policy: RppOperationPolicy;
   note: string;
+  searchKeywords: string[];
   createdAt: string;
   updatedAt: string;
 };
@@ -51,6 +52,7 @@ export type RppAlertTargetInput = {
   positionGoal?: RppPositionGoal;
   policy?: RppOperationPolicy;
   note?: string;
+  searchKeywords?: string[] | string;
 };
 
 const RPP_PROJECT_DIR = process.env.RPP_PROJECT_DIR ?? "/Users/nob/Projects/rpp-8am-notify";
@@ -79,6 +81,14 @@ function optionalNumber(value: unknown) {
   return Number.isFinite(n) && n > 0 ? n : null;
 }
 
+function normalizeSearchKeywords(value: unknown, fallbackKeyword: string) {
+  const raw = Array.isArray(value) ? value.join("\n") : String(value ?? "");
+  const parts = raw.split(/[\n,、]+/).map(cleanText).filter(Boolean);
+  const unique = [...new Set(parts)];
+  if (unique.length) return unique;
+  return fallbackKeyword && fallbackKeyword !== "商品CPC" ? [fallbackKeyword] : [];
+}
+
 export function targetId(itemCode: string, keyword: string) {
   return [itemCode.trim().toLowerCase(), keyword.trim()].map((part) => encodeURIComponent(part)).join("__");
 }
@@ -100,6 +110,7 @@ function normalizeInput(input: RppAlertTargetInput) {
     positionGoal,
     policy,
     note: cleanText(input.note),
+    searchKeywords: normalizeSearchKeywords(input.searchKeywords, keyword),
   };
 }
 
@@ -356,6 +367,7 @@ export async function seedMissingRppAlertTargets(defaults: Partial<RppAlertTarge
     const normalized = normalizeInput({
       itemCode: row.itemCode,
       keyword: row.keyword,
+      searchKeywords: row.keyword === "商品CPC" ? (row.rppPositionKeyword ? row.rppPositionKeyword.replace("（代表KW）", "") : undefined) : row.keyword,
       ...defaults,
     });
     additions.push({ id: row.id, ...normalized, createdAt: now, updatedAt: now });
