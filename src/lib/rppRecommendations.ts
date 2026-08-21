@@ -54,6 +54,7 @@ const APPLY_LOG_PATH = path.join(RPP_PROJECT_DIR, "rpp_apply_logs", "rpp_apply_h
 const RPP_LOG_DIR = path.join(RPP_PROJECT_DIR, "rpp_logs");
 const CHATWORK_LAST_READBACK_PATH = path.join(RPP_LOG_DIR, "chatwork_last_send_readback.json");
 const APPROVAL_PATH = path.join(RECOMMENDATION_DIR, "rpp_auto_approvals.json");
+const SNAPSHOT_RECOMMENDATIONS_PATH = path.join(process.cwd(), "src", "data", "rpp_recommendations_snapshot.json");
 const FRESHNESS_LIMIT_HOURS: Record<string, number> = {
   "rpp_keyword_settings.csv": 24,
   "rpp_item_settings.csv": 24,
@@ -101,10 +102,17 @@ async function writeApprovals(approvals: ApprovalFile) {
 
 export async function readRppRecommendations() {
   const filePath = await latestRecommendationPath();
-  if (!filePath) {
+  let data: RecommendationFile | null = null;
+  if (filePath) {
+    data = JSON.parse(await fs.readFile(filePath, "utf8")) as RecommendationFile;
+  } else {
+    try {
+      data = JSON.parse(await fs.readFile(SNAPSHOT_RECOMMENDATIONS_PATH, "utf8")) as RecommendationFile;
+    } catch {}
+  }
+  if (!data) {
     return { filePath: null, summary: null, recommendations: [] as RppRecommendationWithApproval[] };
   }
-  const data = JSON.parse(await fs.readFile(filePath, "utf8")) as RecommendationFile;
   const approvals = await readApprovals();
   const recommendations = data.recommendations.map((row) => {
     const id = recommendationId(row);

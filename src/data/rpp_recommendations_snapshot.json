@@ -1,0 +1,463 @@
+{
+  "summary": {
+    "generatedAt": "2026-08-20T23:56:38.052Z",
+    "settingsRows": 256,
+    "activeRows": 19,
+    "excludedRows": 237,
+    "performanceRows": 14,
+    "roasBar": 500,
+    "counts": {
+      "raise": 0,
+      "lower": 0,
+      "hold": 13,
+      "ok": 6
+    },
+    "safety": {
+      "floorCpc": 40,
+      "maxRaise": 20,
+      "maxLower": 10,
+      "productionChange": false,
+      "dataFreshness": {
+        "readyForProduction": true,
+        "files": [
+          {
+            "fileName": "rpp_keyword_settings.csv",
+            "filePath": "/Users/nob/Projects/rpp-8am-notify/rpp_keyword_settings.csv",
+            "ok": true,
+            "status": "ok",
+            "ageHours": 0.07284427252875433,
+            "maxAgeHours": 24,
+            "mtime": "2026-08-20T23:52:15.813Z"
+          },
+          {
+            "fileName": "rpp_item_settings.csv",
+            "filePath": "/Users/nob/Projects/rpp-8am-notify/rpp_item_settings.csv",
+            "ok": true,
+            "status": "ok",
+            "ageHours": 0.07848396484375,
+            "maxAgeHours": 24,
+            "mtime": "2026-08-20T23:51:55.510Z"
+          },
+          {
+            "fileName": "rpp_exclude_items.csv",
+            "filePath": "/Users/nob/Projects/rpp-8am-notify/rpp_exclude_items.csv",
+            "ok": true,
+            "status": "ok",
+            "ageHours": 0.06360701009114583,
+            "maxAgeHours": 24,
+            "mtime": "2026-08-20T23:52:49.067Z"
+          },
+          {
+            "fileName": "rpp_keyword_reports.csv",
+            "filePath": "/Users/nob/Projects/rpp-8am-notify/rpp_keyword_reports.csv",
+            "ok": true,
+            "status": "ok",
+            "ageHours": 0.09452752977159289,
+            "maxAgeHours": 36,
+            "mtime": "2026-08-20T23:50:57.753Z"
+          },
+          {
+            "fileName": "rpp_position_adjustment_log.json",
+            "filePath": "/Users/nob/Projects/rpp-8am-notify/rpp_position_adjustment_log.json",
+            "ok": true,
+            "status": "ok",
+            "ageHours": 0.0006316808403862847,
+            "maxAgeHours": 24,
+            "mtime": "2026-08-20T23:56:35.778Z"
+          }
+        ]
+      }
+    }
+  },
+  "recommendations": [
+    {
+      "date": "2026-08-20T23:56:38.051Z",
+      "itemCode": "y0662",
+      "itemName": "デスクライト",
+      "keyword": "デスクライト",
+      "direction": "up",
+      "action": "HOLD",
+      "currentCpc": 43,
+      "meyasuCpc": 44,
+      "proposedCpc": null,
+      "delta": null,
+      "source": "キーワードCPC",
+      "clicks": 44,
+      "spend": 3332,
+      "salesAmount": 13520,
+      "roas": 405.76,
+      "cvr": 9.09,
+      "rppPosition": "未測定",
+      "reasons": [
+        "目安CPC未満（43円 < 44円）",
+        "順位 未測定",
+        "クリック44 / ROAS406% / CVR9.09% / 売上13,520円"
+      ],
+      "blocks": [
+        "ROAS基準未満（406% < 500%）",
+        "順位未測定"
+      ],
+      "uploadReady": false,
+      "note": "Phase1: 提案のみ。RMS反映なし。"
+    },
+    {
+      "date": "2026-08-20T23:56:38.051Z",
+      "itemCode": "r0606",
+      "itemName": "まな板",
+      "keyword": "まな板",
+      "direction": "up",
+      "action": "HOLD",
+      "currentCpc": 40,
+      "meyasuCpc": 61,
+      "proposedCpc": null,
+      "delta": null,
+      "source": "キーワードCPC",
+      "clicks": 36,
+      "spend": 2576,
+      "salesAmount": 9020,
+      "roas": 350.15,
+      "cvr": 11.11,
+      "rppPosition": "PC 5位 / SP 5位",
+      "reasons": [
+        "目安CPC未満（40円 < 61円）",
+        "順位 PC 5位 / SP 5位",
+        "クリック36 / ROAS350% / CVR11.11% / 売上9,020円"
+      ],
+      "blocks": [
+        "ROAS基準未満（350% < 500%）",
+        "RPP順位は1ページ目内"
+      ],
+      "uploadReady": false,
+      "note": "Phase1: 提案のみ。RMS反映なし。"
+    },
+    {
+      "date": "2026-08-20T23:56:38.051Z",
+      "itemCode": "r0331",
+      "itemName": "冷蔵庫マット",
+      "keyword": "冷蔵庫マット",
+      "direction": "up",
+      "action": "HOLD",
+      "currentCpc": 40,
+      "meyasuCpc": 105,
+      "proposedCpc": null,
+      "delta": null,
+      "source": "キーワードCPC",
+      "clicks": 28,
+      "spend": 2128,
+      "salesAmount": 13120,
+      "roas": 616.54,
+      "cvr": 14.28,
+      "rppPosition": "未測定",
+      "reasons": [
+        "目安CPC未満（40円 < 105円）",
+        "順位 未測定",
+        "クリック28 / ROAS617% / CVR14.28% / 売上13,120円"
+      ],
+      "blocks": [
+        "順位未測定"
+      ],
+      "uploadReady": false,
+      "note": "Phase1: 提案のみ。RMS反映なし。"
+    },
+    {
+      "date": "2026-08-20T23:56:38.051Z",
+      "itemCode": "r0573",
+      "itemName": "糸糸[いとし]のタオル",
+      "keyword": "バスタオル",
+      "direction": "up",
+      "action": "HOLD",
+      "currentCpc": 40,
+      "meyasuCpc": 179,
+      "proposedCpc": null,
+      "delta": null,
+      "source": "キーワードCPC",
+      "clicks": 22,
+      "spend": 1760,
+      "salesAmount": 4960,
+      "roas": 281.81,
+      "cvr": 4.54,
+      "rppPosition": "未測定",
+      "reasons": [
+        "目安CPC未満（40円 < 179円）",
+        "順位 未測定",
+        "クリック22 / ROAS282% / CVR4.54% / 売上4,960円"
+      ],
+      "blocks": [
+        "ROAS基準未満（282% < 500%）",
+        "CVR低め（4.54%）",
+        "順位未測定"
+      ],
+      "uploadReady": false,
+      "note": "Phase1: 提案のみ。RMS反映なし。"
+    },
+    {
+      "date": "2026-08-20T23:56:38.051Z",
+      "itemCode": "r0550",
+      "itemName": "ブラケットライト",
+      "keyword": "ブラケットライト",
+      "direction": "up",
+      "action": "HOLD",
+      "currentCpc": 43,
+      "meyasuCpc": 47,
+      "proposedCpc": null,
+      "delta": null,
+      "source": "キーワードCPC",
+      "clicks": 11,
+      "spend": 829,
+      "salesAmount": 3480,
+      "roas": 419.78,
+      "cvr": 9.09,
+      "rppPosition": "PC 5位 / SP 5位",
+      "reasons": [
+        "目安CPC未満（43円 < 47円）",
+        "順位 PC 5位 / SP 5位",
+        "クリック11 / ROAS420% / CVR9.09% / 売上3,480円"
+      ],
+      "blocks": [
+        "ROAS基準未満（420% < 500%）",
+        "RPP順位は1ページ目内"
+      ],
+      "uploadReady": false,
+      "note": "Phase1: 提案のみ。RMS反映なし。"
+    },
+    {
+      "date": "2026-08-20T23:56:38.051Z",
+      "itemCode": "r0573",
+      "itemName": "糸糸[いとし]のタオル",
+      "keyword": "タオル",
+      "direction": "up",
+      "action": "HOLD",
+      "currentCpc": 40,
+      "meyasuCpc": 334,
+      "proposedCpc": null,
+      "delta": null,
+      "source": "キーワードCPC",
+      "clicks": 5,
+      "spend": 400,
+      "salesAmount": 0,
+      "roas": 0,
+      "cvr": 0,
+      "rppPosition": "未測定",
+      "reasons": [
+        "目安CPC未満（40円 < 334円）",
+        "順位 未測定",
+        "クリック5 / ROAS0% / CVR0% / 売上0円"
+      ],
+      "blocks": [
+        "ROAS基準未満（0% < 500%）",
+        "CVR低め（0%）",
+        "順位未測定"
+      ],
+      "uploadReady": false,
+      "note": "Phase1: 提案のみ。RMS反映なし。"
+    },
+    {
+      "date": "2026-08-20T23:56:38.051Z",
+      "itemCode": "r0614",
+      "itemName": "水切りスタンド",
+      "keyword": "水切りラック 伸縮",
+      "direction": "up",
+      "action": "HOLD",
+      "currentCpc": 45,
+      "meyasuCpc": 48,
+      "proposedCpc": null,
+      "delta": null,
+      "source": "キーワードCPC",
+      "clicks": 4,
+      "spend": 360,
+      "salesAmount": 4980,
+      "roas": 1383.33,
+      "cvr": 25,
+      "rppPosition": "未測定",
+      "reasons": [
+        "目安CPC未満（45円 < 48円）",
+        "順位 未測定",
+        "クリック4 / ROAS1383% / CVR25% / 売上4,980円"
+      ],
+      "blocks": [
+        "クリック少（4）",
+        "順位未測定"
+      ],
+      "uploadReady": false,
+      "note": "Phase1: 提案のみ。RMS反映なし。"
+    },
+    {
+      "date": "2026-08-20T23:56:38.051Z",
+      "itemCode": "r0681",
+      "itemName": "調味料ラック",
+      "keyword": "キッチン 収納 調味料",
+      "direction": "up",
+      "action": "HOLD",
+      "currentCpc": 50,
+      "meyasuCpc": 66,
+      "proposedCpc": null,
+      "delta": null,
+      "source": "キーワードCPC",
+      "clicks": 2,
+      "spend": 142,
+      "salesAmount": 0,
+      "roas": 0,
+      "cvr": 0,
+      "rppPosition": "PC 4位 / SP 4位",
+      "reasons": [
+        "目安CPC未満（50円 < 66円）",
+        "順位 PC 4位 / SP 4位",
+        "クリック2 / ROAS0% / CVR0% / 売上0円"
+      ],
+      "blocks": [
+        "クリック少（2）",
+        "ROAS基準未満（0% < 500%）",
+        "CVR低め（0%）",
+        "RPP順位は1ページ目内"
+      ],
+      "uploadReady": false,
+      "note": "Phase1: 提案のみ。RMS反映なし。"
+    },
+    {
+      "date": "2026-08-20T23:56:38.051Z",
+      "itemCode": "r0887",
+      "itemName": "ミニシーラー",
+      "keyword": "シーラー ハンディタイプ",
+      "direction": "up",
+      "action": "HOLD",
+      "currentCpc": 40,
+      "meyasuCpc": 109,
+      "proposedCpc": null,
+      "delta": null,
+      "source": "キーワードCPC",
+      "clicks": 1,
+      "spend": 80,
+      "salesAmount": 0,
+      "roas": 0,
+      "cvr": 0,
+      "rppPosition": "未測定",
+      "reasons": [
+        "目安CPC未満（40円 < 109円）",
+        "順位 未測定",
+        "クリック1 / ROAS0% / CVR0% / 売上0円"
+      ],
+      "blocks": [
+        "クリック少（1）",
+        "ROAS基準未満（0% < 500%）",
+        "CVR低め（0%）",
+        "順位未測定"
+      ],
+      "uploadReady": false,
+      "note": "Phase1: 提案のみ。RMS反映なし。"
+    },
+    {
+      "date": "2026-08-20T23:56:38.051Z",
+      "itemCode": "r0614",
+      "itemName": "水切りスタンド",
+      "keyword": "水切りラック",
+      "direction": "up",
+      "action": "HOLD",
+      "currentCpc": 40,
+      "meyasuCpc": 1051,
+      "proposedCpc": null,
+      "delta": null,
+      "source": "キーワードCPC",
+      "clicks": null,
+      "spend": null,
+      "salesAmount": null,
+      "roas": null,
+      "cvr": null,
+      "rppPosition": "未測定",
+      "reasons": [
+        "目安CPC未満（40円 < 1051円）",
+        "順位 未測定"
+      ],
+      "blocks": [
+        "前日レポートに該当KWなし",
+        "順位未測定"
+      ],
+      "uploadReady": false,
+      "note": "Phase1: 提案のみ。RMS反映なし。"
+    },
+    {
+      "date": "2026-08-20T23:56:38.051Z",
+      "itemCode": "r0681",
+      "itemName": "調味料ラック",
+      "keyword": "キッチン 調味料ラック 収納",
+      "direction": "up",
+      "action": "HOLD",
+      "currentCpc": 40,
+      "meyasuCpc": 115,
+      "proposedCpc": null,
+      "delta": null,
+      "source": "キーワードCPC",
+      "clicks": null,
+      "spend": null,
+      "salesAmount": null,
+      "roas": null,
+      "cvr": null,
+      "rppPosition": "PC 1ページ目にいない / SP 1ページ目にいない",
+      "reasons": [
+        "目安CPC未満（40円 < 115円）",
+        "順位 PC 1ページ目にいない / SP 1ページ目にいない"
+      ],
+      "blocks": [
+        "前日レポートに該当KWなし"
+      ],
+      "uploadReady": false,
+      "note": "Phase1: 提案のみ。RMS反映なし。"
+    },
+    {
+      "date": "2026-08-20T23:56:38.051Z",
+      "itemCode": "r0614",
+      "itemName": "水切りスタンド",
+      "keyword": "水切りラック シンク上 ステンレス",
+      "direction": "up",
+      "action": "HOLD",
+      "currentCpc": 40,
+      "meyasuCpc": 81,
+      "proposedCpc": null,
+      "delta": null,
+      "source": "キーワードCPC",
+      "clicks": null,
+      "spend": null,
+      "salesAmount": null,
+      "roas": null,
+      "cvr": null,
+      "rppPosition": "未測定",
+      "reasons": [
+        "目安CPC未満（40円 < 81円）",
+        "順位 未測定"
+      ],
+      "blocks": [
+        "前日レポートに該当KWなし",
+        "順位未測定"
+      ],
+      "uploadReady": false,
+      "note": "Phase1: 提案のみ。RMS反映なし。"
+    },
+    {
+      "date": "2026-08-20T23:56:38.051Z",
+      "itemCode": "r0867",
+      "itemName": "アイスボールタンブラー",
+      "keyword": "アイスボール シリコン",
+      "direction": "down",
+      "action": "HOLD",
+      "currentCpc": 45,
+      "meyasuCpc": 40,
+      "proposedCpc": null,
+      "delta": null,
+      "source": "キーワードCPC",
+      "clicks": null,
+      "spend": null,
+      "salesAmount": null,
+      "roas": null,
+      "cvr": null,
+      "rppPosition": "PC 1位 / SP 1位",
+      "reasons": [
+        "目安CPC超え（45円 > 40円）",
+        "順位 PC 1位 / SP 1位"
+      ],
+      "blocks": [
+        "前日レポートに該当KWなし"
+      ],
+      "uploadReady": false,
+      "note": "Phase1: 提案のみ。RMS反映なし。"
+    }
+  ]
+}
