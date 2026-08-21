@@ -101,6 +101,8 @@ small { color: var(--muted); line-height: 1.45; }
 .owner-card-head span, .owner-mini-pill { border-radius: 999px; background: #f2f4f7; color: #475467; padding: 4px 9px; font-size: 12px; font-weight: 800; white-space: nowrap; }
 .owner-card-metrics, .product-card-metrics { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin: 10px 0; }
 .owner-card-metrics span, .product-card-metrics span { background: #f9fafb; border: 1px solid var(--border); border-radius: 12px; padding: 8px; display: grid; gap: 2px; }
+.product-card-metrics .metric-wide { grid-column: 1 / -1; }
+.product-card-metrics .metric-wide strong { font-size: 14px; }
 .owner-card-metrics strong, .product-card-metrics strong { font-size: 15px; }
 .product-card-panel { margin-top: 18px; }
 .product-card-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }

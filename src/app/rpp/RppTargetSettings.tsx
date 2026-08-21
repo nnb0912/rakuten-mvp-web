@@ -94,9 +94,9 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
   }, {}), [targets]);
   const recommendationMap = useMemo(() => new Map(recommendations.map((row) => [metricKey(row.itemCode, row.keyword), row])), [recommendations]);
   const ownerStats = useMemo(() => {
-    const stats = new Map<string, { owner: string; configured: number; saved: number; missing: number; spend: number; clicks: number; sales: number; approved: number; pending: number }>();
+    const stats = new Map<string, { owner: string; configured: number; saved: number; missing: number; spend: number; clicks: number; sales: number; approved: number; pending: number; firstPage: number; outsidePage: number; unmeasured: number }>();
     const ensure = (owner: string) => {
-      if (!stats.has(owner)) stats.set(owner, { owner, configured: 0, saved: 0, missing: 0, spend: 0, clicks: 0, sales: 0, approved: 0, pending: 0 });
+      if (!stats.has(owner)) stats.set(owner, { owner, configured: 0, saved: 0, missing: 0, spend: 0, clicks: 0, sales: 0, approved: 0, pending: 0, firstPage: 0, outsidePage: 0, unmeasured: 0 });
       return stats.get(owner)!;
     };
     for (const cfg of configuredTargets) {
@@ -112,6 +112,11 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
       stat.sales += rec?.salesAmount ?? 0;
       stat.approved += rec?.approvalStatus === "approved" ? 1 : 0;
       stat.pending += rec?.approvalStatus === "pending" ? 1 : 0;
+      if (rec?.rppPosition) {
+        if (rec.rppPosition.includes("未測定")) stat.unmeasured += 1;
+        else if (rec.rppPosition.includes("いない")) stat.outsidePage += 1;
+        else stat.firstPage += 1;
+      }
     }
     for (const row of targets) ensure(row.owner || "担当未設定");
     return [...stats.values()].sort((a, b) => (a.owner === "担当未設定" ? -1 : b.owner === "担当未設定" ? 1 : a.owner.localeCompare(b.owner, "ja")));
@@ -282,6 +287,7 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
                   <span><small>ROAS</small><strong>{roas == null ? "-" : `${roas}%`}</strong></span>
                 </div>
                 <small>保存 {row.saved} / 未設定 {row.missing} / 承認 {row.approved} / 未判断 {row.pending}</small>
+                <small>検索位置 1P内 {row.firstPage} / 1P外 {row.outsidePage} / 未測定 {row.unmeasured}</small>
               </button>
             );
           })}
@@ -319,6 +325,7 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
                   <span><small>クリック</small><strong>{(rec?.clicks ?? 0).toLocaleString("ja-JP")}</strong></span>
                   <span><small>売上</small><strong>{yenNumber(rec?.salesAmount ?? 0)}</strong></span>
                   <span><small>ROAS</small><strong>{roas == null ? "-" : `${Math.round(roas)}%`}</strong></span>
+                  <span className="metric-wide"><small>検索位置</small><strong>{rec?.rppPosition || "未測定"}</strong></span>
                 </div>
                 <div className="product-card-status">
                   {row ? <small>CTR {row.ctrGoal}% / CVR {row.cvrGoal}% / ROAS最低 {row.roasFloor}%<br />{positionGoalLabel(row.positionGoal)} / {row.policy}</small> : <span className="status-pill approval-held">目標未設定</span>}
