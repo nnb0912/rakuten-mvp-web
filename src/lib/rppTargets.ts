@@ -205,6 +205,12 @@ export async function readRppConfiguredTargets() {
   const liveRows = [...configured.values()].sort((a, b) => a.itemCode.localeCompare(b.itemCode, "ja") || a.keyword.localeCompare(b.keyword, "ja"));
   if (liveRows.length) return liveRows;
   try {
+    const envTargets = process.env.RPP_CONFIGURED_TARGETS_JSON;
+    if (envTargets) {
+      const snapshot = JSON.parse(envTargets) as { targets?: RppConfiguredTarget[] } | RppConfiguredTarget[];
+      const rows = Array.isArray(snapshot) ? snapshot : snapshot.targets ?? [];
+      return rows.sort((a, b) => a.itemCode.localeCompare(b.itemCode, "ja") || a.keyword.localeCompare(b.keyword, "ja"));
+    }
     const snapshot = JSON.parse(await fs.readFile(SNAPSHOT_TARGETS_PATH, "utf8")) as { targets?: RppConfiguredTarget[] };
     return (snapshot.targets ?? []).sort((a, b) => a.itemCode.localeCompare(b.itemCode, "ja") || a.keyword.localeCompare(b.keyword, "ja"));
   } catch {
