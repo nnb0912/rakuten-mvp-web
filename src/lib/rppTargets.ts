@@ -163,6 +163,23 @@ async function readOwnerMap(): Promise<Record<string, string>> {
   }
 }
 
+async function readConfiguredPositionMap(): Promise<Record<string, { rppPosition?: string; rppPositionKeyword?: string }>> {
+  try {
+    const raw = JSON.parse(await fs.readFile(SNAPSHOT_TARGETS_PATH, "utf8"));
+    const rows = Array.isArray(raw) ? raw : raw.targets || [];
+    const map: Record<string, { rppPosition?: string; rppPositionKeyword?: string }> = {};
+    for (const row of rows) {
+      if (row.id && (row.rppPosition || row.rppPositionKeyword)) {
+        map[row.id] = { rppPosition: row.rppPosition, rppPositionKeyword: row.rppPositionKeyword };
+      }
+    }
+    return map;
+  } catch {
+    return {};
+  }
+}
+
+
 async function readRawTargets(): Promise<RppAlertTarget[]> {
   try {
     const raw = JSON.parse(await fs.readFile(TARGETS_PATH, "utf8")) as unknown;
@@ -184,7 +201,7 @@ async function writeRawTargets(targets: RppAlertTarget[]) {
 }
 
 export async function readRppConfiguredTargets() {
-  const [itemRows, ownerMap] = await Promise.all([readCsv(ITEM_SETTINGS_PATH), readOwnerMap()]);
+  const [itemRows, ownerMap, positionMap] = await Promise.all([readCsv(ITEM_SETTINGS_PATH), readOwnerMap(), readConfiguredPositionMap()]);
   const activeItems = new Map<string, { itemName: string; itemCpc: number | null; owner: string }>();
   for (const row of itemRows) {
     const itemCode = cleanText(row["商品管理番号"]).toLowerCase();
@@ -197,8 +214,9 @@ export async function readRppConfiguredTargets() {
   const configured = new Map<string, RppConfiguredTarget>();
   for (const [itemCode, item] of activeItems) {
     const keyword = "商品CPC";
-    configured.set(targetId(itemCode, keyword), {
-      id: targetId(itemCode, keyword),
+    const id = targetId(itemCode, keyword);
+    configured.set(id, {
+      id,
       itemCode,
       itemName: item.itemName,
       keyword,
@@ -206,6 +224,7 @@ export async function readRppConfiguredTargets() {
       keywordCpc: null,
       source: "商品CPC",
       owner: item.owner,
+      ...positionMap[id],
     });
   }
 
@@ -216,8 +235,9 @@ export async function readRppConfiguredTargets() {
     const keyword = cleanText(row["キーワード"]);
     const keywordCpc = optionalNumber(row["キーワードCPC"]);
     if (!item || !keyword || !keywordCpc) continue;
-    configured.set(targetId(itemCode, keyword), {
-      id: targetId(itemCode, keyword),
+    const id = targetId(itemCode, keyword);
+    configured.set(id, {
+      id,
       itemCode,
       itemName: item.itemName || cleanText(row["商品名"]),
       keyword,
@@ -225,6 +245,7 @@ export async function readRppConfiguredTargets() {
       keywordCpc,
       source: "キーワードCPC",
       owner: item.owner,
+      ...positionMap[id],
     });
   }
 
