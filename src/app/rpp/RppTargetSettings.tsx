@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useRef, useState, type FormEvent } from "react";
+import { useMemo, useState, type FormEvent } from "react";
 import configuredTargetsSnapshot from "@/data/rpp_configured_targets.json";
 import type { RppRecommendationWithApproval } from "@/lib/rppRecommendations";
 import type { RppAlertTarget, RppConfiguredTarget, RppExclusionProduct, RppOperationPolicy, RppPositionGoal } from "@/lib/rppTargets";
@@ -84,7 +84,6 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
   const [message, setMessage] = useState<string | null>(null);
   const [excludeFilter, setExcludeFilter] = useState<"active" | "excluded" | "all">("active");
   const [ownerFilter, setOwnerFilter] = useState("全て");
-  const productSectionRef = useRef<HTMLElement | null>(null);
   const [exclusionOverrides, setExclusionOverrides] = useState<Record<string, boolean>>({});
 
   const targetMap = useMemo(() => new Map(targets.map((row) => [row.id, row])), [targets]);
@@ -131,6 +130,7 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
   const filteredConfiguredTargets = ownerFilter === "全て"
     ? configuredTargets
     : configuredTargets.filter((cfg) => (targetMap.get(cfg.id)?.owner || cfg.owner || "担当未設定") === ownerFilter);
+  const visibleOwnerStats = ownerFilter === "全て" ? ownerStats : ownerStats.filter((row) => row.owner === ownerFilter);
 
   const exclusionRows = useMemo(() => exclusionProducts.map((row) => ({
     ...row,
@@ -145,10 +145,6 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
 
   function selectOwnerFilter(owner: string) {
     setOwnerFilter(owner);
-    window.setTimeout(() => {
-      const target = productSectionRef.current ?? document.querySelector<HTMLElement>(".product-card-panel");
-      target?.scrollIntoView({ behavior: "smooth", block: "start" });
-    }, 50);
   }
 
   function patchForm<K extends keyof FormState>(key: K, value: FormState[K]) {
@@ -266,8 +262,8 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
       <section className="panel owner-panel">
         <div className="section-heading">
           <div>
-            <h2>担当者別</h2>
-            <p>担当ごとにタブ分けし、設定数・未設定・直近レポート内の広告費/クリック/売上を確認できます。</p>
+            <h2>担当者別タブ</h2>
+            <p>担当を押すと画面遷移/スクロールせず、この場で担当別の集計カードと商品カードに切り替わります。</p>
           </div>
         </div>
         <div className="owner-tabs">
@@ -278,8 +274,8 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
             </button>
           ))}
         </div>
-        <div className="owner-card-grid">
-          {ownerStats.map((row) => {
+        <div className={ownerFilter === "全て" ? "owner-card-grid" : "owner-card-grid owner-card-grid-single"}>
+          {visibleOwnerStats.map((row) => {
             const roas = row.spend > 0 ? Math.round((row.sales / row.spend) * 100) : null;
             return (
               <button className={ownerFilter === row.owner ? "owner-card active" : "owner-card"} key={row.owner} type="button" onClick={() => selectOwnerFilter(row.owner)}>
@@ -301,11 +297,11 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
         </div>
       </section>
 
-      <section className="panel product-card-panel" ref={productSectionRef}>
+      <section className="panel product-card-panel">
         <div className="section-heading">
           <div>
             <h2>{ownerFilter === "全て" ? "商品/KW別カード" : `${ownerFilter}の商品/KW`}</h2>
-            <p>担当者タブまたは担当者カードを押すと、ここが担当商品だけに絞り込まれます。</p>
+            <p>担当タブに合わせて、この一覧だけが切り替わります。</p>
           </div>
           <span className="status-pill status-hold">表示 {filteredConfiguredTargets.length}件</span>
         </div>

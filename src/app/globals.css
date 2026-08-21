@@ -94,6 +94,8 @@ small { color: var(--muted); line-height: 1.45; }
 .owner-tab small { color: inherit; opacity: .75; }
 .owner-tab.active { background: #172033; color: #fff; border-color: #172033; }
 .owner-card-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.owner-card-grid-single { grid-template-columns: minmax(0, 1fr); }
+.owner-card-grid-single .owner-card { border-color: #172033; background: #fbfcff; }
 .owner-card, .product-card { border: 1px solid var(--border); border-radius: 16px; background: #fff; padding: 14px; text-align: left; box-shadow: 0 1px 2px rgba(16, 24, 40, .04); }
 .owner-card { cursor: pointer; font: inherit; color: inherit; }
 .owner-card.active { border-color: #172033; box-shadow: 0 0 0 2px rgba(23, 32, 51, .12); }
