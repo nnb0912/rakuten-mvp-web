@@ -73,7 +73,7 @@ export default async function RppPage() {
           </div>
           <a className="text-link" href="/api/rpp/targets">Targets API</a>
         </div>
-        <RppTargetSettings initialTargets={targetData.targets} configuredTargets={targetData.configuredTargets} exclusionProducts={targetData.exclusionProducts} />
+        <RppTargetSettings initialTargets={targetData.targets} configuredTargets={targetData.configuredTargets} exclusionProducts={targetData.exclusionProducts} recommendations={data.recommendations} />
       </section>
 
       <section className="panel cron-panel">

@@ -88,6 +88,12 @@ small { color: var(--muted); line-height: 1.45; }
 .freshness-古い { background: #fff4ed; color: #b54708; }
 .freshness-未取得 { background: #fef3f2; color: #b42318; }
 .target-panel { margin-bottom: 16px; }
+.owner-panel { margin: 18px 0; }
+.owner-tabs { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 14px; }
+.owner-tab { border: 1px solid var(--border); border-radius: 999px; background: #fff; padding: 10px 14px; font-weight: 800; cursor: pointer; display: inline-flex; gap: 8px; align-items: center; }
+.owner-tab small { color: inherit; opacity: .75; }
+.owner-tab.active { background: #172033; color: #fff; border-color: #172033; }
+.owner-stats-table th:first-child, .owner-stats-table td:first-child { width: 16%; }
 .exclusion-panel { margin: 18px 0; }
 .compact-button { margin: 0; }
 .target-summary-cards { grid-template-columns: repeat(4, minmax(0, 1fr)); }

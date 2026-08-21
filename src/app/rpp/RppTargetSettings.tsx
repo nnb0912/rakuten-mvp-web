@@ -1,12 +1,14 @@
 "use client";
 
 import { useMemo, useState, type FormEvent } from "react";
+import type { RppRecommendationWithApproval } from "@/lib/rppRecommendations";
 import type { RppAlertTarget, RppConfiguredTarget, RppExclusionProduct, RppOperationPolicy, RppPositionGoal } from "@/lib/rppTargets";
 
 type Props = {
   initialTargets: RppAlertTarget[];
   configuredTargets: RppConfiguredTarget[];
   exclusionProducts: RppExclusionProduct[];
+  recommendations: RppRecommendationWithApproval[];
 };
 
 type FormState = {
@@ -61,17 +63,26 @@ function yen(value: number | null) {
   return value == null ? "-" : `${value.toLocaleString("ja-JP")}円`;
 }
 
+function yenNumber(value: number) {
+  return `${Math.round(value).toLocaleString("ja-JP")}円`;
+}
+
+function metricKey(itemCode: string, keyword: string) {
+  return `${itemCode.trim().toLowerCase()}__${keyword.trim()}`;
+}
+
 function csvCell(value: string) {
   return `"${value.replaceAll('"', '""')}"`;
 }
 
-export default function RppTargetSettings({ initialTargets, configuredTargets, exclusionProducts }: Props) {
+export default function RppTargetSettings({ initialTargets, configuredTargets, exclusionProducts, recommendations }: Props) {
   const [targets, setTargets] = useState(initialTargets);
   const [form, setForm] = useState<FormState>(blank);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [excludeFilter, setExcludeFilter] = useState<"active" | "excluded" | "all">("active");
+  const [ownerFilter, setOwnerFilter] = useState("全て");
   const [exclusionOverrides, setExclusionOverrides] = useState<Record<string, boolean>>({});
 
   const targetMap = useMemo(() => new Map(targets.map((row) => [row.id, row])), [targets]);
@@ -80,6 +91,33 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
     acc[row.owner || "担当未設定"] = (acc[row.owner || "担当未設定"] ?? 0) + 1;
     return acc;
   }, {}), [targets]);
+  const recommendationMap = useMemo(() => new Map(recommendations.map((row) => [metricKey(row.itemCode, row.keyword), row])), [recommendations]);
+  const ownerStats = useMemo(() => {
+    const stats = new Map<string, { owner: string; configured: number; saved: number; missing: number; spend: number; clicks: number; sales: number; approved: number; pending: number }>();
+    const ensure = (owner: string) => {
+      if (!stats.has(owner)) stats.set(owner, { owner, configured: 0, saved: 0, missing: 0, spend: 0, clicks: 0, sales: 0, approved: 0, pending: 0 });
+      return stats.get(owner)!;
+    };
+    for (const cfg of configuredTargets) {
+      const saved = targetMap.get(cfg.id);
+      const owner = saved?.owner || "担当未設定";
+      const stat = ensure(owner);
+      const rec = recommendationMap.get(metricKey(cfg.itemCode, cfg.keyword));
+      stat.configured += 1;
+      stat.saved += saved ? 1 : 0;
+      stat.missing += saved ? 0 : 1;
+      stat.spend += rec?.spend ?? 0;
+      stat.clicks += rec?.clicks ?? 0;
+      stat.sales += rec?.salesAmount ?? 0;
+      stat.approved += rec?.approvalStatus === "approved" ? 1 : 0;
+      stat.pending += rec?.approvalStatus === "pending" ? 1 : 0;
+    }
+    for (const row of targets) ensure(row.owner || "担当未設定");
+    return [...stats.values()].sort((a, b) => (a.owner === "担当未設定" ? -1 : b.owner === "担当未設定" ? 1 : a.owner.localeCompare(b.owner, "ja")));
+  }, [configuredTargets, recommendationMap, targetMap, targets]);
+  const filteredConfiguredTargets = ownerFilter === "全て"
+    ? configuredTargets
+    : configuredTargets.filter((cfg) => (targetMap.get(cfg.id)?.owner || "担当未設定") === ownerFilter);
 
   const exclusionRows = useMemo(() => exclusionProducts.map((row) => ({
     ...row,
@@ -201,7 +239,44 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
         <div className="card"><span>RPP設定中</span><strong>{configuredTargets.length}</strong></div>
         <div className="card"><span>目標保存済み</span><strong>{targets.length}</strong></div>
         <div className="card"><span>目標未設定</span><strong className={missingCount ? "warn-text" : "ok-text"}>{missingCount}</strong></div>
+        <div className="card"><span>担当タブ</span><strong>{ownerFilter}</strong></div>
       </div>
+
+      <section className="panel owner-panel">
+        <div className="section-heading">
+          <div>
+            <h2>担当者別</h2>
+            <p>担当ごとにタブ分けし、設定数・未設定・直近レポート内の広告費/クリック/売上を確認できます。</p>
+          </div>
+        </div>
+        <div className="owner-tabs">
+          <button className={ownerFilter === "全て" ? "owner-tab active" : "owner-tab"} type="button" onClick={() => setOwnerFilter("全て")}>全て</button>
+          {ownerStats.map((row) => (
+            <button className={ownerFilter === row.owner ? "owner-tab active" : "owner-tab"} key={row.owner} type="button" onClick={() => setOwnerFilter(row.owner)}>
+              {row.owner}<small>{row.configured}件</small>
+            </button>
+          ))}
+        </div>
+        <table className="wide-table owner-stats-table">
+          <thead><tr><th>担当</th><th>設定中</th><th>保存済み/未設定</th><th>直近広告費</th><th>クリック</th><th>売上/ROAS</th><th>承認</th></tr></thead>
+          <tbody>
+            {ownerStats.map((row) => {
+              const roas = row.spend > 0 ? Math.round((row.sales / row.spend) * 100) : null;
+              return (
+                <tr key={row.owner}>
+                  <td><b>{row.owner}</b></td>
+                  <td>{row.configured}</td>
+                  <td><small>保存 {row.saved}<br />未設定 <span className={row.missing ? "warn-text" : "ok-text"}>{row.missing}</span></small></td>
+                  <td><b>{yenNumber(row.spend)}</b></td>
+                  <td>{row.clicks.toLocaleString("ja-JP")}</td>
+                  <td><small>{yenNumber(row.sales)}<br />ROAS {roas == null ? "-" : `${roas}%`}</small></td>
+                  <td><small>承認 {row.approved}<br />未判断 {row.pending}</small></td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </section>
 
       <section className="panel exclusion-panel">
         <div className="section-heading">
@@ -292,7 +367,7 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
       <table className="wide-table target-table">
         <thead><tr><th>RPP設定中商品/KW</th><th>CPC</th><th>目標状態</th><th>担当/方針</th><th>操作</th></tr></thead>
         <tbody>
-          {configuredTargets.map((cfg) => {
+          {filteredConfiguredTargets.map((cfg) => {
             const row = targetMap.get(cfg.id);
             return (
               <tr key={cfg.id}>
@@ -309,7 +384,7 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
               </tr>
             );
           })}
-          {!configuredTargets.length ? <tr><td colSpan={5}>RPP設定中の商品/KWが見つかりません。</td></tr> : null}
+          {!filteredConfiguredTargets.length ? <tr><td colSpan={5}>この担当のRPP設定中商品/KWはありません。</td></tr> : null}
         </tbody>
       </table>
     </div>
