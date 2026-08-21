@@ -55,7 +55,8 @@ export type RppAlertTargetInput = {
   searchKeywords?: string[] | string;
 };
 
-const RPP_PROJECT_DIR = process.env.RPP_PROJECT_DIR ?? "/Users/nob/Projects/rpp-8am-notify";
+const DEFAULT_RPP_PROJECT_DIR = "/Users/nob/Projects/rpp-8am-notify";
+const RPP_PROJECT_DIR = process.env.RPP_PROJECT_DIR ?? (process.platform === "darwin" ? DEFAULT_RPP_PROJECT_DIR : "/tmp/rpp-8am-notify");
 const DATA_DIR = path.join(RPP_PROJECT_DIR, "rpp_targets");
 const TARGETS_PATH = path.join(DATA_DIR, "rpp_alert_targets.json");
 const ITEM_SETTINGS_PATH = path.join(RPP_PROJECT_DIR, "rpp_item_settings.csv");
