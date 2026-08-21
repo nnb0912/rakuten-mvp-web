@@ -1,0 +1,18 @@
+services:
+  - type: web
+    name: rakuten-mvp-web
+    runtime: node
+    plan: free
+    buildCommand: npm ci && npm run build
+    startCommand: npm run start -- -p $PORT
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: AUTH_URL
+        sync: false
+      - key: NEXTAUTH_URL
+        sync: false
+      - key: AUTH_SECRET
+        generateValue: true
+      - key: AUTH_ALLOWED_EMAILS
+        value: n.nb0912@gmail.com
