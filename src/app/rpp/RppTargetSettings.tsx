@@ -257,25 +257,26 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
             </button>
           ))}
         </div>
-        <table className="wide-table owner-stats-table">
-          <thead><tr><th>担当</th><th>設定中</th><th>保存済み/未設定</th><th>直近広告費</th><th>クリック</th><th>売上/ROAS</th><th>承認</th></tr></thead>
-          <tbody>
-            {ownerStats.map((row) => {
-              const roas = row.spend > 0 ? Math.round((row.sales / row.spend) * 100) : null;
-              return (
-                <tr key={row.owner}>
-                  <td><b>{row.owner}</b></td>
-                  <td>{row.configured}</td>
-                  <td><small>保存 {row.saved}<br />未設定 <span className={row.missing ? "warn-text" : "ok-text"}>{row.missing}</span></small></td>
-                  <td><b>{yenNumber(row.spend)}</b></td>
-                  <td>{row.clicks.toLocaleString("ja-JP")}</td>
-                  <td><small>{yenNumber(row.sales)}<br />ROAS {roas == null ? "-" : `${roas}%`}</small></td>
-                  <td><small>承認 {row.approved}<br />未判断 {row.pending}</small></td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+        <div className="owner-card-grid">
+          {ownerStats.map((row) => {
+            const roas = row.spend > 0 ? Math.round((row.sales / row.spend) * 100) : null;
+            return (
+              <button className={ownerFilter === row.owner ? "owner-card active" : "owner-card"} key={row.owner} type="button" onClick={() => setOwnerFilter(row.owner)}>
+                <div className="owner-card-head">
+                  <b>{row.owner}</b>
+                  <span>{row.configured}件</span>
+                </div>
+                <div className="owner-card-metrics">
+                  <span><small>広告費</small><strong>{yenNumber(row.spend)}</strong></span>
+                  <span><small>クリック</small><strong>{row.clicks.toLocaleString("ja-JP")}</strong></span>
+                  <span><small>売上</small><strong>{yenNumber(row.sales)}</strong></span>
+                  <span><small>ROAS</small><strong>{roas == null ? "-" : `${roas}%`}</strong></span>
+                </div>
+                <small>保存 {row.saved} / 未設定 {row.missing} / 承認 {row.approved} / 未判断 {row.pending}</small>
+              </button>
+            );
+          })}
+        </div>
       </section>
 
       <section className="panel exclusion-panel">
@@ -364,29 +365,51 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
         </div>
       </div>
 
-      <table className="wide-table target-table">
-        <thead><tr><th>RPP設定中商品/KW</th><th>CPC</th><th>目標状態</th><th>担当/方針</th><th>操作</th></tr></thead>
-        <tbody>
+      <section className="panel product-card-panel">
+        <div className="section-heading">
+          <div>
+            <h2>{ownerFilter === "全て" ? "商品/KW別カード" : `${ownerFilter}の商品/KW`}</h2>
+            <p>担当者タブまたは担当者カードを押すと、ここが担当商品だけに絞り込まれます。</p>
+          </div>
+          <span className="status-pill status-hold">表示 {filteredConfiguredTargets.length}件</span>
+        </div>
+        <div className="product-card-grid">
           {filteredConfiguredTargets.map((cfg) => {
             const row = targetMap.get(cfg.id);
+            const rec = recommendationMap.get(metricKey(cfg.itemCode, cfg.keyword));
+            const roas = rec?.roas ?? (rec?.spend && rec.salesAmount != null ? Math.round((rec.salesAmount / rec.spend) * 100) : null);
             return (
-              <tr key={cfg.id}>
-                <td><b>{cfg.itemCode}</b> <span className="status-pill status-hold">{cfg.source}</span><br /><small>{cfg.keyword}</small><br /><small>{cfg.itemName}</small></td>
-                <td><small>商品CPC {yen(cfg.itemCpc)}<br />KW CPC {yen(cfg.keywordCpc)}</small></td>
-                <td>{row ? <small>CTR {row.ctrGoal}% / CVR {row.cvrGoal}% / ROAS {row.roasFloor}%<br />{positionGoalLabel(row.positionGoal)}</small> : <span className="status-pill approval-held">未設定</span>}</td>
-                <td><b>{row?.owner || cfg.owner || "-"}</b><br /><small>{row?.policy || "-"}</small></td>
-                <td>
-                  <div className="approval-actions">
-                    <button disabled={busy} type="button" onClick={() => setForm(row ? toForm(row) : configuredToForm(cfg))}>{row ? "編集" : "作成"}</button>
-                    {row ? <button disabled={busy} type="button" onClick={() => deleteTarget(row.id)}>削除</button> : null}
+              <article className="product-card" key={cfg.id}>
+                <div className="product-card-head">
+                  <div>
+                    <b>{cfg.itemCode}</b>
+                    <span className="status-pill status-hold">{cfg.source}</span>
                   </div>
-                </td>
-              </tr>
+                  <span className="owner-mini-pill">{row?.owner || cfg.owner || "担当未設定"}</span>
+                </div>
+                <h3>{cfg.keyword}</h3>
+                <small>{cfg.itemName}</small>
+                <div className="product-card-metrics">
+                  <span><small>商品CPC</small><strong>{yen(cfg.itemCpc)}</strong></span>
+                  <span><small>KW CPC</small><strong>{yen(cfg.keywordCpc)}</strong></span>
+                  <span><small>広告費</small><strong>{yenNumber(rec?.spend ?? 0)}</strong></span>
+                  <span><small>クリック</small><strong>{(rec?.clicks ?? 0).toLocaleString("ja-JP")}</strong></span>
+                  <span><small>売上</small><strong>{yenNumber(rec?.salesAmount ?? 0)}</strong></span>
+                  <span><small>ROAS</small><strong>{roas == null ? "-" : `${Math.round(roas)}%`}</strong></span>
+                </div>
+                <div className="product-card-status">
+                  {row ? <small>CTR {row.ctrGoal}% / CVR {row.cvrGoal}% / ROAS最低 {row.roasFloor}%<br />{positionGoalLabel(row.positionGoal)} / {row.policy}</small> : <span className="status-pill approval-held">目標未設定</span>}
+                </div>
+                <div className="approval-actions card-actions">
+                  <button disabled={busy} type="button" onClick={() => setForm(row ? toForm(row) : configuredToForm(cfg))}>{row ? "編集" : "作成"}</button>
+                  {row ? <button disabled={busy} type="button" onClick={() => deleteTarget(row.id)}>削除</button> : null}
+                </div>
+              </article>
             );
           })}
-          {!filteredConfiguredTargets.length ? <tr><td colSpan={5}>この担当のRPP設定中商品/KWはありません。</td></tr> : null}
-        </tbody>
-      </table>
+          {!filteredConfiguredTargets.length ? <p>この担当のRPP設定中商品/KWはありません。</p> : null}
+        </div>
+      </section>
     </div>
   );
 }

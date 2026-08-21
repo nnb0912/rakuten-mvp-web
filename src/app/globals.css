@@ -93,6 +93,20 @@ small { color: var(--muted); line-height: 1.45; }
 .owner-tab { border: 1px solid var(--border); border-radius: 999px; background: #fff; padding: 10px 14px; font-weight: 800; cursor: pointer; display: inline-flex; gap: 8px; align-items: center; }
 .owner-tab small { color: inherit; opacity: .75; }
 .owner-tab.active { background: #172033; color: #fff; border-color: #172033; }
+.owner-card-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.owner-card, .product-card { border: 1px solid var(--border); border-radius: 16px; background: #fff; padding: 14px; text-align: left; box-shadow: 0 1px 2px rgba(16, 24, 40, .04); }
+.owner-card { cursor: pointer; font: inherit; color: inherit; }
+.owner-card.active { border-color: #172033; box-shadow: 0 0 0 2px rgba(23, 32, 51, .12); }
+.owner-card-head, .product-card-head { display: flex; justify-content: space-between; gap: 10px; align-items: flex-start; margin-bottom: 10px; }
+.owner-card-head span, .owner-mini-pill { border-radius: 999px; background: #f2f4f7; color: #475467; padding: 4px 9px; font-size: 12px; font-weight: 800; white-space: nowrap; }
+.owner-card-metrics, .product-card-metrics { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin: 10px 0; }
+.owner-card-metrics span, .product-card-metrics span { background: #f9fafb; border: 1px solid var(--border); border-radius: 12px; padding: 8px; display: grid; gap: 2px; }
+.owner-card-metrics strong, .product-card-metrics strong { font-size: 15px; }
+.product-card-panel { margin-top: 18px; }
+.product-card-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.product-card h3 { margin: 6px 0 4px; font-size: 17px; }
+.product-card-status { min-height: 42px; margin-top: 10px; }
+.card-actions { display: flex; justify-content: flex-end; margin-top: 10px; }
 .owner-stats-table th:first-child, .owner-stats-table td:first-child { width: 16%; }
 .exclusion-panel { margin: 18px 0; }
 .compact-button { margin: 0; }
@@ -115,4 +129,19 @@ small { color: var(--muted); line-height: 1.45; }
 @media (max-width: 900px) {
   .cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .two { grid-template-columns: 1fr; }
+  .owner-card-grid, .product-card-grid { grid-template-columns: 1fr; }
+  .section-heading { display: grid; }
+  .page-shell { padding: 20px 12px 40px; }
+}
+
+@media (max-width: 600px) {
+  h1 { font-size: 30px; }
+  h2 { font-size: 18px; }
+  .hero p, .section-heading p { font-size: 14px; line-height: 1.6; }
+  .card { padding: 14px; }
+  .card strong { font-size: 24px; }
+  .panel { padding: 14px; border-radius: 14px; }
+  .owner-tabs { flex-wrap: nowrap; overflow-x: auto; padding-bottom: 4px; }
+  .owner-tab { flex: 0 0 auto; }
+  .target-summary-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
