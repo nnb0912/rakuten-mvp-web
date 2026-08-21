@@ -3,7 +3,7 @@ services:
     name: rakuten-mvp-web
     runtime: node
     plan: free
-    buildCommand: npm ci && npm run build
+    buildCommand: npm ci --include=dev && npm run build
     startCommand: npm run start -- -p $PORT
     envVars:
       - key: NODE_ENV
@@ -16,3 +16,5 @@ services:
         generateValue: true
       - key: AUTH_ALLOWED_EMAILS
         value: n.nb0912@gmail.com
+      - key: RPP_CONFIGURED_TARGETS_JSON
+        sync: false
