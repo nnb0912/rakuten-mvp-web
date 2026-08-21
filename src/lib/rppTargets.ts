@@ -1,5 +1,6 @@
 import { promises as fs } from "fs";
 import path from "path";
+import configuredTargetsSnapshot from "@/data/rpp_configured_targets.json";
 
 export type RppPositionGoal = "FIRST_PAGE" | "TOP_5" | "TOP_3";
 export type RppOperationPolicy = "攻め" | "維持" | "テスト" | "停止候補";
@@ -164,16 +165,20 @@ async function readOwnerMap(): Promise<Record<string, string>> {
 }
 
 async function readConfiguredPositionMap(): Promise<Record<string, { rppPosition?: string; rppPositionKeyword?: string }>> {
-  try {
-    const raw = JSON.parse(await fs.readFile(SNAPSHOT_TARGETS_PATH, "utf8"));
-    const rows = Array.isArray(raw) ? raw : raw.targets || [];
+  const buildMap = (raw: unknown) => {
+    const rows = Array.isArray(raw) ? raw : (raw as { targets?: RppConfiguredTarget[] })?.targets || [];
     const map: Record<string, { rppPosition?: string; rppPositionKeyword?: string }> = {};
-    for (const row of rows) {
+    for (const row of rows as RppConfiguredTarget[]) {
       if (row.id && (row.rppPosition || row.rppPositionKeyword)) {
         map[row.id] = { rppPosition: row.rppPosition, rppPositionKeyword: row.rppPositionKeyword };
       }
     }
     return map;
+  };
+  const imported = buildMap(configuredTargetsSnapshot);
+  if (Object.keys(imported).length) return imported;
+  try {
+    return buildMap(JSON.parse(await fs.readFile(SNAPSHOT_TARGETS_PATH, "utf8")));
   } catch {
     return {};
   }
