@@ -28,6 +28,8 @@ export type RppConfiguredTarget = {
   keywordCpc: number | null;
   source: "商品CPC" | "キーワードCPC";
   owner?: string;
+  rppPosition?: string;
+  rppPositionKeyword?: string;
 };
 
 export type RppExclusionProduct = {
