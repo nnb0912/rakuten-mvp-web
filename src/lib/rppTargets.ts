@@ -27,6 +27,7 @@ export type RppConfiguredTarget = {
   itemCpc: number | null;
   keywordCpc: number | null;
   source: "商品CPC" | "キーワードCPC";
+  owner?: string;
 };
 
 export type RppExclusionProduct = {
@@ -34,6 +35,7 @@ export type RppExclusionProduct = {
   itemName: string;
   itemCpc: number | null;
   excluded: boolean;
+  owner?: string;
 };
 
 export type RppAlertTargetInput = {
@@ -55,6 +57,7 @@ const ITEM_SETTINGS_PATH = path.join(RPP_PROJECT_DIR, "rpp_item_settings.csv");
 const KEYWORD_SETTINGS_PATH = path.join(RPP_PROJECT_DIR, "rpp_keyword_settings.csv");
 const SNAPSHOT_TARGETS_PATH = path.join(process.cwd(), "src", "data", "rpp_configured_targets.json");
 const SNAPSHOT_EXCLUSION_PRODUCTS_PATH = path.join(process.cwd(), "src", "data", "rpp_exclusion_products.json");
+const SNAPSHOT_OWNER_MAP_PATH = path.join(process.cwd(), "src", "data", "rpp_owner_map.json");
 
 const POSITION_GOALS: RppPositionGoal[] = ["FIRST_PAGE", "TOP_5", "TOP_3"];
 const POLICIES: RppOperationPolicy[] = ["攻め", "維持", "テスト", "停止候補"];
@@ -147,6 +150,17 @@ async function readCsv(filePath: string) {
   }
 }
 
+async function readOwnerMap(): Promise<Record<string, string>> {
+  try {
+    const envOwners = process.env.RPP_OWNER_MAP_JSON;
+    const raw = envOwners ? JSON.parse(envOwners) : JSON.parse(await fs.readFile(SNAPSHOT_OWNER_MAP_PATH, "utf8"));
+    const owners = (raw?.owners ?? raw) as Record<string, string>;
+    return Object.fromEntries(Object.entries(owners).map(([code, owner]) => [code.trim().toLowerCase(), cleanText(owner)]));
+  } catch {
+    return {};
+  }
+}
+
 async function readRawTargets(): Promise<RppAlertTarget[]> {
   try {
     const raw = JSON.parse(await fs.readFile(TARGETS_PATH, "utf8")) as unknown;
@@ -168,14 +182,14 @@ async function writeRawTargets(targets: RppAlertTarget[]) {
 }
 
 export async function readRppConfiguredTargets() {
-  const itemRows = await readCsv(ITEM_SETTINGS_PATH);
-  const activeItems = new Map<string, { itemName: string; itemCpc: number | null }>();
+  const [itemRows, ownerMap] = await Promise.all([readCsv(ITEM_SETTINGS_PATH), readOwnerMap()]);
+  const activeItems = new Map<string, { itemName: string; itemCpc: number | null; owner: string }>();
   for (const row of itemRows) {
     const itemCode = cleanText(row["商品管理番号"]).toLowerCase();
     const itemCpc = optionalNumber(row["商品CPC"]);
     const excluded = cleanText(row["除外登録済み商品"]).toLowerCase() === "yes";
     if (!itemCode || !itemCpc || excluded) continue;
-    activeItems.set(itemCode, { itemName: cleanText(row["商品名"]), itemCpc });
+    activeItems.set(itemCode, { itemName: cleanText(row["商品名"]), itemCpc, owner: ownerMap[itemCode] || "担当未設定" });
   }
 
   const configured = new Map<string, RppConfiguredTarget>();
@@ -189,6 +203,7 @@ export async function readRppConfiguredTargets() {
       itemCpc: item.itemCpc,
       keywordCpc: null,
       source: "商品CPC",
+      owner: item.owner,
     });
   }
 
@@ -207,6 +222,7 @@ export async function readRppConfiguredTargets() {
       itemCpc: item.itemCpc,
       keywordCpc,
       source: "キーワードCPC",
+      owner: item.owner,
     });
   }
 
@@ -227,7 +243,7 @@ export async function readRppConfiguredTargets() {
 }
 
 export async function readRppExclusionProducts(): Promise<RppExclusionProduct[]> {
-  const itemRows = await readCsv(ITEM_SETTINGS_PATH);
+  const [itemRows, ownerMap] = await Promise.all([readCsv(ITEM_SETTINGS_PATH), readOwnerMap()]);
   const liveRows: RppExclusionProduct[] = [];
   for (const row of itemRows) {
     const itemCode = cleanText(row["商品管理番号"]).toLowerCase();
@@ -238,6 +254,7 @@ export async function readRppExclusionProducts(): Promise<RppExclusionProduct[]>
       itemName: cleanText(row["商品名"]),
       itemCpc,
       excluded: cleanText(row["除外登録済み商品"]).toLowerCase() === "yes",
+      owner: ownerMap[itemCode] || "担当未設定",
     });
   }
   liveRows.sort((a, b) => a.itemCode.localeCompare(b.itemCode, "ja"));

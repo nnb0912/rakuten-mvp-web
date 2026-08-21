@@ -50,7 +50,7 @@ function toForm(row: RppAlertTarget): FormState {
 }
 
 function configuredToForm(row: RppConfiguredTarget): FormState {
-  return { ...blank, itemCode: row.itemCode, keyword: row.keyword };
+  return { ...blank, itemCode: row.itemCode, keyword: row.keyword, owner: row.owner ?? "" };
 }
 
 function positionGoalLabel(goal: RppPositionGoal) {
@@ -100,7 +100,7 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
     };
     for (const cfg of configuredTargets) {
       const saved = targetMap.get(cfg.id);
-      const owner = saved?.owner || "担当未設定";
+      const owner = saved?.owner || cfg.owner || "担当未設定";
       const stat = ensure(owner);
       const rec = recommendationMap.get(metricKey(cfg.itemCode, cfg.keyword));
       stat.configured += 1;
@@ -117,7 +117,7 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
   }, [configuredTargets, recommendationMap, targetMap, targets]);
   const filteredConfiguredTargets = ownerFilter === "全て"
     ? configuredTargets
-    : configuredTargets.filter((cfg) => (targetMap.get(cfg.id)?.owner || "担当未設定") === ownerFilter);
+    : configuredTargets.filter((cfg) => (targetMap.get(cfg.id)?.owner || cfg.owner || "担当未設定") === ownerFilter);
 
   const exclusionRows = useMemo(() => exclusionProducts.map((row) => ({
     ...row,
@@ -374,7 +374,7 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
                 <td><b>{cfg.itemCode}</b> <span className="status-pill status-hold">{cfg.source}</span><br /><small>{cfg.keyword}</small><br /><small>{cfg.itemName}</small></td>
                 <td><small>商品CPC {yen(cfg.itemCpc)}<br />KW CPC {yen(cfg.keywordCpc)}</small></td>
                 <td>{row ? <small>CTR {row.ctrGoal}% / CVR {row.cvrGoal}% / ROAS {row.roasFloor}%<br />{positionGoalLabel(row.positionGoal)}</small> : <span className="status-pill approval-held">未設定</span>}</td>
-                <td><b>{row?.owner || "-"}</b><br /><small>{row?.policy || "-"}</small></td>
+                <td><b>{row?.owner || cfg.owner || "-"}</b><br /><small>{row?.policy || "-"}</small></td>
                 <td>
                   <div className="approval-actions">
                     <button disabled={busy} type="button" onClick={() => setForm(row ? toForm(row) : configuredToForm(cfg))}>{row ? "編集" : "作成"}</button>
