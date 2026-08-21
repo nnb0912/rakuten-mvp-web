@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useRef, useState, type FormEvent } from "react";
+import configuredTargetsSnapshot from "@/data/rpp_configured_targets.json";
 import type { RppRecommendationWithApproval } from "@/lib/rppRecommendations";
 import type { RppAlertTarget, RppConfiguredTarget, RppExclusionProduct, RppOperationPolicy, RppPositionGoal } from "@/lib/rppTargets";
 
@@ -87,6 +88,10 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
   const [exclusionOverrides, setExclusionOverrides] = useState<Record<string, boolean>>({});
 
   const targetMap = useMemo(() => new Map(targets.map((row) => [row.id, row])), [targets]);
+  const positionSnapshotMap = useMemo(() => {
+    const rows = (configuredTargetsSnapshot as { targets?: RppConfiguredTarget[] }).targets ?? [];
+    return new Map(rows.map((row) => [row.id, row]));
+  }, []);
   const missingCount = configuredTargets.filter((row) => !targetMap.has(row.id)).length;
   const grouped = useMemo(() => targets.reduce<Record<string, number>>((acc, row) => {
     acc[row.owner || "担当未設定"] = (acc[row.owner || "担当未設定"] ?? 0) + 1;
@@ -112,7 +117,8 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
       stat.sales += rec?.salesAmount ?? 0;
       stat.approved += rec?.approvalStatus === "approved" ? 1 : 0;
       stat.pending += rec?.approvalStatus === "pending" ? 1 : 0;
-      const position = rec?.rppPosition || cfg.rppPosition;
+      const snapshot = positionSnapshotMap.get(cfg.id);
+      const position = rec?.rppPosition || cfg.rppPosition || snapshot?.rppPosition;
       if (position) {
         if (position.includes("未測定")) stat.unmeasured += 1;
         else if (position.includes("いない") || position.includes("広告枠なし") || position.includes("測定エラー")) stat.outsidePage += 1;
@@ -121,7 +127,7 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
     }
     for (const row of targets) ensure(row.owner || "担当未設定");
     return [...stats.values()].sort((a, b) => (a.owner === "担当未設定" ? -1 : b.owner === "担当未設定" ? 1 : a.owner.localeCompare(b.owner, "ja")));
-  }, [configuredTargets, recommendationMap, targetMap, targets]);
+  }, [configuredTargets, recommendationMap, targetMap, targets, positionSnapshotMap]);
   const filteredConfiguredTargets = ownerFilter === "全て"
     ? configuredTargets
     : configuredTargets.filter((cfg) => (targetMap.get(cfg.id)?.owner || cfg.owner || "担当未設定") === ownerFilter);
@@ -307,7 +313,9 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
           {filteredConfiguredTargets.map((cfg) => {
             const row = targetMap.get(cfg.id);
             const rec = recommendationMap.get(metricKey(cfg.itemCode, cfg.keyword));
-            const position = rec?.rppPosition || cfg.rppPosition || "未測定";
+            const snapshot = positionSnapshotMap.get(cfg.id);
+            const position = rec?.rppPosition || cfg.rppPosition || snapshot?.rppPosition || "未測定";
+            const positionKeyword = cfg.rppPositionKeyword || snapshot?.rppPositionKeyword;
             const roas = rec?.roas ?? (rec?.spend && rec.salesAmount != null ? Math.round((rec.salesAmount / rec.spend) * 100) : null);
             return (
               <article className="product-card" key={cfg.id}>
@@ -327,7 +335,7 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
                   <span><small>クリック</small><strong>{(rec?.clicks ?? 0).toLocaleString("ja-JP")}</strong></span>
                   <span><small>売上</small><strong>{yenNumber(rec?.salesAmount ?? 0)}</strong></span>
                   <span><small>ROAS</small><strong>{roas == null ? "-" : `${Math.round(roas)}%`}</strong></span>
-                  <span className="metric-wide"><small>検索位置{cfg.rppPositionKeyword ? `（${cfg.rppPositionKeyword}）` : ""}</small><strong>{position}</strong></span>
+                  <span className="metric-wide"><small>検索位置{positionKeyword ? `（${positionKeyword}）` : ""}</small><strong>{position}</strong></span>
                 </div>
                 <div className="product-card-status">
                   {row ? <small>CTR {row.ctrGoal}% / CVR {row.cvrGoal}% / ROAS最低 {row.roasFloor}%<br />{positionGoalLabel(row.positionGoal)} / {row.policy}</small> : <span className="status-pill approval-held">目標未設定</span>}
