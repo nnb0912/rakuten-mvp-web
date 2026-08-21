@@ -1,11 +1,12 @@
 "use client";
 
 import { useMemo, useState, type FormEvent } from "react";
-import type { RppAlertTarget, RppConfiguredTarget, RppOperationPolicy, RppPositionGoal } from "@/lib/rppTargets";
+import type { RppAlertTarget, RppConfiguredTarget, RppExclusionProduct, RppOperationPolicy, RppPositionGoal } from "@/lib/rppTargets";
 
 type Props = {
   initialTargets: RppAlertTarget[];
   configuredTargets: RppConfiguredTarget[];
+  exclusionProducts: RppExclusionProduct[];
 };
 
 type FormState = {
@@ -60,12 +61,18 @@ function yen(value: number | null) {
   return value == null ? "-" : `${value.toLocaleString("ja-JP")}円`;
 }
 
-export default function RppTargetSettings({ initialTargets, configuredTargets }: Props) {
+function csvCell(value: string) {
+  return `"${value.replaceAll('"', '""')}"`;
+}
+
+export default function RppTargetSettings({ initialTargets, configuredTargets, exclusionProducts }: Props) {
   const [targets, setTargets] = useState(initialTargets);
   const [form, setForm] = useState<FormState>(blank);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const [excludeFilter, setExcludeFilter] = useState<"active" | "excluded" | "all">("active");
+  const [exclusionOverrides, setExclusionOverrides] = useState<Record<string, boolean>>({});
 
   const targetMap = useMemo(() => new Map(targets.map((row) => [row.id, row])), [targets]);
   const missingCount = configuredTargets.filter((row) => !targetMap.has(row.id)).length;
@@ -74,8 +81,43 @@ export default function RppTargetSettings({ initialTargets, configuredTargets }:
     return acc;
   }, {}), [targets]);
 
+  const exclusionRows = useMemo(() => exclusionProducts.map((row) => ({
+    ...row,
+    currentExcluded: exclusionOverrides[row.itemCode] ?? row.excluded,
+  })), [exclusionProducts, exclusionOverrides]);
+  const exclusionChanged = exclusionRows.filter((row) => row.currentExcluded !== row.excluded);
+  const visibleExclusionRows = exclusionRows.filter((row) => {
+    if (excludeFilter === "active") return !row.currentExcluded;
+    if (excludeFilter === "excluded") return row.currentExcluded;
+    return true;
+  });
+
   function patchForm<K extends keyof FormState>(key: K, value: FormState[K]) {
     setForm((current) => ({ ...current, [key]: value }));
+  }
+
+  function toggleExcluded(itemCode: string) {
+    setExclusionOverrides((current) => {
+      const base = exclusionProducts.find((row) => row.itemCode === itemCode)?.excluded ?? false;
+      const currentValue = current[itemCode] ?? base;
+      return { ...current, [itemCode]: !currentValue };
+    });
+  }
+
+  function downloadExcludeCsv() {
+    const excluded = exclusionRows.filter((row) => row.currentExcluded).map((row) => row.itemCode).sort((a, b) => a.localeCompare(b, "ja"));
+    const lines = ["コントロールカラム,商品管理番号", ...excluded.map((code) => `,${csvCell(code)}`)];
+    const blob = new Blob([`\uFEFF${lines.join("\r\n")}\r\n`], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    const ymd = new Date().toISOString().slice(0, 10).replaceAll("-", "");
+    a.href = url;
+    a.download = `rpp_exclude_items_updated_${ymd}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    setMessage(`RPP除外リストCSVを出力しました（除外 ${excluded.length}商品 / 変更 ${exclusionChanged.length}商品）`);
   }
 
   async function saveTarget(event: FormEvent<HTMLFormElement>) {
@@ -160,6 +202,46 @@ export default function RppTargetSettings({ initialTargets, configuredTargets }:
         <div className="card"><span>目標保存済み</span><strong>{targets.length}</strong></div>
         <div className="card"><span>目標未設定</span><strong className={missingCount ? "warn-text" : "ok-text"}>{missingCount}</strong></div>
       </div>
+
+      <section className="panel exclusion-panel">
+        <div className="section-heading">
+          <div>
+            <h2>RPP除外ON/OFF</h2>
+            <p>申請/承認なしで切替できます。ここではRMS本番へ直接反映せず、更新用CSVを出力します。</p>
+          </div>
+          <button className="primary-button compact-button" disabled={!exclusionChanged.length} type="button" onClick={downloadExcludeCsv}>CSV出力</button>
+        </div>
+        <div className="grid cards target-summary-cards">
+          <div className="card"><span>商品CPCあり</span><strong>{exclusionRows.length}</strong></div>
+          <div className="card"><span>配信中</span><strong>{exclusionRows.filter((row) => !row.currentExcluded).length}</strong></div>
+          <div className="card"><span>除外中</span><strong>{exclusionRows.filter((row) => row.currentExcluded).length}</strong></div>
+          <div className="card"><span>変更予定</span><strong className={exclusionChanged.length ? "warn-text" : "ok-text"}>{exclusionChanged.length}</strong></div>
+        </div>
+        <div className="inline-links form-actions">
+          <button className="secondary-button" type="button" onClick={() => setExcludeFilter("active")}>配信中</button>
+          <button className="secondary-button" type="button" onClick={() => setExcludeFilter("excluded")}>除外中</button>
+          <button className="secondary-button" type="button" onClick={() => setExcludeFilter("all")}>全て</button>
+          <button className="secondary-button" disabled={!exclusionChanged.length} type="button" onClick={() => setExclusionOverrides({})}>変更を戻す</button>
+        </div>
+        <table className="wide-table target-table exclusion-table">
+          <thead><tr><th>商品</th><th>CPC</th><th>現在/変更後</th><th>操作</th></tr></thead>
+          <tbody>
+            {visibleExclusionRows.slice(0, 120).map((row) => (
+              <tr key={row.itemCode}>
+                <td><b>{row.itemCode}</b><br /><small>{row.itemName}</small></td>
+                <td>{yen(row.itemCpc)}</td>
+                <td>
+                  <span className={`status-pill ${row.currentExcluded ? "approval-rejected" : "status-approved"}`}>{row.currentExcluded ? "除外ON" : "配信中"}</span>
+                  {row.currentExcluded !== row.excluded ? <small>変更あり（元: {row.excluded ? "除外ON" : "配信中"}）</small> : null}
+                </td>
+                <td><button className="secondary-button" type="button" onClick={() => toggleExcluded(row.itemCode)}>{row.currentExcluded ? "除外OFF" : "除外ON"}</button></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        {visibleExclusionRows.length > 120 ? <p>表示は先頭120件です。CSV出力は全件を対象にします。</p> : null}
+      </section>
+
       <div className="grid two target-grid">
         <form className="target-form" onSubmit={saveTarget}>
           <div className="form-row two-cols">
@@ -200,7 +282,7 @@ export default function RppTargetSettings({ initialTargets, configuredTargets }:
           <h3>対象範囲</h3>
           <ul className="meta-list compact">
             <li><b>対象</b><small>自動調整候補だけでなく、RPP設定中の全商品CPC/キーワードCPC</small></li>
-            <li><b>除外</b><small>RPP除外登録済み商品は対象外</small></li>
+            <li><b>除外ON/OFF</b><small>商品単位でCSV出力。RMS本番反映はCSV確認後に別途実行</small></li>
             <li><b>検索位置</b><small>「1ページ目にいるか/いないか」を最重要で判定</small></li>
             <li><b>担当別保存済み</b><small>{Object.entries(grouped).map(([owner, count]) => `${owner}:${count}`).join(" / ") || "未設定"}</small></li>
           </ul>

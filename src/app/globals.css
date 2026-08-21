@@ -88,6 +88,9 @@ small { color: var(--muted); line-height: 1.45; }
 .freshness-古い { background: #fff4ed; color: #b54708; }
 .freshness-未取得 { background: #fef3f2; color: #b42318; }
 .target-panel { margin-bottom: 16px; }
+.exclusion-panel { margin: 18px 0; }
+.compact-button { margin: 0; }
+.target-summary-cards { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 .target-grid { align-items: start; margin-bottom: 18px; }
 .target-form { display: grid; gap: 12px; }
 .target-form label { display: grid; gap: 6px; color: var(--muted); font-size: 12px; font-weight: 700; }

@@ -29,6 +29,13 @@ export type RppConfiguredTarget = {
   source: "商品CPC" | "キーワードCPC";
 };
 
+export type RppExclusionProduct = {
+  itemCode: string;
+  itemName: string;
+  itemCpc: number | null;
+  excluded: boolean;
+};
+
 export type RppAlertTargetInput = {
   itemCode: string;
   keyword: string;
@@ -47,6 +54,7 @@ const TARGETS_PATH = path.join(DATA_DIR, "rpp_alert_targets.json");
 const ITEM_SETTINGS_PATH = path.join(RPP_PROJECT_DIR, "rpp_item_settings.csv");
 const KEYWORD_SETTINGS_PATH = path.join(RPP_PROJECT_DIR, "rpp_keyword_settings.csv");
 const SNAPSHOT_TARGETS_PATH = path.join(process.cwd(), "src", "data", "rpp_configured_targets.json");
+const SNAPSHOT_EXCLUSION_PRODUCTS_PATH = path.join(process.cwd(), "src", "data", "rpp_exclusion_products.json");
 
 const POSITION_GOALS: RppPositionGoal[] = ["FIRST_PAGE", "TOP_5", "TOP_3"];
 const POLICIES: RppOperationPolicy[] = ["攻め", "維持", "テスト", "停止候補"];
@@ -218,8 +226,38 @@ export async function readRppConfiguredTargets() {
   }
 }
 
+export async function readRppExclusionProducts(): Promise<RppExclusionProduct[]> {
+  const itemRows = await readCsv(ITEM_SETTINGS_PATH);
+  const liveRows: RppExclusionProduct[] = [];
+  for (const row of itemRows) {
+    const itemCode = cleanText(row["商品管理番号"]).toLowerCase();
+    const itemCpc = optionalNumber(row["商品CPC"]);
+    if (!itemCode || !itemCpc) continue;
+    liveRows.push({
+      itemCode,
+      itemName: cleanText(row["商品名"]),
+      itemCpc,
+      excluded: cleanText(row["除外登録済み商品"]).toLowerCase() === "yes",
+    });
+  }
+  liveRows.sort((a, b) => a.itemCode.localeCompare(b.itemCode, "ja"));
+  if (liveRows.length) return liveRows;
+  try {
+    const envProducts = process.env.RPP_EXCLUSION_PRODUCTS_JSON;
+    if (envProducts) {
+      const snapshot = JSON.parse(envProducts) as { products?: RppExclusionProduct[] } | RppExclusionProduct[];
+      const rows = Array.isArray(snapshot) ? snapshot : snapshot.products ?? [];
+      return rows.sort((a, b) => a.itemCode.localeCompare(b.itemCode, "ja"));
+    }
+    const snapshot = JSON.parse(await fs.readFile(SNAPSHOT_EXCLUSION_PRODUCTS_PATH, "utf8")) as { products?: RppExclusionProduct[] };
+    return (snapshot.products ?? []).sort((a, b) => a.itemCode.localeCompare(b.itemCode, "ja"));
+  } catch {
+    return [];
+  }
+}
+
 export async function readRppAlertTargets() {
-  const [targets, configuredTargets] = await Promise.all([readRawTargets(), readRppConfiguredTargets()]);
+  const [targets, configuredTargets, exclusionProducts] = await Promise.all([readRawTargets(), readRppConfiguredTargets(), readRppExclusionProducts()]);
   const savedIds = new Set(targets.map((row) => row.id));
   return {
     filePath: TARGETS_PATH,
@@ -227,6 +265,12 @@ export async function readRppAlertTargets() {
     configuredTargets,
     configuredCount: configuredTargets.length,
     missingTargetCount: configuredTargets.filter((row) => !savedIds.has(row.id)).length,
+    exclusionProducts,
+    exclusionCounts: {
+      total: exclusionProducts.length,
+      active: exclusionProducts.filter((row) => !row.excluded).length,
+      excluded: exclusionProducts.filter((row) => row.excluded).length,
+    },
   };
 }
 
