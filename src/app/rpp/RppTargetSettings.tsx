@@ -173,7 +173,7 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
       const currentValue = current[itemCode] ?? base;
       const nextValue = !currentValue;
       if (!nextValue && !canRelease) {
-        setError("この商品のRPP設定KWに目標未設定があります。全KWの目標を作成してから除外解除してください。");
+        setError("この商品に目標が1つもありません。1つ以上目標を作成してから除外解除してください。");
         return current;
       }
       setError(null);
@@ -195,6 +195,28 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
     a.remove();
     URL.revokeObjectURL(url);
     setMessage(`RPP除外リストCSVを出力しました（除外 ${excluded.length}商品 / 変更 ${exclusionChanged.length}商品）`);
+  }
+
+  async function applyExclusionToRms() {
+    if (!exclusionChanged.length) return;
+    if (!window.confirm(`RMSへ除外ON/OFFを反映しますか？対象 ${exclusionChanged.length}商品。`)) return;
+    setBusy(true);
+    setError(null);
+    setMessage(null);
+    try {
+      const res = await fetch("/api/rpp/apply-exclusion", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ execute: true, changes: exclusionChanged.map((row) => ({ itemCode: row.itemCode, currentExcluded: row.currentExcluded, originalExcluded: row.excluded })) }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(`${data.error ?? "RMS反映に失敗しました"}${data.csvPath ? ` / CSV: ${data.csvPath}` : ""}`);
+      setMessage(`RMS反映を実行しました（${data.changes}商品 / CSV: ${data.csvPath}）`);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function saveTarget(event: FormEvent<HTMLFormElement>) {
@@ -340,7 +362,7 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
             const currentExcluded = exclusionState?.currentExcluded ?? false;
             const exclusionChangedForItem = exclusionState ? currentExcluded !== exclusionState.excluded : false;
             const itemTargetCompletion = itemTargetCompletionMap.get(cfg.itemCode) ?? { total: 1, saved: row ? 1 : 0, missing: row ? 0 : 1 };
-            const canReleaseExclusion = itemTargetCompletion.missing === 0;
+            const canReleaseExclusion = itemTargetCompletion.saved > 0;
             const roas = rec?.roas ?? (rec?.spend && rec.salesAmount != null ? Math.round((rec.salesAmount / rec.spend) * 100) : null);
             return (
               <article className="product-card" key={cfg.id}>
@@ -354,7 +376,7 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
                 <h3>{cfg.keyword}</h3>
                 <small>{cfg.itemName}</small>
                 {!row ? <div className="target-missing-alert">目標未設定：RMSから直接広告設定された可能性があります。先にこのRPP設定KWの目標を作成してください。</div> : null}
-                {itemTargetCompletion.missing > 0 ? <div className="target-missing-alert target-missing-alert-soft">商品内の目標未設定 {itemTargetCompletion.missing}/{itemTargetCompletion.total}件：全KW目標済みまで除外解除不可</div> : null}
+                {itemTargetCompletion.saved === 0 ? <div className="target-missing-alert target-missing-alert-soft">商品内の目標保存 0/{itemTargetCompletion.total}件：1つ以上目標作成まで除外解除不可</div> : null}
                 <div className="product-card-metrics">
                   <span><small>商品CPC</small><strong>{yen(cfg.itemCpc)}</strong></span>
                   <span><small>KW CPC</small><strong>{yen(cfg.keywordCpc)}</strong></span>
@@ -376,7 +398,7 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
                       disabled={busy || (currentExcluded && !canReleaseExclusion)}
                       type="button"
                       onClick={() => toggleExcluded(cfg.itemCode, canReleaseExclusion)}
-                      title={currentExcluded && !canReleaseExclusion ? "この商品の全RPP設定KWに目標が入るまで除外解除できません" : undefined}
+                      title={currentExcluded && !canReleaseExclusion ? "この商品に目標が1つ以上入るまで除外解除できません" : undefined}
                     >
                       {currentExcluded ? "除外解除" : "広告除外ON"}
                     </button>
@@ -396,9 +418,10 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
         <div className="section-heading">
           <div>
             <h2>RPP除外ON/OFF</h2>
-            <p>申請/承認なしで切替できます。ここではRMS本番へ直接反映せず、更新用CSVを出力します。</p>
+            <p>申請/承認なしで切替できます。変更予定を作った後、RMSへ反映ボタンで一括アップロードします。</p>
           </div>
-          <button className="primary-button compact-button" disabled={!exclusionChanged.length} type="button" onClick={downloadExcludeCsv}>CSV出力</button>
+          <button className="primary-button compact-button" disabled={!exclusionChanged.length || busy} type="button" onClick={applyExclusionToRms}>RMSへ反映</button>
+          <button className="secondary-button compact-button" disabled={!exclusionChanged.length} type="button" onClick={downloadExcludeCsv}>CSV出力</button>
         </div>
         <div className="grid cards target-summary-cards">
           <div className="card"><span>商品CPCあり</span><strong>{exclusionRows.length}</strong></div>
@@ -423,7 +446,7 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
                   <span className={`status-pill ${row.currentExcluded ? "approval-rejected" : "status-approved"}`}>{row.currentExcluded ? "除外ON" : "配信中"}</span>
                   {row.currentExcluded !== row.excluded ? <small>変更あり（元: {row.excluded ? "除外ON" : "配信中"}）</small> : null}
                 </td>
-                <td><button className="secondary-button" type="button" onClick={() => toggleExcluded(row.itemCode, (itemTargetCompletionMap.get(row.itemCode)?.missing ?? 1) === 0)}>{row.currentExcluded ? "除外OFF" : "除外ON"}</button></td>
+                <td><button className="secondary-button" type="button" onClick={() => toggleExcluded(row.itemCode, (itemTargetCompletionMap.get(row.itemCode)?.saved ?? 0) > 0)}>{row.currentExcluded ? "除外OFF" : "除外ON"}</button></td>
               </tr>
             ))}
           </tbody>
