@@ -110,7 +110,10 @@ small { color: var(--muted); line-height: 1.45; }
 .product-card-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 .product-card h3 { margin: 6px 0 4px; font-size: 17px; }
 .product-card-status { min-height: 42px; margin-top: 10px; }
-.card-actions { display: flex; justify-content: flex-end; margin-top: 10px; }
+.card-actions { display: flex; justify-content: flex-end; margin-top: 10px; flex-wrap: wrap; gap: 8px; }
+.product-exclusion-action { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-right: auto; }
+.product-exclusion-action small { color: var(--muted); font-weight: 700; }
+.target-missing-alert { margin: 10px 0 0; border: 1px solid #f79009; background: #fffaeb; color: #b54708; border-radius: 12px; padding: 9px 10px; font-size: 13px; font-weight: 800; }
 .owner-stats-table th:first-child, .owner-stats-table td:first-child { width: 16%; }
 .exclusion-panel { margin: 18px 0; }
 .compact-button { margin: 0; }
