@@ -18,3 +18,9 @@ services:
         value: n.nb0912@gmail.com
       - key: RPP_CONFIGURED_TARGETS_JSON
         sync: false
+      - key: RPP_PROJECT_DIR
+        value: /var/data/rpp-8am-notify
+    disk:
+      name: rpp-data
+      mountPath: /var/data
+      sizeGB: 1

@@ -32,6 +32,7 @@ export type RppConfiguredTarget = {
   owner?: string;
   rppPosition?: string;
   rppPositionKeyword?: string;
+  rppPositions?: { keyword: string; position: string }[];
 };
 
 export type RppExclusionProduct = {
@@ -99,6 +100,10 @@ function normalizeInput(input: RppAlertTargetInput) {
   const keyword = cleanText(input.keyword);
   if (!itemCode) throw new Error("商品管理番号は必須です");
   if (!keyword) throw new Error("キーワードは必須です");
+  const searchKeywords = normalizeSearchKeywords(input.searchKeywords, keyword);
+  if (keyword === "商品CPC" && searchKeywords.length === 0) {
+    throw new Error("商品CPCの場合は検索調査キーワードを1つ以上入力してください");
+  }
   const positionGoal = POSITION_GOALS.includes(input.positionGoal as RppPositionGoal) ? input.positionGoal as RppPositionGoal : "FIRST_PAGE";
   const policy = POLICIES.includes(input.policy as RppOperationPolicy) ? input.policy as RppOperationPolicy : "維持";
   return {
@@ -111,7 +116,7 @@ function normalizeInput(input: RppAlertTargetInput) {
     positionGoal,
     policy,
     note: cleanText(input.note),
-    searchKeywords: normalizeSearchKeywords(input.searchKeywords, keyword),
+    searchKeywords,
   };
 }
 
@@ -176,13 +181,13 @@ async function readOwnerMap(): Promise<Record<string, string>> {
   }
 }
 
-async function readConfiguredPositionMap(): Promise<Record<string, { rppPosition?: string; rppPositionKeyword?: string }>> {
+async function readConfiguredPositionMap(): Promise<Record<string, { rppPosition?: string; rppPositionKeyword?: string; rppPositions?: { keyword: string; position: string }[] }>> {
   const buildMap = (raw: unknown) => {
     const rows = Array.isArray(raw) ? raw : (raw as { targets?: RppConfiguredTarget[] })?.targets || [];
-    const map: Record<string, { rppPosition?: string; rppPositionKeyword?: string }> = {};
+    const map: Record<string, { rppPosition?: string; rppPositionKeyword?: string; rppPositions?: { keyword: string; position: string }[] }> = {};
     for (const row of rows as RppConfiguredTarget[]) {
-      if (row.id && (row.rppPosition || row.rppPositionKeyword)) {
-        map[row.id] = { rppPosition: row.rppPosition, rppPositionKeyword: row.rppPositionKeyword };
+      if (row.id && (row.rppPosition || row.rppPositionKeyword || row.rppPositions)) {
+        map[row.id] = { rppPosition: row.rppPosition, rppPositionKeyword: row.rppPositionKeyword, rppPositions: row.rppPositions };
       }
     }
     return map;
@@ -368,6 +373,7 @@ export async function seedMissingRppAlertTargets(defaults: Partial<RppAlertTarge
     const normalized = normalizeInput({
       itemCode: row.itemCode,
       keyword: row.keyword,
+      owner: row.owner,
       searchKeywords: row.keyword === "商品CPC" ? (row.rppPositionKeyword ? row.rppPositionKeyword.replace("（代表KW）", "") : undefined) : row.keyword,
       ...defaults,
     });
