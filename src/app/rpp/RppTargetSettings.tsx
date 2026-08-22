@@ -2,6 +2,7 @@
 
 import { useMemo, useState, type FormEvent } from "react";
 import configuredTargetsSnapshot from "@/data/rpp_configured_targets.json";
+import seoKeywords from "@/data/seo_keywords.json";
 import type { RppRecommendationWithApproval } from "@/lib/rppRecommendations";
 import type { RppAlertTarget, RppConfiguredTarget, RppExclusionProduct, RppOperationPolicy, RppPositionGoal } from "@/lib/rppTargets";
 
@@ -78,6 +79,13 @@ function metricKey(itemCode: string, keyword: string) {
 
 function csvCell(value: string) {
   return `"${value.replaceAll('"', '""')}"`;
+}
+
+const SEO_KEYWORDS = seoKeywords as Record<string, string[]>;
+
+function seoWordsForItem(itemCode: string) {
+  const code = itemCode.trim();
+  return SEO_KEYWORDS[code] || SEO_KEYWORDS[code.toLowerCase()] || SEO_KEYWORDS[code.toUpperCase()] || [];
 }
 
 export default function RppTargetSettings({ initialTargets, configuredTargets, exclusionProducts, recommendations }: Props) {
@@ -162,6 +170,7 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
     const itemCode = form.itemCode.trim().toLowerCase();
     if (!itemCode) return [] as string[];
     const words = new Set<string>();
+    for (const word of seoWordsForItem(itemCode)) words.add(word);
     for (const cfg of configuredTargets.filter((row) => row.itemCode === itemCode)) {
       if (cfg.keyword && cfg.keyword !== "商品CPC") words.add(cfg.keyword);
       const snapshot = positionSnapshotMap.get(cfg.id);
@@ -494,7 +503,7 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
                 {searchWordOptions.map((word) => <option key={word} value={word}>{word}</option>)}
               </select>
             </label>
-            {searchWordOptions.length ? <div className="search-word-chips">{searchWordOptions.map((word) => <button type="button" key={word} onClick={() => addSearchWord(word)}>＋ {word}</button>)}</div> : <small>この商品のRPP設定KW・代表KWから候補を出します。直接入力もできます。</small>}
+            {searchWordOptions.length ? <div className="search-word-chips">{searchWordOptions.map((word) => <button type="button" key={word} onClick={() => addSearchWord(word)}>＋ {word}</button>)}</div> : <small>この商品のSEO検索対策KW・RPP設定KW・代表KWから候補を出します。直接入力もできます。</small>}
           </div>
           <div className="form-row two-cols">
             <label>担当<input value={form.owner} onChange={(e) => patchForm("owner", e.target.value)} placeholder="森下" /></label>
