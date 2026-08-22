@@ -158,6 +158,22 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
     if (excludeFilter === "excluded") return row.currentExcluded;
     return true;
   });
+  const searchWordOptions = useMemo(() => {
+    const itemCode = form.itemCode.trim().toLowerCase();
+    if (!itemCode) return [] as string[];
+    const words = new Set<string>();
+    for (const cfg of configuredTargets.filter((row) => row.itemCode === itemCode)) {
+      if (cfg.keyword && cfg.keyword !== "商品CPC") words.add(cfg.keyword);
+      const snapshot = positionSnapshotMap.get(cfg.id);
+      const representative = cfg.rppPositionKeyword || snapshot?.rppPositionKeyword;
+      if (representative) words.add(representative.replace("（代表KW）", ""));
+      for (const pos of cfg.rppPositions || snapshot?.rppPositions || []) {
+        if (pos.keyword) words.add(pos.keyword);
+      }
+    }
+    const entered = form.searchKeywords.split(/[\n,、]+/).map((kw) => kw.trim()).filter(Boolean);
+    return [...words].filter((word) => !entered.includes(word)).sort((a, b) => a.localeCompare(b, "ja"));
+  }, [configuredTargets, form.itemCode, form.searchKeywords, positionSnapshotMap]);
 
   function selectOwnerFilter(owner: string) {
     setOwnerFilter(owner);
@@ -165,6 +181,16 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
 
   function patchForm<K extends keyof FormState>(key: K, value: FormState[K]) {
     setForm((current) => ({ ...current, [key]: value }));
+  }
+
+  function addSearchWord(word: string) {
+    const clean = word.trim();
+    if (!clean) return;
+    setForm((current) => {
+      const existing = current.searchKeywords.split(/[\n,、]+/).map((kw) => kw.trim()).filter(Boolean);
+      if (existing.includes(clean)) return current;
+      return { ...current, searchKeywords: [...existing, clean].join("\n") };
+    });
   }
 
   function toggleExcluded(itemCode: string, canRelease = true) {
@@ -461,6 +487,15 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
             <label>RPP設定KW<input value={form.keyword} onChange={(e) => patchForm("keyword", e.target.value)} placeholder="まな板 / 商品CPC" required /></label>
           </div>
           <label>検索調査キーワード（複数可・改行/カンマ区切り）<textarea value={form.searchKeywords} onChange={(e) => patchForm("searchKeywords", e.target.value)} placeholder="まな板\nまな板 フチ付き\nかまぼこ型 まな板" /></label>
+          <div className="search-word-picker">
+            <label>検索対象ワードリスト
+              <select value="" onChange={(e) => { addSearchWord(e.target.value); e.currentTarget.value = ""; }} disabled={!searchWordOptions.length}>
+                <option value="">{searchWordOptions.length ? "候補から追加" : "候補なし"}</option>
+                {searchWordOptions.map((word) => <option key={word} value={word}>{word}</option>)}
+              </select>
+            </label>
+            {searchWordOptions.length ? <div className="search-word-chips">{searchWordOptions.map((word) => <button type="button" key={word} onClick={() => addSearchWord(word)}>＋ {word}</button>)}</div> : <small>この商品のRPP設定KW・代表KWから候補を出します。直接入力もできます。</small>}
+          </div>
           <div className="form-row two-cols">
             <label>担当<input value={form.owner} onChange={(e) => patchForm("owner", e.target.value)} placeholder="森下" /></label>
             <label>運用方針
