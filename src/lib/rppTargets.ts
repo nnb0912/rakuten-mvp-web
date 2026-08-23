@@ -1,6 +1,7 @@
 import { promises as fs } from "fs";
 import path from "path";
 import configuredTargetsSnapshot from "@/data/rpp_configured_targets.json";
+import { pool } from "@/lib/db";
 
 export type RppPositionGoal = "FIRST_PAGE" | "TOP_5" | "TOP_3";
 export type RppOperationPolicy = "攻め" | "維持" | "テスト" | "停止候補";
@@ -60,6 +61,7 @@ const DEFAULT_RPP_PROJECT_DIR = "/Users/nob/Projects/rpp-8am-notify";
 const RPP_PROJECT_DIR = process.env.RPP_PROJECT_DIR ?? (process.platform === "darwin" ? DEFAULT_RPP_PROJECT_DIR : "/tmp/rpp-8am-notify");
 const DATA_DIR = path.join(RPP_PROJECT_DIR, "rpp_targets");
 const TARGETS_PATH = path.join(DATA_DIR, "rpp_alert_targets.json");
+const TARGETS_TABLE = "rpp_alert_targets";
 const ITEM_SETTINGS_PATH = path.join(RPP_PROJECT_DIR, "rpp_item_settings.csv");
 const KEYWORD_SETTINGS_PATH = path.join(RPP_PROJECT_DIR, "rpp_keyword_settings.csv");
 const SNAPSHOT_TARGETS_PATH = path.join(process.cwd(), "src", "data", "rpp_configured_targets.json");
@@ -203,6 +205,48 @@ async function readConfiguredPositionMap(): Promise<Record<string, { rppPosition
 
 
 async function readRawTargets(): Promise<RppAlertTarget[]> {
+  if (pool) {
+    await ensureRppAlertTargetsTable();
+    await migrateLegacyJsonTargetsIfDbEmpty();
+    const result = await pool.query<{
+      id: string;
+      item_code: string;
+      keyword: string;
+      owner: string;
+      ctr_goal: string | number;
+      cvr_goal: string | number;
+      roas_floor: string | number;
+      position_goal: RppPositionGoal;
+      policy: RppOperationPolicy;
+      note: string | null;
+      search_keywords: string[] | string | null;
+      created_at: Date | string;
+      updated_at: Date | string;
+    }>(
+      `select id, item_code, keyword, owner, ctr_goal, cvr_goal, roas_floor, position_goal, policy, note, search_keywords, created_at, updated_at
+       from ${TARGETS_TABLE}
+       order by item_code asc, keyword asc`
+    );
+    return result.rows.map((row) => ({
+      id: row.id,
+      itemCode: row.item_code,
+      keyword: row.keyword,
+      owner: row.owner,
+      ctrGoal: Number(row.ctr_goal),
+      cvrGoal: Number(row.cvr_goal),
+      roasFloor: Number(row.roas_floor),
+      positionGoal: row.position_goal,
+      policy: row.policy,
+      note: row.note ?? "",
+      searchKeywords: Array.isArray(row.search_keywords)
+        ? row.search_keywords
+        : typeof row.search_keywords === "string"
+          ? JSON.parse(row.search_keywords)
+          : [],
+      createdAt: new Date(row.created_at).toISOString(),
+      updatedAt: new Date(row.updated_at).toISOString(),
+    }));
+  }
   try {
     const raw = JSON.parse(await fs.readFile(TARGETS_PATH, "utf8")) as unknown;
     if (Array.isArray(raw)) return raw as RppAlertTarget[];
@@ -213,13 +257,71 @@ async function readRawTargets(): Promise<RppAlertTarget[]> {
   return [];
 }
 
-async function writeRawTargets(targets: RppAlertTarget[]) {
-  await fs.mkdir(DATA_DIR, { recursive: true });
-  const payload = {
-    updatedAt: new Date().toISOString(),
-    targets: targets.sort((a, b) => a.itemCode.localeCompare(b.itemCode, "ja") || a.keyword.localeCompare(b.keyword, "ja")),
-  };
-  await fs.writeFile(TARGETS_PATH, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
+async function ensureRppAlertTargetsTable() {
+  if (!pool) throw new Error("DATABASE_URLが未設定のため、RPP目標をDB保存できません");
+  await pool.query(`
+    create table if not exists ${TARGETS_TABLE} (
+      id text primary key,
+      item_code text not null,
+      keyword text not null,
+      owner text not null default '',
+      ctr_goal numeric not null default 5,
+      cvr_goal numeric not null default 5,
+      roas_floor numeric not null default 500,
+      position_goal text not null default 'FIRST_PAGE',
+      policy text not null default '維持',
+      note text not null default '',
+      search_keywords jsonb not null default '[]'::jsonb,
+      created_at timestamptz not null default now(),
+      updated_at timestamptz not null default now()
+    )
+  `);
+}
+
+async function readLegacyJsonTargets(): Promise<RppAlertTarget[]> {
+  try {
+    const raw = JSON.parse(await fs.readFile(TARGETS_PATH, "utf8")) as unknown;
+    if (Array.isArray(raw)) return raw as RppAlertTarget[];
+    if (raw && typeof raw === "object" && Array.isArray((raw as { targets?: unknown }).targets)) {
+      return (raw as { targets: RppAlertTarget[] }).targets;
+    }
+  } catch {}
+  return [];
+}
+
+async function migrateLegacyJsonTargetsIfDbEmpty() {
+  if (!pool) return;
+  const countResult = await pool.query<{ count: string }>(`select count(*)::text as count from ${TARGETS_TABLE}`);
+  if (Number(countResult.rows[0]?.count ?? 0) > 0) return;
+  const legacyTargets = await readLegacyJsonTargets();
+  for (const target of legacyTargets) await upsertRawTarget(target);
+}
+
+async function upsertRawTarget(target: RppAlertTarget) {
+  await ensureRppAlertTargetsTable();
+  await pool!.query(
+    `insert into ${TARGETS_TABLE} (id, item_code, keyword, owner, ctr_goal, cvr_goal, roas_floor, position_goal, policy, note, search_keywords, created_at, updated_at)
+     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12, $13)
+     on conflict (id) do update set
+       item_code = excluded.item_code,
+       keyword = excluded.keyword,
+       owner = excluded.owner,
+       ctr_goal = excluded.ctr_goal,
+       cvr_goal = excluded.cvr_goal,
+       roas_floor = excluded.roas_floor,
+       position_goal = excluded.position_goal,
+       policy = excluded.policy,
+       note = excluded.note,
+       search_keywords = excluded.search_keywords,
+       updated_at = excluded.updated_at`,
+    [target.id, target.itemCode, target.keyword, target.owner, target.ctrGoal, target.cvrGoal, target.roasFloor, target.positionGoal, target.policy, target.note, JSON.stringify(target.searchKeywords), target.createdAt, target.updatedAt]
+  );
+}
+
+async function deleteRawTarget(id: string) {
+  await ensureRppAlertTargetsTable();
+  const result = await pool!.query(`delete from ${TARGETS_TABLE} where id = $1 or id = $2`, [id, decodeURIComponent(id)]);
+  return result.rowCount ?? 0;
 }
 
 export async function readRppConfiguredTargets() {
@@ -323,6 +425,7 @@ export async function readRppAlertTargets() {
   const savedIds = new Set(targets.map((row) => row.id));
   return {
     filePath: TARGETS_PATH,
+    source: pool ? `db:${TARGETS_TABLE}` : `fallback:${TARGETS_PATH}`,
     targets,
     configuredTargets,
     configuredCount: configuredTargets.length,
@@ -350,15 +453,13 @@ export async function upsertRppAlertTarget(input: RppAlertTargetInput) {
   };
   if (idx >= 0) targets[idx] = next;
   else targets.push(next);
-  await writeRawTargets(targets);
+  await upsertRawTarget(next);
   return next;
 }
 
 export async function deleteRppAlertTarget(id: string) {
-  const targets = await readRawTargets();
-  const next = targets.filter((row) => row.id !== id && decodeURIComponent(row.id) !== id);
-  if (next.length === targets.length) throw new Error(`目標設定が見つかりません: ${id}`);
-  await writeRawTargets(next);
+  const deleted = await deleteRawTarget(id);
+  if (!deleted) throw new Error(`目標設定が見つかりません: ${id}`);
   return { id, deleted: true };
 }
 
@@ -379,7 +480,7 @@ export async function seedMissingRppAlertTargets(defaults: Partial<RppAlertTarge
     });
     additions.push({ id: row.id, ...normalized, createdAt: now, updatedAt: now });
   }
-  if (additions.length) await writeRawTargets([...targets, ...additions]);
+  for (const target of additions) await upsertRawTarget(target);
   return { added: additions.length, totalConfigured: configured.length };
 }
 

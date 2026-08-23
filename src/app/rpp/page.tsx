@@ -68,7 +68,7 @@ export default async function RppPage() {
           <div>
             <h2>RPPアラート目標設定</h2>
             <p>
-              自動化前に、商品/KWごとのCTR・CVR・ROAS・検索位置目標を設定します。source {shortPath(targetData.filePath)} / {targetData.targets.length}件
+              自動化前に、商品/KWごとのCTR・CVR・ROAS・検索位置目標を設定します。保存先 {targetData.source} / {targetData.targets.length}件
             </p>
           </div>
           <a className="text-link" href="/api/rpp/targets">Targets API</a>
