@@ -95,7 +95,7 @@ function yenNumber(value: number) {
 }
 
 function positionParts(value: string) {
-  return value.split(" / ").map((part) => part.trim()).filter(Boolean);
+  return value.split(" / ").map((part) => part.trim().replace("1ページ目にいない", "PR枠あり・自社広告なし")).filter(Boolean);
 }
 
 function metricKey(itemCode: string, keyword: string) {
@@ -173,7 +173,7 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
       const position = rec?.rppPosition || cfg.rppPosition || snapshot?.rppPosition;
       if (position) {
         if (position.includes("未測定")) stat.unmeasured += 1;
-        else if (position.includes("いない") || position.includes("広告枠なし") || position.includes("測定エラー")) stat.outsidePage += 1;
+        else if (position.includes("いない") || position.includes("自社広告なし") || position.includes("広告枠なし") || position.includes("測定エラー")) stat.outsidePage += 1;
         else stat.firstPage += 1;
       }
     }
@@ -583,7 +583,7 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
           <ul className="meta-list compact">
             <li><b>対象</b><small>自動調整候補だけでなく、RPP設定中の全商品CPC/キーワードCPC</small></li>
             <li><b>除外ON/OFF</b><small>商品単位でCSV出力。RMS本番反映はCSV確認後に別途実行</small></li>
-            <li><b>検索位置</b><small>「1ページ目にいない」=広告枠はあるが自社広告が出ていない。「広告枠なし」=その検索KWで楽天側のRPP広告枠自体が出ていない。</small></li>
+            <li><b>検索位置</b><small>「PR枠あり・自社広告なし」=PR枠はあるが自社広告が出ていない。「広告枠なし」=その検索KWで楽天側のRPP広告枠自体が出ていない。</small></li>
             <li><b>担当別保存済み</b><small>{Object.entries(grouped).map(([owner, count]) => `${owner}:${count}`).join(" / ") || "未設定"}</small></li>
           </ul>
         </div>
