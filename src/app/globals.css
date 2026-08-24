@@ -141,9 +141,8 @@ small { color: var(--muted); line-height: 1.45; }
 .target-summary-cards { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 .target-grid { align-items: start; margin-bottom: 18px; }
 .target-form { display: grid; gap: 12px; }
-.target-form label { display: grid; gap: 6px; color: var(--muted); font-size: 12px; font-weight: 700; }
+.target-form label, .target-form-field { display: grid; gap: 6px; color: var(--muted); font-size: 12px; font-weight: 700; }
 .target-form input, .target-form select, .target-form textarea { width: 100%; border: 1px solid var(--border); border-radius: 10px; padding: 10px 11px; color: var(--foreground); background: #fff; font: inherit; }
-.search-word-picker { display: grid; gap: 8px; }
 .search-word-chips { display: flex; gap: 8px; flex-wrap: wrap; }
 .search-word-chips button { border: 1px solid var(--border); border-radius: 999px; background: #f9fafb; padding: 8px 10px; font-weight: 800; cursor: pointer; }
 .target-form textarea { min-height: 72px; resize: vertical; }

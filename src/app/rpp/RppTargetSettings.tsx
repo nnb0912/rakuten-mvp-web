@@ -460,15 +460,13 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
             <label>商品管理番号<input value={form.itemCode} onChange={(e) => patchForm("itemCode", e.target.value)} placeholder="r0606" required /></label>
             <label>RPP設定KW<input value={form.keyword} onChange={(e) => patchForm("keyword", e.target.value)} placeholder="まな板 / 商品CPC" required /></label>
           </div>
-          <label>検索調査キーワード（複数可・改行/カンマ区切り）<textarea value={form.searchKeywords} onChange={(e) => patchForm("searchKeywords", e.target.value)} placeholder="まな板\nまな板 フチ付き\nかまぼこ型 まな板" /></label>
-          <div className="search-word-picker">
-            <label>検索対象ワードリスト
-              <select value="" onChange={(e) => { addSearchWord(e.target.value); e.currentTarget.value = ""; }} disabled={!searchWordOptions.length}>
-                <option value="">{searchWordOptions.length ? "候補から追加" : "候補なし"}</option>
-                {searchWordOptions.map((word) => <option key={word} value={word}>{word}</option>)}
-              </select>
-            </label>
-            {searchWordOptions.length ? <div className="search-word-chips">{searchWordOptions.map((word) => <button type="button" key={word} onClick={() => addSearchWord(word)}>＋ {word}</button>)}</div> : <small>この商品のSEO検索対策KW・RPP設定KW・代表KWから候補を出します。直接入力もできます。</small>}
+          <div className="target-form-field">
+            <span>検索調査キーワード（候補クリック可・複数可・改行/カンマ区切り）</span>
+            <textarea value={form.searchKeywords} onChange={(e) => patchForm("searchKeywords", e.target.value)} placeholder="まな板\nまな板 フチ付き\nかまぼこ型 まな板" />
+            <div className="search-word-chips">
+              {searchWordOptions.length ? searchWordOptions.map((word) => <button type="button" key={word} onClick={() => addSearchWord(word)}>＋ {word}</button>) : <small>候補なし。直接入力できます。</small>}
+            </div>
+            <small>SEO検索対策KW・RPP設定KW・代表KWを候補として表示します。</small>
           </div>
           <div className="form-row two-cols">
             <label>担当<input value={form.owner} onChange={(e) => patchForm("owner", e.target.value)} placeholder="森下" /></label>
