@@ -71,6 +71,10 @@ function configuredToForm(row: RppConfiguredTarget): FormState {
   return { ...blank, itemCode: row.itemCode, keyword: row.keyword, searchKeywords: defaultSearchKeyword, owner: row.owner ?? "" };
 }
 
+function configuredKeywordToForm(row: RppConfiguredTarget, searchKeyword: string): FormState {
+  return { ...blank, itemCode: row.itemCode, keyword: searchKeyword, searchKeywords: searchKeyword, owner: row.owner ?? "" };
+}
+
 function positionGoalLabel(goal: RppPositionGoal) {
   if (goal === "TOP_3") return "RPP広告3位以内";
   if (goal === "TOP_5") return "RPP広告5位以内";
@@ -108,6 +112,18 @@ function metricKey(itemCode: string, keyword: string) {
 
 function csvCell(value: string) {
   return `"${value.replaceAll('"', '""')}"`;
+}
+
+function downloadTextFile(filename: string, text: string) {
+  const blob = new Blob([text], { type: "text/csv;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
 }
 
 const SEO_KEYWORDS = seoKeywords as Record<string, string[]>;
@@ -263,17 +279,26 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
   function downloadExcludeCsv() {
     const excluded = exclusionRows.filter((row) => row.currentExcluded).map((row) => row.itemCode).sort((a, b) => a.localeCompare(b, "ja"));
     const lines = ["コントロールカラム,商品管理番号", ...excluded.map((code) => `,${csvCell(code)}`)];
-    const blob = new Blob([`\uFEFF${lines.join("\r\n")}\r\n`], { type: "text/csv;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    const ymd = new Date().toISOString().slice(0, 10).replaceAll("-", "");
-    a.href = url;
-    a.download = `rpp_exclude_items_updated_${ymd}.csv`;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    URL.revokeObjectURL(url);
+    downloadTextFile(`rpp_exclude_items_updated_${new Date().toISOString().slice(0, 10).replaceAll("-", "")}.csv`, `\uFEFF${lines.join("\r\n")}\r\n`);
     setMessage(`RPP除外リストCSVを出力しました（除外 ${excluded.length}商品 / 変更 ${exclusionChanged.length}商品）`);
+  }
+
+  function downloadCpcCsv(cfg: RppConfiguredTarget) {
+    const current = cfg.source === "商品CPC" ? cfg.itemCpc : cfg.keywordCpc;
+    const input = window.prompt(`${cfg.itemCode} / ${cfg.keyword} の新しいCPCを入力してください（現在 ${yen(current)}）`, current ? String(current) : "");
+    if (input == null) return;
+    const nextCpc = Number(input.replace(/,/g, "").trim());
+    if (!Number.isFinite(nextCpc) || nextCpc <= 0) {
+      setError("CPCは1以上の数字で入力してください。");
+      return;
+    }
+    const ymd = new Date().toISOString().slice(0, 10).replaceAll("-", "");
+    const isItemCpc = cfg.source === "商品CPC";
+    const header = isItemCpc ? ["コントロールカラム", "商品管理番号", "商品CPC"] : ["コントロールカラム", "商品管理番号", "キーワード", "キーワードCPC"];
+    const row = isItemCpc ? ["u", cfg.itemCode, String(nextCpc)] : ["u", cfg.itemCode, cfg.keyword, String(nextCpc)];
+    downloadTextFile(`rpp_cpc_update_${cfg.itemCode}_${ymd}.csv`, `\uFEFF${header.map(csvCell).join(",")}\r\n${row.map(csvCell).join(",")}\r\n`);
+    setError(null);
+    setMessage(`CPC調整CSVを出力しました（${cfg.itemCode} / ${cfg.keyword}: ${yen(current)} → ${nextCpc.toLocaleString("ja-JP")}円）`);
   }
 
   async function applyExclusionToRms() {
@@ -495,6 +520,8 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
                     </button>
                   </div>
                   <button disabled={busy} type="button" onClick={() => openTargetForm(row ? toForm(row) : configuredToForm(cfg))}>目標設定</button>
+                  {cfg.source === "商品CPC" && positionKeyword ? <button disabled={busy} type="button" onClick={() => openTargetForm(configuredKeywordToForm(cfg, positionKeyword))}>KW別目標</button> : null}
+                  <button disabled={busy} type="button" onClick={() => downloadCpcCsv(cfg)}>CPC調整</button>
                   {row ? <button disabled={busy} type="button" onClick={() => deleteTarget(row.id)}>削除</button> : null}
                 </div>
               </article>
