@@ -213,7 +213,7 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
       const base = exclusionProducts.find((row) => row.itemCode === itemCode)?.excluded ?? false;
       const currentValue = current[itemCode] ?? base;
       const nextValue = !currentValue;
-      if (!nextValue && !canRelease) {
+      if (!nextValue && !canRelease && base) {
         setError("この商品に目標が1つもありません。1つ以上目標を作成してから除外解除してください。");
         return current;
       }
@@ -402,6 +402,7 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
             const exclusionState = exclusionStateMap.get(cfg.itemCode);
             const currentExcluded = exclusionState?.currentExcluded ?? false;
             const exclusionChangedForItem = exclusionState ? currentExcluded !== exclusionState.excluded : false;
+            const canUndoAccidentalExclusion = Boolean(exclusionState && exclusionState.excluded === false && currentExcluded === true);
             const itemTargetCompletion = itemTargetCompletionMap.get(cfg.itemCode) ?? { total: 1, saved: row ? 1 : 0, missing: row ? 0 : 1 };
             const canReleaseExclusion = itemTargetCompletion.saved > 0;
             const roas = rec?.roas ?? (rec?.spend && rec.salesAmount != null ? Math.round((rec.salesAmount / rec.spend) * 100) : null);
@@ -436,12 +437,12 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
                     <span className={`status-pill ${currentExcluded ? "approval-rejected" : "status-approved"}`}>{currentExcluded ? "除外ON" : "配信中"}</span>
                     {exclusionChangedForItem ? <small>CSV変更予定</small> : null}
                     <button
-                      disabled={busy || (currentExcluded && !canReleaseExclusion)}
+                      disabled={busy || (currentExcluded && !canReleaseExclusion && !canUndoAccidentalExclusion)}
                       type="button"
                       onClick={() => toggleExcluded(cfg.itemCode, canReleaseExclusion)}
-                      title={currentExcluded && !canReleaseExclusion ? "この商品に目標が1つ以上入るまで除外解除できません" : undefined}
+                      title={currentExcluded && !canReleaseExclusion && !canUndoAccidentalExclusion ? "この商品に目標が1つ以上入るまで除外解除できません" : undefined}
                     >
-                      {currentExcluded ? "除外解除" : "広告除外ON"}
+                      {exclusionChangedForItem ? "元に戻す" : currentExcluded ? "除外解除" : "広告除外ON"}
                     </button>
                   </div>
                   <button disabled={busy} type="button" onClick={() => openTargetForm(row ? toForm(row) : configuredToForm(cfg))}>目標設定</button>
