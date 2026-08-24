@@ -46,6 +46,17 @@ export async function POST(request: Request) {
     }
 
     const scriptPath = path.join(RPP_PROJECT_DIR, "rpp_apply_exclusion_upload.py");
+    try {
+      await fs.access(scriptPath);
+    } catch {
+      return Response.json({
+        error: "RMS自動反映ONですが、アップロード処理がサーバーに未配置です。CSVのみ生成しました。",
+        csvPath,
+        changes: changes.length,
+        productionChange: false,
+        missingScript: scriptPath,
+      }, { status: 501 });
+    }
     const child = spawn("python3", [scriptPath, "--csv", csvPath, "--execute"], { cwd: RPP_PROJECT_DIR, env: process.env });
     let output = "";
     let errorOutput = "";
