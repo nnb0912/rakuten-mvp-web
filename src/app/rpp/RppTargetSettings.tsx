@@ -416,7 +416,6 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
                     <span className="owner-mini-pill">{row?.owner || cfg.owner || "担当未設定"}</span>
                   </div>
                   <h3>{cfg.keyword}</h3>
-                  <small>{cfg.itemName}</small>
                 </div>
                 <div className="product-card-metrics">
                   <span><small>商品CPC</small><strong>{yen(cfg.itemCpc)}</strong></span>
@@ -461,12 +460,15 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
             <label>RPP設定KW<input value={form.keyword} onChange={(e) => patchForm("keyword", e.target.value)} placeholder="まな板 / 商品CPC" required /></label>
           </div>
           <div className="target-form-field">
-            <span>検索調査キーワード（候補クリック可・複数可・改行/カンマ区切り）</span>
-            <textarea value={form.searchKeywords} onChange={(e) => patchForm("searchKeywords", e.target.value)} placeholder="まな板\nまな板 フチ付き\nかまぼこ型 まな板" />
-            <div className="search-word-chips">
-              {searchWordOptions.length ? searchWordOptions.map((word) => <button type="button" key={word} onClick={() => addSearchWord(word)}>＋ {word}</button>) : <small>候補なし。直接入力できます。</small>}
+            <span>検索調査キーワード</span>
+            <div className="keyword-candidate-box">
+              <b>KW候補</b>
+              <div className="search-word-chips">
+                {searchWordOptions.length ? searchWordOptions.map((word) => <button type="button" key={word} onClick={() => addSearchWord(word)}>＋ {word}</button>) : <small>候補なし。直接入力できます。</small>}
+              </div>
             </div>
-            <small>SEO検索対策KW・RPP設定KW・代表KWを候補として表示します。</small>
+            <textarea value={form.searchKeywords} onChange={(e) => patchForm("searchKeywords", e.target.value)} placeholder="候補を押すか、検索したいKWを改行で入力\n例: まな板\nまな板 フチ付き\nかまぼこ型 まな板" />
+            <small>候補はSEO検索対策KW・RPP設定KW・代表KWから表示します。複数KWは改行/カンマ区切りで保存できます。</small>
           </div>
           <div className="form-row two-cols">
             <label>担当<input value={form.owner} onChange={(e) => patchForm("owner", e.target.value)} placeholder="森下" /></label>
