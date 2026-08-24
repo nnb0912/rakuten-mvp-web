@@ -95,7 +95,11 @@ function yenNumber(value: number) {
 }
 
 function positionParts(value: string) {
-  return value.split(" / ").map((part) => part.trim().replace("1ページ目にいない", "PR枠あり・自社広告なし")).filter(Boolean);
+  return value.split(" / ").map((part) => {
+    const clean = part.trim().replace("1ページ目にいない", "圏外").replace("PR枠あり・自社広告なし", "圏外");
+    const match = clean.match(/^(PC|SP|スマホ)\s+(.+)$/);
+    return match ? { device: match[1], status: match[2] } : { device: "", status: clean };
+  }).filter((part) => part.status);
 }
 
 function metricKey(itemCode: string, keyword: string) {
@@ -467,7 +471,7 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
                   <span><small>クリック</small><strong>{(rec?.clicks ?? 0).toLocaleString("ja-JP")}</strong></span>
                   <span><small>売上</small><strong>{yenNumber(rec?.salesAmount ?? 0)}</strong></span>
                   <span><small>ROAS</small><strong>{roas == null ? "-" : `${Math.round(roas)}%`}</strong></span>
-                  <span className="metric-wide position-metric"><small>検索位置{positionKeyword ? `（${positionKeyword}）` : ""}</small><strong className="position-value">{positionParts(position).map((part) => <span key={part}>{part}</span>)}</strong></span>
+                  <span className="metric-wide position-metric"><small>検索位置{positionKeyword ? `（${positionKeyword}）` : ""}</small><strong className="position-value">{positionParts(position).map((part) => <span key={`${part.device}-${part.status}`}><b>{part.device}</b><em>{part.status}</em></span>)}</strong></span>
                   {positionRows.length > 1 ? <span className="metric-wide position-list"><small>検索KW別</small><strong>{positionRows.map((row) => `${row.keyword}: ${row.position}`).join(" / ")}</strong></span> : null}
                 </div>
                 <div className="product-card-status">
@@ -583,7 +587,7 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
           <ul className="meta-list compact">
             <li><b>対象</b><small>自動調整候補だけでなく、RPP設定中の全商品CPC/キーワードCPC</small></li>
             <li><b>除外ON/OFF</b><small>商品単位でCSV出力。RMS本番反映はCSV確認後に別途実行</small></li>
-            <li><b>検索位置</b><small>「PR枠あり・自社広告なし」=PR枠はあるが自社広告が出ていない。「広告枠なし」=その検索KWで楽天側のRPP広告枠自体が出ていない。</small></li>
+            <li><b>検索位置</b><small>「圏外」=PR枠はあるが自社広告が1ページ目に出ていない。「広告枠なし」=その検索KWで楽天側のRPP広告枠自体が出ていない。</small></li>
             <li><b>担当別保存済み</b><small>{Object.entries(grouped).map(([owner, count]) => `${owner}:${count}`).join(" / ") || "未設定"}</small></li>
           </ul>
         </div>
