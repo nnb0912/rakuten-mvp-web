@@ -78,6 +78,7 @@ const POSITION_GOAL_OPTIONS: { value: RppPositionGoal; label: string }[] = [
   { value: "TOP_5", label: "RPP広告5位以内" },
   { value: "TOP_3", label: "RPP広告3位以内" },
 ];
+const PC_POSITION_GOAL_OPTIONS = POSITION_GOAL_OPTIONS.filter((option) => option.value !== "TOP_7");
 
 function yen(value: number | null) {
   return value == null ? "-" : `${value.toLocaleString("ja-JP")}円`;
@@ -129,6 +130,11 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
     }
     return map;
   }, [configuredTargets, targetMap]);
+  const savedTargetCountByItemCode = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const target of targets) map.set(target.itemCode, (map.get(target.itemCode) ?? 0) + 1);
+    return map;
+  }, [targets]);
   const grouped = useMemo(() => targets.reduce<Record<string, number>>((acc, row) => {
     acc[row.owner || "担当未設定"] = (acc[row.owner || "担当未設定"] ?? 0) + 1;
     return acc;
@@ -174,6 +180,7 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
   })), [exclusionProducts, exclusionOverrides]);
   const exclusionStateMap = useMemo(() => new Map(exclusionRows.map((row) => [row.itemCode, row])), [exclusionRows]);
   const exclusionChanged = exclusionRows.filter((row) => row.currentExcluded !== row.excluded);
+  const filteredExcludedProducts = exclusionRows.filter((row) => row.currentExcluded && (ownerFilter === "全て" || (row.owner || "担当未設定") === ownerFilter));
   const searchWordOptions = useMemo(() => {
     const itemCode = form.itemCode.trim().toLowerCase();
     if (!itemCode) return [] as string[];
@@ -203,6 +210,10 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
   function openTargetForm(nextForm: FormState) {
     setForm(nextForm);
     setTimeout(() => targetFormRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 0);
+  }
+
+  function excludedProductToForm(row: RppExclusionProduct): FormState {
+    return { ...blank, itemCode: row.itemCode, keyword: "商品CPC", owner: row.owner ?? "", searchKeywords: "" };
   }
 
   function addSearchWord(word: string) {
@@ -466,6 +477,36 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
           })}
           {!filteredConfiguredTargets.length ? <p>この担当のRPP設定中商品/KWはありません。</p> : null}
         </div>
+        {filteredExcludedProducts.length ? (
+          <div className="excluded-product-block">
+            <div className="section-heading compact-heading">
+              <div>
+                <h3>除外中商品（広告ON戻し）</h3>
+                <p>除外中の商品を広告ONに戻すには、商品内に目標が1つ以上必要です。</p>
+              </div>
+              <span className="status-pill approval-rejected">除外中 {filteredExcludedProducts.length}件</span>
+            </div>
+            <div className="excluded-product-grid">
+              {filteredExcludedProducts.slice(0, 80).map((row) => {
+                const savedCount = savedTargetCountByItemCode.get(row.itemCode) ?? 0;
+                const canTurnOn = savedCount > 0;
+                const changed = row.currentExcluded !== row.excluded;
+                return (
+                  <article className="excluded-product-row" key={row.itemCode}>
+                    <div><b>{row.itemCode}</b><br /><small>{row.owner || "担当未設定"}</small></div>
+                    <span><small>商品CPC</small><strong>{yen(row.itemCpc)}</strong></span>
+                    <span><small>保存目標</small><strong>{savedCount}件</strong></span>
+                    <div className="card-actions excluded-actions">
+                      <button disabled={busy || !canTurnOn} type="button" onClick={() => toggleExcluded(row.itemCode, canTurnOn)} title={!canTurnOn ? "先に目標設定を1つ作成してください" : undefined}>{changed ? "元に戻す" : "広告ONに戻す"}</button>
+                      <button disabled={busy} type="button" onClick={() => openTargetForm(excludedProductToForm(row))}>目標設定</button>
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+            {filteredExcludedProducts.length > 80 ? <p>除外中商品は先頭80件だけ表示しています。担当タブで絞り込んでください。</p> : null}
+          </div>
+        ) : null}
       </section>
 
       <div className="grid two target-grid">
@@ -502,7 +543,7 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
             <label>ROAS最低<input type="number" min="0" step="10" value={form.roasFloor} onChange={(e) => patchForm("roasFloor", e.target.value)} /></label>
             <label>PC検索位置目標
               <select value={form.pcPositionGoal} onChange={(e) => patchForm("pcPositionGoal", e.target.value as RppPositionGoal)}>
-                {POSITION_GOAL_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                {PC_POSITION_GOAL_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
               </select>
             </label>
             <label>SP検索位置目標
