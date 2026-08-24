@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, type FormEvent } from "react";
+import { useMemo, useRef, useState, type FormEvent } from "react";
 import configuredTargetsSnapshot from "@/data/rpp_configured_targets.json";
 import seoKeywords from "@/data/seo_keywords.json";
 import type { RppRecommendationWithApproval } from "@/lib/rppRecommendations";
@@ -97,6 +97,7 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
   const [excludeFilter, setExcludeFilter] = useState<"active" | "excluded" | "all">("active");
   const [ownerFilter, setOwnerFilter] = useState("全て");
   const [exclusionOverrides, setExclusionOverrides] = useState<Record<string, boolean>>({});
+  const targetFormRef = useRef<HTMLFormElement | null>(null);
 
   const targetMap = useMemo(() => new Map(targets.map((row) => [row.id, row])), [targets]);
   const positionSnapshotMap = useMemo(() => {
@@ -190,6 +191,11 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
 
   function patchForm<K extends keyof FormState>(key: K, value: FormState[K]) {
     setForm((current) => ({ ...current, [key]: value }));
+  }
+
+  function openTargetForm(nextForm: FormState) {
+    setForm(nextForm);
+    setTimeout(() => targetFormRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 0);
   }
 
   function addSearchWord(word: string) {
@@ -411,8 +417,6 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
                   </div>
                   <h3>{cfg.keyword}</h3>
                   <small>{cfg.itemName}</small>
-                  {!row ? <div className="target-missing-alert">目標未設定：RMSから直接広告設定された可能性があります。先にこのRPP設定KWの目標を作成してください。</div> : null}
-                  {itemTargetCompletion.saved === 0 ? <div className="target-missing-alert target-missing-alert-soft">商品内の目標保存 0/{itemTargetCompletion.total}件：1つ以上目標作成まで除外解除不可</div> : null}
                 </div>
                 <div className="product-card-metrics">
                   <span><small>商品CPC</small><strong>{yen(cfg.itemCpc)}</strong></span>
@@ -425,7 +429,7 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
                   {positionRows.length > 1 ? <span className="metric-wide position-list"><small>検索KW別</small><strong>{positionRows.map((row) => `${row.keyword}: ${row.position}`).join(" / ")}</strong></span> : null}
                 </div>
                 <div className="product-card-status">
-                  {row ? <small>検索調査KW {(row.searchKeywords ?? []).join(" / ") || "未設定"}<br />CTR {row.ctrGoal}% / CVR {row.cvrGoal}% / ROAS最低 {row.roasFloor}%<br />{positionGoalLabel(row.positionGoal)} / {row.policy}</small> : <span className="status-pill approval-held">目標未設定</span>}
+                  {row ? <small>検索調査KW {(row.searchKeywords ?? []).join(" / ") || "未設定"}<br />CTR {row.ctrGoal}% / CVR {row.cvrGoal}% / ROAS最低 {row.roasFloor}%<br />{positionGoalLabel(row.positionGoal)} / {row.policy}</small> : <div className="target-status-compact"><span className="status-pill approval-held">目標未設定</span><small>商品内 {itemTargetCompletion.saved}/{itemTargetCompletion.total}件</small></div>}
                 </div>
                 <div className="approval-actions card-actions">
                   <div className="product-exclusion-action">
@@ -440,7 +444,7 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
                       {currentExcluded ? "除外解除" : "広告除外ON"}
                     </button>
                   </div>
-                  <button disabled={busy} type="button" onClick={() => setForm(row ? toForm(row) : configuredToForm(cfg))}>{row ? "編集" : "目標作成"}</button>
+                  <button disabled={busy} type="button" onClick={() => openTargetForm(row ? toForm(row) : configuredToForm(cfg))}>目標設定</button>
                   {row ? <button disabled={busy} type="button" onClick={() => deleteTarget(row.id)}>削除</button> : null}
                 </div>
               </article>
@@ -492,7 +496,7 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
       </section>
 
       <div className="grid two target-grid">
-        <form className="target-form" onSubmit={saveTarget}>
+        <form className="target-form" ref={targetFormRef} onSubmit={saveTarget}>
           <div className="form-row two-cols">
             <label>商品管理番号<input value={form.itemCode} onChange={(e) => patchForm("itemCode", e.target.value)} placeholder="r0606" required /></label>
             <label>RPP設定KW<input value={form.keyword} onChange={(e) => patchForm("keyword", e.target.value)} placeholder="まな板 / 商品CPC" required /></label>
