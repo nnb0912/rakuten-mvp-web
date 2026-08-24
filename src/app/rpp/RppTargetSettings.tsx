@@ -71,10 +71,6 @@ function configuredToForm(row: RppConfiguredTarget): FormState {
   return { ...blank, itemCode: row.itemCode, keyword: row.keyword, searchKeywords: defaultSearchKeyword, owner: row.owner ?? "" };
 }
 
-function configuredKeywordToForm(row: RppConfiguredTarget, searchKeyword: string): FormState {
-  return { ...blank, itemCode: row.itemCode, keyword: searchKeyword, searchKeywords: searchKeyword, owner: row.owner ?? "" };
-}
-
 function positionGoalLabel(goal: RppPositionGoal) {
   if (goal === "TOP_3") return "RPP広告3位以内";
   if (goal === "TOP_5") return "RPP広告5位以内";
@@ -141,6 +137,7 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
   const [message, setMessage] = useState<string | null>(null);
   const [ownerFilter, setOwnerFilter] = useState("全て");
   const [exclusionSearch, setExclusionSearch] = useState("");
+  const [showExcludedProducts, setShowExcludedProducts] = useState(false);
   const [exclusionOverrides, setExclusionOverrides] = useState<Record<string, boolean>>({});
   const targetFormRef = useRef<HTMLFormElement | null>(null);
 
@@ -520,7 +517,6 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
                     </button>
                   </div>
                   <button disabled={busy} type="button" onClick={() => openTargetForm(row ? toForm(row) : configuredToForm(cfg))}>目標設定</button>
-                  {cfg.source === "商品CPC" && positionKeyword ? <button disabled={busy} type="button" onClick={() => openTargetForm(configuredKeywordToForm(cfg, positionKeyword))}>KW別目標</button> : null}
                   <button disabled={busy} type="button" onClick={() => downloadCpcCsv(cfg)}>CPC調整</button>
                   {row ? <button disabled={busy} type="button" onClick={() => deleteTarget(row.id)}>削除</button> : null}
                 </div>
@@ -536,8 +532,12 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
                 <h3>除外中商品（広告ON戻し）</h3>
                 <p>除外中の商品を広告ONに戻すには、商品内に目標が1つ以上必要です。</p>
               </div>
-              <span className="status-pill approval-rejected">除外中 {filteredExcludedProducts.length}件</span>
+              <button className="secondary-button compact-button" type="button" onClick={() => setShowExcludedProducts((current) => !current)}>
+                {showExcludedProducts ? "閉じる" : `開く（除外中 ${excludedProductsForOwner.length}件）`}
+              </button>
             </div>
+            {showExcludedProducts ? (
+              <>
             <label className="excluded-search">商品検索<input value={exclusionSearch} onChange={(e) => setExclusionSearch(e.target.value)} placeholder="商品番号・商品名・担当で検索" /></label>
             <div className="excluded-product-grid">
               {filteredExcludedProducts.slice(0, 80).map((row) => {
@@ -559,6 +559,8 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
               {!filteredExcludedProducts.length ? <p>検索に一致する除外中商品はありません。</p> : null}
             </div>
             {filteredExcludedProducts.length > 80 ? <p>除外中商品は先頭80件だけ表示しています。担当タブで絞り込んでください。</p> : null}
+              </>
+            ) : null}
           </div>
         ) : null}
       </section>

@@ -45,19 +45,26 @@ export async function POST(request: Request) {
       });
     }
 
-    const scriptPath = path.join(RPP_PROJECT_DIR, "rpp_apply_exclusion_upload.py");
+    const projectScriptPath = path.join(RPP_PROJECT_DIR, "rpp_apply_exclusion_upload.py");
+    const bundledScriptPath = path.join(process.cwd(), "scripts", "rpp_apply_exclusion_upload.py");
+    let scriptPath = projectScriptPath;
     try {
       await fs.access(scriptPath);
     } catch {
-      return Response.json({
-        error: "RMS自動反映ONですが、アップロード処理がサーバーに未配置です。CSVのみ生成しました。",
-        csvPath,
-        changes: changes.length,
-        productionChange: false,
-        missingScript: scriptPath,
-      }, { status: 501 });
+      scriptPath = bundledScriptPath;
+      try {
+        await fs.access(scriptPath);
+      } catch {
+        return Response.json({
+          error: "RMS自動反映ONですが、アップロード処理がサーバーに未配置です。CSVのみ生成しました。",
+          csvPath,
+          changes: changes.length,
+          productionChange: false,
+          missingScript: projectScriptPath,
+        }, { status: 501 });
+      }
     }
-    const child = spawn("python3", [scriptPath, "--csv", csvPath, "--execute"], { cwd: RPP_PROJECT_DIR, env: process.env });
+    const child = spawn("python3", [scriptPath, "--csv", csvPath, "--execute", "--final-submit", "--confirm=RMS_EXCLUSION_UPLOAD"], { cwd: RPP_PROJECT_DIR, env: process.env });
     let output = "";
     let errorOutput = "";
     child.stdout.on("data", (chunk) => { output += chunk.toString(); });
