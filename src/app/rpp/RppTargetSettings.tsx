@@ -380,7 +380,7 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
       <section className="panel product-card-panel">
         <div className="section-heading">
           <div>
-            <h2>{ownerFilter === "全て" ? "商品/KW別カード" : `${ownerFilter}の商品/KW`}</h2>
+            <h2>{ownerFilter === "全て" ? "商品/KW別一覧" : `${ownerFilter}の商品/KW`}</h2>
             <p>担当タブに合わせて、この一覧だけが切り替わります。</p>
           </div>
           <span className="status-pill status-hold">表示 {filteredConfiguredTargets.length}件</span>
@@ -401,17 +401,19 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
             const roas = rec?.roas ?? (rec?.spend && rec.salesAmount != null ? Math.round((rec.salesAmount / rec.spend) * 100) : null);
             return (
               <article className="product-card" key={cfg.id}>
-                <div className="product-card-head">
-                  <div>
-                    <b>{cfg.itemCode}</b>
-                    <span className="status-pill status-hold">{cfg.source}</span>
+                <div className="product-row-info">
+                  <div className="product-card-head">
+                    <div>
+                      <b>{cfg.itemCode}</b>
+                      <span className="status-pill status-hold">{cfg.source}</span>
+                    </div>
+                    <span className="owner-mini-pill">{row?.owner || cfg.owner || "担当未設定"}</span>
                   </div>
-                  <span className="owner-mini-pill">{row?.owner || cfg.owner || "担当未設定"}</span>
+                  <h3>{cfg.keyword}</h3>
+                  <small>{cfg.itemName}</small>
+                  {!row ? <div className="target-missing-alert">目標未設定：RMSから直接広告設定された可能性があります。先にこのRPP設定KWの目標を作成してください。</div> : null}
+                  {itemTargetCompletion.saved === 0 ? <div className="target-missing-alert target-missing-alert-soft">商品内の目標保存 0/{itemTargetCompletion.total}件：1つ以上目標作成まで除外解除不可</div> : null}
                 </div>
-                <h3>{cfg.keyword}</h3>
-                <small>{cfg.itemName}</small>
-                {!row ? <div className="target-missing-alert">目標未設定：RMSから直接広告設定された可能性があります。先にこのRPP設定KWの目標を作成してください。</div> : null}
-                {itemTargetCompletion.saved === 0 ? <div className="target-missing-alert target-missing-alert-soft">商品内の目標保存 0/{itemTargetCompletion.total}件：1つ以上目標作成まで除外解除不可</div> : null}
                 <div className="product-card-metrics">
                   <span><small>商品CPC</small><strong>{yen(cfg.itemCpc)}</strong></span>
                   <span><small>KW CPC</small><strong>{yen(cfg.keywordCpc)}</strong></span>
