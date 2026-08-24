@@ -196,6 +196,8 @@ small { color: var(--muted); line-height: 1.45; }
   .five-cols { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .product-card { grid-template-columns: 1fr; }
   .product-card-status, .product-card .card-actions { grid-column: auto; grid-row: auto; }
+  .product-card .card-actions { order: 3; }
+  .product-card-status { order: 4; }
   .product-card .card-actions, .product-exclusion-action { justify-content: flex-start; }
   .excluded-product-row { grid-template-columns: 1fr; align-items: start; }
   .product-card-status { margin-top: 10px; }
