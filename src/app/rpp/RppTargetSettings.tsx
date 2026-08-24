@@ -60,8 +60,14 @@ function toForm(row: RppAlertTarget): FormState {
   };
 }
 
+function representativeKeyword(row: RppConfiguredTarget, snapshot?: RppConfiguredTarget) {
+  const seoRepresentative = seoWordsForItem(row.itemCode)[0];
+  if (row.keyword === "商品CPC" && seoRepresentative) return seoRepresentative;
+  return (row.rppPositionKeyword || snapshot?.rppPositionKeyword || row.keyword).replace("（代表KW）", "");
+}
+
 function configuredToForm(row: RppConfiguredTarget): FormState {
-  const defaultSearchKeyword = row.keyword === "商品CPC" ? (row.rppPositionKeyword?.replace("（代表KW）", "") ?? "") : row.keyword;
+  const defaultSearchKeyword = row.keyword === "商品CPC" ? representativeKeyword(row) : row.keyword;
   return { ...blank, itemCode: row.itemCode, keyword: row.keyword, searchKeywords: defaultSearchKeyword, owner: row.owner ?? "" };
 }
 
@@ -223,7 +229,7 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
   }
 
   function excludedProductToForm(row: RppExclusionProduct): FormState {
-    return { ...blank, itemCode: row.itemCode, keyword: "商品CPC", owner: row.owner ?? "", searchKeywords: "" };
+    return { ...blank, itemCode: row.itemCode, keyword: "商品CPC", owner: row.owner ?? "", searchKeywords: seoWordsForItem(row.itemCode)[0] ?? "" };
   }
 
   function addSearchWord(word: string) {
@@ -432,7 +438,7 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
             const rec = recommendationMap.get(metricKey(cfg.itemCode, cfg.keyword));
             const snapshot = positionSnapshotMap.get(cfg.id);
             const position = rec?.rppPosition || cfg.rppPosition || snapshot?.rppPosition || "未測定";
-            const positionKeyword = cfg.rppPositionKeyword || snapshot?.rppPositionKeyword;
+            const positionKeyword = representativeKeyword(cfg, snapshot);
             const positionRows = (cfg.rppPositions || snapshot?.rppPositions || (positionKeyword ? [{ keyword: positionKeyword, position }] : [])).filter((row) => row.keyword && row.position);
             const exclusionState = exclusionStateMap.get(cfg.itemCode);
             const currentExcluded = exclusionState?.currentExcluded ?? false;
