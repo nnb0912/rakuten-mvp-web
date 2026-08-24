@@ -3,7 +3,7 @@ import path from "path";
 import configuredTargetsSnapshot from "@/data/rpp_configured_targets.json";
 import { pool } from "@/lib/db";
 
-export type RppPositionGoal = "FIRST_PAGE" | "TOP_5" | "TOP_3";
+export type RppPositionGoal = "FIRST_PAGE" | "TOP_7" | "TOP_5" | "TOP_3";
 export type RppOperationPolicy = "攻め" | "維持" | "テスト" | "停止候補";
 
 export type RppAlertTarget = {
@@ -15,6 +15,8 @@ export type RppAlertTarget = {
   cvrGoal: number;
   roasFloor: number;
   positionGoal: RppPositionGoal;
+  pcPositionGoal: RppPositionGoal;
+  spPositionGoal: RppPositionGoal;
   policy: RppOperationPolicy;
   note: string;
   searchKeywords: string[];
@@ -52,6 +54,8 @@ export type RppAlertTargetInput = {
   cvrGoal?: number;
   roasFloor?: number;
   positionGoal?: RppPositionGoal;
+  pcPositionGoal?: RppPositionGoal;
+  spPositionGoal?: RppPositionGoal;
   policy?: RppOperationPolicy;
   note?: string;
   searchKeywords?: string[] | string;
@@ -68,7 +72,7 @@ const SNAPSHOT_TARGETS_PATH = path.join(process.cwd(), "src", "data", "rpp_confi
 const SNAPSHOT_EXCLUSION_PRODUCTS_PATH = path.join(process.cwd(), "src", "data", "rpp_exclusion_products.json");
 const SNAPSHOT_OWNER_MAP_PATH = path.join(process.cwd(), "src", "data", "rpp_owner_map.json");
 
-const POSITION_GOALS: RppPositionGoal[] = ["FIRST_PAGE", "TOP_5", "TOP_3"];
+const POSITION_GOALS: RppPositionGoal[] = ["FIRST_PAGE", "TOP_7", "TOP_5", "TOP_3"];
 const POLICIES: RppOperationPolicy[] = ["攻め", "維持", "テスト", "停止候補"];
 
 function cleanText(value: unknown) {
@@ -107,6 +111,8 @@ function normalizeInput(input: RppAlertTargetInput) {
     throw new Error("商品CPCの場合は検索調査キーワードを1つ以上入力してください");
   }
   const positionGoal = POSITION_GOALS.includes(input.positionGoal as RppPositionGoal) ? input.positionGoal as RppPositionGoal : "FIRST_PAGE";
+  const pcPositionGoal = POSITION_GOALS.includes(input.pcPositionGoal as RppPositionGoal) ? input.pcPositionGoal as RppPositionGoal : positionGoal;
+  const spPositionGoal = POSITION_GOALS.includes(input.spPositionGoal as RppPositionGoal) ? input.spPositionGoal as RppPositionGoal : positionGoal;
   const policy = POLICIES.includes(input.policy as RppOperationPolicy) ? input.policy as RppOperationPolicy : "維持";
   return {
     itemCode,
@@ -116,6 +122,8 @@ function normalizeInput(input: RppAlertTargetInput) {
     cvrGoal: finiteNumber(input.cvrGoal, 5),
     roasFloor: finiteNumber(input.roasFloor, 500),
     positionGoal,
+    pcPositionGoal,
+    spPositionGoal,
     policy,
     note: cleanText(input.note),
     searchKeywords,
@@ -217,13 +225,15 @@ async function readRawTargets(): Promise<RppAlertTarget[]> {
       cvr_goal: string | number;
       roas_floor: string | number;
       position_goal: RppPositionGoal;
+      pc_position_goal: RppPositionGoal | null;
+      sp_position_goal: RppPositionGoal | null;
       policy: RppOperationPolicy;
       note: string | null;
       search_keywords: string[] | string | null;
       created_at: Date | string;
       updated_at: Date | string;
     }>(
-      `select id, item_code, keyword, owner, ctr_goal, cvr_goal, roas_floor, position_goal, policy, note, search_keywords, created_at, updated_at
+      `select id, item_code, keyword, owner, ctr_goal, cvr_goal, roas_floor, position_goal, pc_position_goal, sp_position_goal, policy, note, search_keywords, created_at, updated_at
        from ${TARGETS_TABLE}
        order by item_code asc, keyword asc`
     );
@@ -236,6 +246,8 @@ async function readRawTargets(): Promise<RppAlertTarget[]> {
       cvrGoal: Number(row.cvr_goal),
       roasFloor: Number(row.roas_floor),
       positionGoal: row.position_goal,
+      pcPositionGoal: row.pc_position_goal ?? row.position_goal,
+      spPositionGoal: row.sp_position_goal ?? row.position_goal,
       policy: row.policy,
       note: row.note ?? "",
       searchKeywords: Array.isArray(row.search_keywords)
@@ -269,6 +281,8 @@ async function ensureRppAlertTargetsTable() {
       cvr_goal numeric not null default 5,
       roas_floor numeric not null default 500,
       position_goal text not null default 'FIRST_PAGE',
+      pc_position_goal text,
+      sp_position_goal text,
       policy text not null default '維持',
       note text not null default '',
       search_keywords jsonb not null default '[]'::jsonb,
@@ -276,6 +290,9 @@ async function ensureRppAlertTargetsTable() {
       updated_at timestamptz not null default now()
     )
   `);
+  await pool.query(`alter table ${TARGETS_TABLE} add column if not exists pc_position_goal text`);
+  await pool.query(`alter table ${TARGETS_TABLE} add column if not exists sp_position_goal text`);
+  await pool.query(`update ${TARGETS_TABLE} set pc_position_goal = coalesce(pc_position_goal, position_goal, 'FIRST_PAGE'), sp_position_goal = coalesce(sp_position_goal, position_goal, 'FIRST_PAGE') where pc_position_goal is null or sp_position_goal is null`);
 }
 
 async function readLegacyJsonTargets(): Promise<RppAlertTarget[]> {
@@ -300,8 +317,8 @@ async function migrateLegacyJsonTargetsIfDbEmpty() {
 async function upsertRawTarget(target: RppAlertTarget) {
   await ensureRppAlertTargetsTable();
   await pool!.query(
-    `insert into ${TARGETS_TABLE} (id, item_code, keyword, owner, ctr_goal, cvr_goal, roas_floor, position_goal, policy, note, search_keywords, created_at, updated_at)
-     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12, $13)
+    `insert into ${TARGETS_TABLE} (id, item_code, keyword, owner, ctr_goal, cvr_goal, roas_floor, position_goal, pc_position_goal, sp_position_goal, policy, note, search_keywords, created_at, updated_at)
+     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::jsonb, $14, $15)
      on conflict (id) do update set
        item_code = excluded.item_code,
        keyword = excluded.keyword,
@@ -310,11 +327,13 @@ async function upsertRawTarget(target: RppAlertTarget) {
        cvr_goal = excluded.cvr_goal,
        roas_floor = excluded.roas_floor,
        position_goal = excluded.position_goal,
+       pc_position_goal = excluded.pc_position_goal,
+       sp_position_goal = excluded.sp_position_goal,
        policy = excluded.policy,
        note = excluded.note,
        search_keywords = excluded.search_keywords,
        updated_at = excluded.updated_at`,
-    [target.id, target.itemCode, target.keyword, target.owner, target.ctrGoal, target.cvrGoal, target.roasFloor, target.positionGoal, target.policy, target.note, JSON.stringify(target.searchKeywords), target.createdAt, target.updatedAt]
+    [target.id, target.itemCode, target.keyword, target.owner, target.ctrGoal, target.cvrGoal, target.roasFloor, target.positionGoal, target.pcPositionGoal ?? target.positionGoal, target.spPositionGoal ?? target.positionGoal, target.policy, target.note, JSON.stringify(target.searchKeywords), target.createdAt, target.updatedAt]
   );
 }
 
@@ -487,5 +506,6 @@ export async function seedMissingRppAlertTargets(defaults: Partial<RppAlertTarge
 export function positionGoalLabel(goal: RppPositionGoal) {
   if (goal === "TOP_3") return "RPP広告3位以内";
   if (goal === "TOP_5") return "RPP広告5位以内";
+  if (goal === "TOP_7") return "RPP広告7位以内";
   return "RPP広告1ページ目内";
 }

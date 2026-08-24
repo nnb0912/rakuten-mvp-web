@@ -22,6 +22,8 @@ type FormState = {
   cvrGoal: string;
   roasFloor: string;
   positionGoal: RppPositionGoal;
+  pcPositionGoal: RppPositionGoal;
+  spPositionGoal: RppPositionGoal;
   policy: RppOperationPolicy;
   note: string;
 };
@@ -35,6 +37,8 @@ const blank: FormState = {
   cvrGoal: "5",
   roasFloor: "500",
   positionGoal: "FIRST_PAGE",
+  pcPositionGoal: "FIRST_PAGE",
+  spPositionGoal: "TOP_7",
   policy: "維持",
   note: "",
 };
@@ -49,6 +53,8 @@ function toForm(row: RppAlertTarget): FormState {
     cvrGoal: String(row.cvrGoal),
     roasFloor: String(row.roasFloor),
     positionGoal: row.positionGoal,
+    pcPositionGoal: row.pcPositionGoal ?? row.positionGoal,
+    spPositionGoal: row.spPositionGoal ?? row.positionGoal,
     policy: row.policy,
     note: row.note,
   };
@@ -62,8 +68,16 @@ function configuredToForm(row: RppConfiguredTarget): FormState {
 function positionGoalLabel(goal: RppPositionGoal) {
   if (goal === "TOP_3") return "RPP広告3位以内";
   if (goal === "TOP_5") return "RPP広告5位以内";
+  if (goal === "TOP_7") return "RPP広告7位以内";
   return "RPP広告1ページ目内";
 }
+
+const POSITION_GOAL_OPTIONS: { value: RppPositionGoal; label: string }[] = [
+  { value: "FIRST_PAGE", label: "RPP広告1ページ目内" },
+  { value: "TOP_7", label: "RPP広告7位以内" },
+  { value: "TOP_5", label: "RPP広告5位以内" },
+  { value: "TOP_3", label: "RPP広告3位以内" },
+];
 
 function yen(value: number | null) {
   return value == null ? "-" : `${value.toLocaleString("ja-JP")}円`;
@@ -261,6 +275,7 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
     try {
       const payload = {
         ...form,
+        positionGoal: form.pcPositionGoal,
         searchKeywords: form.searchKeywords.split(/[\n,、]+/).map((kw) => kw.trim()).filter(Boolean),
         ctrGoal: Number(form.ctrGoal),
         cvrGoal: Number(form.cvrGoal),
@@ -295,7 +310,7 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
       const res = await fetch("/api/rpp/targets", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "seedMissing", ctrGoal: 5, cvrGoal: 5, roasFloor: 500, positionGoal: "FIRST_PAGE", policy: "維持" }),
+        body: JSON.stringify({ action: "seedMissing", ctrGoal: 5, cvrGoal: 5, roasFloor: 500, positionGoal: "FIRST_PAGE", pcPositionGoal: "FIRST_PAGE", spPositionGoal: "TOP_7", policy: "維持" }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "一括作成に失敗しました");
@@ -428,7 +443,7 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
                   {positionRows.length > 1 ? <span className="metric-wide position-list"><small>検索KW別</small><strong>{positionRows.map((row) => `${row.keyword}: ${row.position}`).join(" / ")}</strong></span> : null}
                 </div>
                 <div className="product-card-status">
-                  {row ? <small>検索調査KW {(row.searchKeywords ?? []).join(" / ") || "未設定"}<br />CTR {row.ctrGoal}% / CVR {row.cvrGoal}% / ROAS最低 {row.roasFloor}%<br />{positionGoalLabel(row.positionGoal)} / {row.policy}</small> : <div className="target-status-compact"><span className="status-pill approval-held">目標未設定</span><small>商品内 {itemTargetCompletion.saved}/{itemTargetCompletion.total}件</small></div>}
+                  {row ? <small>検索調査KW {(row.searchKeywords ?? []).join(" / ") || "未設定"}<br />CTR {row.ctrGoal}% / CVR {row.cvrGoal}% / ROAS最低 {row.roasFloor}%<br />PC {positionGoalLabel(row.pcPositionGoal ?? row.positionGoal)} / SP {positionGoalLabel(row.spPositionGoal ?? row.positionGoal)} / {row.policy}</small> : <div className="target-status-compact"><span className="status-pill approval-held">目標未設定</span><small>商品内 {itemTargetCompletion.saved}/{itemTargetCompletion.total}件</small></div>}
                 </div>
                 <div className="approval-actions card-actions">
                   <div className="product-exclusion-action">
@@ -481,15 +496,18 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
               </select>
             </label>
           </div>
-          <div className="form-row four-cols">
+          <div className="form-row five-cols">
             <label>CTR目標<input type="number" min="0" step="0.1" value={form.ctrGoal} onChange={(e) => patchForm("ctrGoal", e.target.value)} /></label>
             <label>CVR目標<input type="number" min="0" step="0.1" value={form.cvrGoal} onChange={(e) => patchForm("cvrGoal", e.target.value)} /></label>
             <label>ROAS最低<input type="number" min="0" step="10" value={form.roasFloor} onChange={(e) => patchForm("roasFloor", e.target.value)} /></label>
-            <label>検索位置目標
-              <select value={form.positionGoal} onChange={(e) => patchForm("positionGoal", e.target.value as RppPositionGoal)}>
-                <option value="FIRST_PAGE">RPP広告1ページ目内</option>
-                <option value="TOP_5">RPP広告5位以内</option>
-                <option value="TOP_3">RPP広告3位以内</option>
+            <label>PC検索位置目標
+              <select value={form.pcPositionGoal} onChange={(e) => patchForm("pcPositionGoal", e.target.value as RppPositionGoal)}>
+                {POSITION_GOAL_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+              </select>
+            </label>
+            <label>SP検索位置目標
+              <select value={form.spPositionGoal} onChange={(e) => patchForm("spPositionGoal", e.target.value as RppPositionGoal)}>
+                {POSITION_GOAL_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
               </select>
             </label>
           </div>
