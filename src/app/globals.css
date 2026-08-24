@@ -180,12 +180,23 @@ small { color: var(--muted); line-height: 1.45; }
 .meta-list.compact li { display: grid; }
 .target-table th:first-child, .target-table td:first-child { width: 18%; }
 
+@media (max-width: 1180px) {
+  .product-card {
+    grid-template-columns: minmax(170px, 1fr) minmax(260px, 1.4fr) minmax(132px, max-content);
+  }
+  .product-card-status { grid-column: 1 / 3; }
+  .product-card .card-actions { grid-column: 3; grid-row: 1 / span 2; align-self: start; }
+  .product-exclusion-action { justify-content: flex-end; }
+}
+
 @media (max-width: 900px) {
   .cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .two { grid-template-columns: 1fr; }
   .owner-card-grid, .product-card-grid { grid-template-columns: 1fr; }
   .five-cols { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .product-card { grid-template-columns: 1fr; }
+  .product-card-status, .product-card .card-actions { grid-column: auto; grid-row: auto; }
+  .product-card .card-actions, .product-exclusion-action { justify-content: flex-start; }
   .excluded-product-row { grid-template-columns: 1fr; align-items: start; }
   .product-card-status { margin-top: 10px; }
   .card-actions { margin-top: 10px; }
