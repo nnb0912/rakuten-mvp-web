@@ -1,9 +1,6 @@
 import Link from "next/link";
 import { readRppDashboardMeta, readRppRecommendations } from "@/lib/rppRecommendations";
 import { readRppAlertTargets } from "@/lib/rppTargets";
-import RppApprovalTable from "./RppApprovalTable";
-import RppExportButton from "./RppExportButton";
-import RppApplyButton from "./RppApplyButton";
 import RppTargetSettings from "./RppTargetSettings";
 
 export const dynamic = "force-dynamic";
@@ -36,20 +33,17 @@ export default async function RppPage() {
   const data = await readRppRecommendations();
   const meta = await readRppDashboardMeta();
   const targetData = await readRppAlertTargets();
-  const counts = data.recommendations.reduce<Record<string, number>>((acc, row) => {
-    acc[row.approvalStatus] = (acc[row.approvalStatus] ?? 0) + 1;
-    return acc;
-  }, {});
   const summary = data.summary as { generatedAt?: string; counts?: { raise?: number; lower?: number; hold?: number; ok?: number }; safety?: { productionChange?: boolean } } | null;
   const candidateTotal = (summary?.counts?.raise ?? 0) + (summary?.counts?.lower ?? 0);
+  const missingTargetCount = targetData.configuredTargets.filter((row) => !targetData.targets.some((target) => target.id === row.id)).length;
 
   return (
     <main className="page-shell">
       <section className="hero section-heading">
         <div>
-          <p className="eyebrow">Rakuten RPP / approval workflow</p>
+          <p className="eyebrow">Rakuten RPP / operations</p>
           <h1>RPP広告運用候補</h1>
-          <p>自動提案 → 承認 → CSV生成 → RMS反映チェックまでを確認します。RMS反映は承認済みだけ対象です。</p>
+          <p>担当別の商品/KW一覧から、目標設定・広告除外ON/OFF・RMS反映を確認します。</p>
         </div>
         <Link className="text-link" href="/">MVPトップへ</Link>
       </section>
@@ -58,8 +52,8 @@ export default async function RppPage() {
         <div className="card"><span>上げ候補</span><strong>{summary?.counts?.raise ?? 0}</strong></div>
         <div className="card"><span>下げ候補</span><strong>{summary?.counts?.lower ?? 0}</strong></div>
         <div className="card"><span>保留</span><strong>{summary?.counts?.hold ?? 0}</strong></div>
-        <div className="card"><span>未判断</span><strong>{counts.pending ?? 0}</strong></div>
-        <div className="card"><span>承認済み</span><strong>{counts.approved ?? 0}</strong></div>
+        <div className="card"><span>RPP設定中</span><strong>{targetData.configuredTargets.length}</strong></div>
+        <div className="card"><span>目標未設定</span><strong className={missingTargetCount ? "warn-text" : "ok-text"}>{missingTargetCount}</strong></div>
         <div className="card"><span>データ状態</span><strong className={meta.dataReady ? "ok-text" : "warn-text"}>{meta.dataReady ? "OK" : "要更新"}</strong></div>
       </section>
 
@@ -126,27 +120,6 @@ export default async function RppPage() {
         </div>
       </section>
 
-      <section className="panel">
-        <div className="section-heading">
-          <div>
-            <h2>承認待ち候補</h2>
-            <p>
-              生成日時 {fmtDate(summary?.generatedAt)} / source {data.filePath ? shortPath(data.filePath) : "なし"} / 反映対象承認 {meta.approvedActionableCount}件
-            </p>
-          </div>
-          <div className="inline-links">
-            <RppExportButton />
-            <RppApplyButton />
-            <a className="text-link" href="/api/rpp/recommendations">API JSON</a>
-            <a className="text-link" href="/api/rpp/meta">Meta</a>
-          </div>
-        </div>
-        {data.recommendations.length ? (
-          <RppApprovalTable initialRows={data.recommendations} />
-        ) : (
-          <p>候補ファイルがまだありません。`rpp_auto_recommendations.js` を実行してください。</p>
-        )}
-      </section>
 
       <section className="panel history-panel">
         <h2>RMS反映ログ</h2>

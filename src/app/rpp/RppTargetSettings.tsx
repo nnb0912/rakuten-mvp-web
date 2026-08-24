@@ -121,9 +121,9 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
   }, {}), [targets]);
   const recommendationMap = useMemo(() => new Map(recommendations.map((row) => [metricKey(row.itemCode, row.keyword), row])), [recommendations]);
   const ownerStats = useMemo(() => {
-    const stats = new Map<string, { owner: string; configured: number; saved: number; missing: number; spend: number; clicks: number; sales: number; approved: number; pending: number; firstPage: number; outsidePage: number; unmeasured: number }>();
+    const stats = new Map<string, { owner: string; configured: number; saved: number; missing: number; spend: number; clicks: number; sales: number; firstPage: number; outsidePage: number; unmeasured: number }>();
     const ensure = (owner: string) => {
-      if (!stats.has(owner)) stats.set(owner, { owner, configured: 0, saved: 0, missing: 0, spend: 0, clicks: 0, sales: 0, approved: 0, pending: 0, firstPage: 0, outsidePage: 0, unmeasured: 0 });
+      if (!stats.has(owner)) stats.set(owner, { owner, configured: 0, saved: 0, missing: 0, spend: 0, clicks: 0, sales: 0, firstPage: 0, outsidePage: 0, unmeasured: 0 });
       return stats.get(owner)!;
     };
     for (const cfg of configuredTargets) {
@@ -137,8 +137,7 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
       stat.spend += rec?.spend ?? 0;
       stat.clicks += rec?.clicks ?? 0;
       stat.sales += rec?.salesAmount ?? 0;
-      stat.approved += rec?.approvalStatus === "approved" ? 1 : 0;
-      stat.pending += rec?.approvalStatus === "pending" ? 1 : 0;
+
       const snapshot = positionSnapshotMap.get(cfg.id);
       const position = rec?.rppPosition || cfg.rppPosition || snapshot?.rppPosition;
       if (position) {
@@ -369,7 +368,7 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
                   <span><small>売上</small><strong>{yenNumber(row.sales)}</strong></span>
                   <span><small>ROAS</small><strong>{roas == null ? "-" : `${roas}%`}</strong></span>
                 </div>
-                <small>保存 {row.saved} / 未設定 {row.missing} / 承認 {row.approved} / 未判断 {row.pending}</small>
+                <small>保存 {row.saved} / 未設定 {row.missing}</small>
                 <small>検索位置 1P内 {row.firstPage} / 1P外 {row.outsidePage} / 未測定 {row.unmeasured}</small>
               </button>
             );
