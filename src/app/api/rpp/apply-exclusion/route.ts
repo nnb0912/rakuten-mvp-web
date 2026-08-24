@@ -36,10 +36,13 @@ export async function POST(request: Request) {
 
     if (process.env.RPP_ENABLE_RMS_EXCLUSION_UPLOAD !== "1") {
       return Response.json({
-        error: "RMS自動反映はサーバー側で無効です。RPP_ENABLE_RMS_EXCLUSION_UPLOAD=1 が必要です。",
+        ok: true,
+        productionChange: false,
+        disabled: true,
+        reason: "RMS自動反映はサーバー側で無効です。CSVのみ生成しました。",
         csvPath,
         changes: changes.length,
-      }, { status: 412 });
+      });
     }
 
     const scriptPath = path.join(RPP_PROJECT_DIR, "rpp_apply_exclusion_upload.py");

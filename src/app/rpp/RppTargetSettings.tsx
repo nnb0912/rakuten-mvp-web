@@ -290,7 +290,11 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
       });
       const data = await res.json();
       if (!res.ok) throw new Error(`${data.error ?? "RMS反映に失敗しました"}${data.csvPath ? ` / CSV: ${data.csvPath}` : ""}`);
-      setMessage(`RMS反映を実行しました（${data.changes}商品 / CSV: ${data.csvPath}）`);
+      if (data.productionChange === false || data.disabled) {
+        setMessage(`${data.reason ?? "RMS自動反映は無効です。CSVのみ生成しました。"}（${data.changes}商品 / CSV: ${data.csvPath}）`);
+      } else {
+        setMessage(`RMS反映を実行しました（${data.changes}商品 / CSV: ${data.csvPath}）`);
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
