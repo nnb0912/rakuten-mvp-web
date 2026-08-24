@@ -94,7 +94,6 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
-  const [excludeFilter, setExcludeFilter] = useState<"active" | "excluded" | "all">("active");
   const [ownerFilter, setOwnerFilter] = useState("全て");
   const [exclusionOverrides, setExclusionOverrides] = useState<Record<string, boolean>>({});
   const targetFormRef = useRef<HTMLFormElement | null>(null);
@@ -162,11 +161,6 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
   })), [exclusionProducts, exclusionOverrides]);
   const exclusionStateMap = useMemo(() => new Map(exclusionRows.map((row) => [row.itemCode, row])), [exclusionRows]);
   const exclusionChanged = exclusionRows.filter((row) => row.currentExcluded !== row.excluded);
-  const visibleExclusionRows = exclusionRows.filter((row) => {
-    if (excludeFilter === "active") return !row.currentExcluded;
-    if (excludeFilter === "excluded") return row.currentExcluded;
-    return true;
-  });
   const searchWordOptions = useMemo(() => {
     const itemCode = form.itemCode.trim().toLowerCase();
     if (!itemCode) return [] as string[];
@@ -389,7 +383,13 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
             <h2>{ownerFilter === "全て" ? "商品/KW別一覧" : `${ownerFilter}の商品/KW`}</h2>
             <p>担当タブに合わせて、この一覧だけが切り替わります。</p>
           </div>
-          <span className="status-pill status-hold">表示 {filteredConfiguredTargets.length}件</span>
+          <div className="product-list-actions">
+            <span className="status-pill status-hold">表示 {filteredConfiguredTargets.length}件</span>
+            <span className={exclusionChanged.length ? "status-pill approval-held" : "status-pill status-approved"}>変更予定 {exclusionChanged.length}件</span>
+            <button className="primary-button compact-button" disabled={!exclusionChanged.length || busy} type="button" onClick={applyExclusionToRms}>RMSへ反映</button>
+            <button className="secondary-button compact-button" disabled={!exclusionChanged.length} type="button" onClick={downloadExcludeCsv}>CSV出力</button>
+            <button className="secondary-button compact-button" disabled={!exclusionChanged.length} type="button" onClick={() => setExclusionOverrides({})}>変更を戻す</button>
+          </div>
         </div>
         <div className="product-card-grid">
           {filteredConfiguredTargets.map((cfg) => {
@@ -453,47 +453,6 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
           })}
           {!filteredConfiguredTargets.length ? <p>この担当のRPP設定中商品/KWはありません。</p> : null}
         </div>
-      </section>
-
-
-      <section className="panel exclusion-panel">
-        <div className="section-heading">
-          <div>
-            <h2>RPP除外ON/OFF</h2>
-            <p>申請/承認なしで切替できます。変更予定を作った後、RMSへ反映ボタンで一括アップロードします。</p>
-          </div>
-          <button className="primary-button compact-button" disabled={!exclusionChanged.length || busy} type="button" onClick={applyExclusionToRms}>RMSへ反映</button>
-          <button className="secondary-button compact-button" disabled={!exclusionChanged.length} type="button" onClick={downloadExcludeCsv}>CSV出力</button>
-        </div>
-        <div className="grid cards target-summary-cards">
-          <div className="card"><span>商品CPCあり</span><strong>{exclusionRows.length}</strong></div>
-          <div className="card"><span>配信中</span><strong>{exclusionRows.filter((row) => !row.currentExcluded).length}</strong></div>
-          <div className="card"><span>除外中</span><strong>{exclusionRows.filter((row) => row.currentExcluded).length}</strong></div>
-          <div className="card"><span>変更予定</span><strong className={exclusionChanged.length ? "warn-text" : "ok-text"}>{exclusionChanged.length}</strong></div>
-        </div>
-        <div className="inline-links form-actions">
-          <button className="secondary-button" type="button" onClick={() => setExcludeFilter("active")}>配信中</button>
-          <button className="secondary-button" type="button" onClick={() => setExcludeFilter("excluded")}>除外中</button>
-          <button className="secondary-button" type="button" onClick={() => setExcludeFilter("all")}>全て</button>
-          <button className="secondary-button" disabled={!exclusionChanged.length} type="button" onClick={() => setExclusionOverrides({})}>変更を戻す</button>
-        </div>
-        <table className="wide-table target-table exclusion-table">
-          <thead><tr><th>商品</th><th>CPC</th><th>現在/変更後</th><th>操作</th></tr></thead>
-          <tbody>
-            {visibleExclusionRows.slice(0, 120).map((row) => (
-              <tr key={row.itemCode}>
-                <td><b>{row.itemCode}</b><br /><small>{row.itemName}</small></td>
-                <td>{yen(row.itemCpc)}</td>
-                <td>
-                  <span className={`status-pill ${row.currentExcluded ? "approval-rejected" : "status-approved"}`}>{row.currentExcluded ? "除外ON" : "配信中"}</span>
-                  {row.currentExcluded !== row.excluded ? <small>変更あり（元: {row.excluded ? "除外ON" : "配信中"}）</small> : null}
-                </td>
-                <td><button className="secondary-button" type="button" onClick={() => toggleExcluded(row.itemCode, (itemTargetCompletionMap.get(row.itemCode)?.saved ?? 0) > 0)}>{row.currentExcluded ? "除外OFF" : "除外ON"}</button></td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-        {visibleExclusionRows.length > 120 ? <p>表示は先頭120件です。CSV出力は全件を対象にします。</p> : null}
       </section>
 
       <div className="grid two target-grid">

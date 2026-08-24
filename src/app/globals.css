@@ -111,6 +111,8 @@ small { color: var(--muted); line-height: 1.45; }
 .product-card-metrics .position-list strong { white-space: normal; line-height: 1.5; }
 .owner-card-metrics strong, .product-card-metrics strong { font-size: 14px; }
 .product-card-panel { margin-top: 18px; }
+.product-list-actions { display: flex; justify-content: flex-end; gap: 8px; flex-wrap: wrap; align-items: center; }
+.product-list-actions .primary-button, .product-list-actions .secondary-button { margin: 0; padding: 8px 12px; }
 .product-card-grid { display: grid; grid-template-columns: 1fr; gap: 10px; }
 .product-card {
   display: grid;
