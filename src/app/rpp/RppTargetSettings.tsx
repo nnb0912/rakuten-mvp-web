@@ -110,6 +110,7 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [ownerFilter, setOwnerFilter] = useState("全て");
+  const [exclusionSearch, setExclusionSearch] = useState("");
   const [exclusionOverrides, setExclusionOverrides] = useState<Record<string, boolean>>({});
   const targetFormRef = useRef<HTMLFormElement | null>(null);
 
@@ -180,7 +181,12 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
   })), [exclusionProducts, exclusionOverrides]);
   const exclusionStateMap = useMemo(() => new Map(exclusionRows.map((row) => [row.itemCode, row])), [exclusionRows]);
   const exclusionChanged = exclusionRows.filter((row) => row.currentExcluded !== row.excluded);
-  const filteredExcludedProducts = exclusionRows.filter((row) => row.currentExcluded && (ownerFilter === "全て" || (row.owner || "担当未設定") === ownerFilter));
+  const excludedProductsForOwner = exclusionRows.filter((row) => row.currentExcluded && (ownerFilter === "全て" || (row.owner || "担当未設定") === ownerFilter));
+  const filteredExcludedProducts = excludedProductsForOwner.filter((row) => {
+    const query = exclusionSearch.trim().toLowerCase();
+    if (!query) return true;
+    return [row.itemCode, row.itemName, row.owner || "担当未設定"].some((value) => value.toLowerCase().includes(query));
+  });
   const searchWordOptions = useMemo(() => {
     const itemCode = form.itemCode.trim().toLowerCase();
     if (!itemCode) return [] as string[];
@@ -442,10 +448,11 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
                     <span className="owner-mini-pill">{row?.owner || cfg.owner || "担当未設定"}</span>
                   </div>
                   <h3>{cfg.keyword}</h3>
+                  <small className="product-item-name">{cfg.itemName || "商品名未取得"}</small>
                 </div>
                 <div className="product-card-metrics">
-                  <span><small>商品CPC</small><strong>{yen(cfg.itemCpc)}</strong></span>
-                  <span><small>KW CPC</small><strong>{yen(cfg.keywordCpc)}</strong></span>
+                  <span className="metric-muted"><small>商品CPC</small><strong>{yen(cfg.itemCpc)}</strong></span>
+                  <span className="metric-muted"><small>KW CPC</small><strong>{yen(cfg.keywordCpc)}</strong></span>
                   <span><small>広告費</small><strong>{yenNumber(rec?.spend ?? 0)}</strong></span>
                   <span><small>クリック</small><strong>{(rec?.clicks ?? 0).toLocaleString("ja-JP")}</strong></span>
                   <span><small>売上</small><strong>{yenNumber(rec?.salesAmount ?? 0)}</strong></span>
@@ -477,7 +484,7 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
           })}
           {!filteredConfiguredTargets.length ? <p>この担当のRPP設定中商品/KWはありません。</p> : null}
         </div>
-        {filteredExcludedProducts.length ? (
+        {excludedProductsForOwner.length ? (
           <div className="excluded-product-block">
             <div className="section-heading compact-heading">
               <div>
@@ -486,6 +493,7 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
               </div>
               <span className="status-pill approval-rejected">除外中 {filteredExcludedProducts.length}件</span>
             </div>
+            <label className="excluded-search">商品検索<input value={exclusionSearch} onChange={(e) => setExclusionSearch(e.target.value)} placeholder="商品番号・商品名・担当で検索" /></label>
             <div className="excluded-product-grid">
               {filteredExcludedProducts.slice(0, 80).map((row) => {
                 const savedCount = savedTargetCountByItemCode.get(row.itemCode) ?? 0;
@@ -493,7 +501,7 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
                 const changed = row.currentExcluded !== row.excluded;
                 return (
                   <article className="excluded-product-row" key={row.itemCode}>
-                    <div><b>{row.itemCode}</b><br /><small>{row.owner || "担当未設定"}</small></div>
+                    <div><b>{row.itemCode}</b><br /><small>{row.itemName || "商品名未取得"}</small><br /><small>{row.owner || "担当未設定"}</small></div>
                     <span><small>商品CPC</small><strong>{yen(row.itemCpc)}</strong></span>
                     <span><small>保存目標</small><strong>{savedCount}件</strong></span>
                     <div className="card-actions excluded-actions">
@@ -503,6 +511,7 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
                   </article>
                 );
               })}
+              {!filteredExcludedProducts.length ? <p>検索に一致する除外中商品はありません。</p> : null}
             </div>
             {filteredExcludedProducts.length > 80 ? <p>除外中商品は先頭80件だけ表示しています。担当タブで絞り込んでください。</p> : null}
           </div>
@@ -564,7 +573,7 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
           <ul className="meta-list compact">
             <li><b>対象</b><small>自動調整候補だけでなく、RPP設定中の全商品CPC/キーワードCPC</small></li>
             <li><b>除外ON/OFF</b><small>商品単位でCSV出力。RMS本番反映はCSV確認後に別途実行</small></li>
-            <li><b>検索位置</b><small>目標に登録した検索調査KWを全て測定。「1ページ目にいるか/いないか」を最重要で判定</small></li>
+            <li><b>検索位置</b><small>「1ページ目にいない」=広告枠はあるが自社広告が出ていない。「広告枠なし」=その検索KWで楽天側のRPP広告枠自体が出ていない。</small></li>
             <li><b>担当別保存済み</b><small>{Object.entries(grouped).map(([owner, count]) => `${owner}:${count}`).join(" / ") || "未設定"}</small></li>
           </ul>
         </div>
