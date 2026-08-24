@@ -88,6 +88,10 @@ function yenNumber(value: number) {
   return `${Math.round(value).toLocaleString("ja-JP")}円`;
 }
 
+function positionParts(value: string) {
+  return value.split(" / ").map((part) => part.trim()).filter(Boolean);
+}
+
 function metricKey(itemCode: string, keyword: string) {
   return `${itemCode.trim().toLowerCase()}__${keyword.trim()}`;
 }
@@ -457,7 +461,7 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
                   <span><small>クリック</small><strong>{(rec?.clicks ?? 0).toLocaleString("ja-JP")}</strong></span>
                   <span><small>売上</small><strong>{yenNumber(rec?.salesAmount ?? 0)}</strong></span>
                   <span><small>ROAS</small><strong>{roas == null ? "-" : `${Math.round(roas)}%`}</strong></span>
-                  <span className="metric-wide"><small>検索位置{positionKeyword ? `（${positionKeyword}）` : ""}</small><strong>{position}</strong></span>
+                  <span className="metric-wide position-metric"><small>検索位置{positionKeyword ? `（${positionKeyword}）` : ""}</small><strong className="position-value">{positionParts(position).map((part) => <span key={part}>{part}</span>)}</strong></span>
                   {positionRows.length > 1 ? <span className="metric-wide position-list"><small>検索KW別</small><strong>{positionRows.map((row) => `${row.keyword}: ${row.position}`).join(" / ")}</strong></span> : null}
                 </div>
                 <div className="product-card-status">
