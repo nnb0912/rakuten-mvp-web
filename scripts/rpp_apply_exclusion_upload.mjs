@@ -121,21 +121,33 @@ async function loginAndUpload(csvPath, finalSubmit) {
     if (!finalSubmit) return { fileSelected: true, finalSubmitSkipped: true, openedBulkUpload, ...info };
 
     let uploadClicked = false;
-    for (const selector of ['#btnUploadFile', 'input[type="submit"]', 'button']) {
-      const candidates = page.locator(selector);
-      const count = await candidates.count();
-      for (let i = 0; i < Math.min(count, 20); i += 1) {
-        const el = candidates.nth(i);
-        const label = ((await el.innerText({ timeout: 1000 }).catch(() => '')) || (await el.getAttribute('value')) || '').trim();
-        if (['アップロード', '登録', '反映', '実行'].some((s) => label.includes(s))) {
-          await el.click({ timeout: 5000 }); uploadClicked = true; break;
+    const primaryUpload = page.locator('#btnUploadFile').first();
+    if (await primaryUpload.count()) {
+      await primaryUpload.evaluate((el) => el.click());
+      uploadClicked = true;
+    }
+    if (!uploadClicked) {
+      for (const selector of ['input[type="submit"]', 'button']) {
+        const candidates = page.locator(selector);
+        const count = await candidates.count();
+        for (let i = 0; i < Math.min(count, 20); i += 1) {
+          const el = candidates.nth(i);
+          const label = ((await el.innerText({ timeout: 1000 }).catch(() => '')) || (await el.getAttribute('value')) || '').trim();
+          if (['アップロード', '登録', '反映', '実行'].some((s) => label.includes(s))) {
+            await el.evaluate((node) => node.click()); uploadClicked = true; break;
+          }
         }
+        if (uploadClicked) break;
       }
-      if (uploadClicked) break;
     }
     if (!uploadClicked) throw new Error('RMS final upload button not found');
-    await page.waitForTimeout(5000);
-    const pageTextSample = await page.evaluate(() => document.body.innerText.slice(0, 2000));
+    await page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => undefined);
+    await page.waitForTimeout(8000);
+    const pageTextSample = await page.evaluate(() => document.body.innerText.slice(0, 3000));
+    const failureText = pageTextSample.match(/[^\n]*(失敗|エラー|不正|登録できません|アップロードできません)[^\n]*/g)?.slice(0, 8) || [];
+    if (failureText.length) {
+      throw new Error(`RMS upload returned error: ${failureText.join(' / ')}`);
+    }
     return { fileSelected: true, finalSubmitClicked: true, pageTextSample, ...info };
   } finally {
     await browser.close();

@@ -92,9 +92,9 @@ export async function POST(request: Request) {
     child.stderr.on("data", (chunk) => { errorOutput += chunk.toString(); });
     const exitCode: number = await new Promise((resolve) => {
       const timer = setTimeout(() => {
-        errorOutput += "\nRMS upload helper timed out after 300 seconds";
+        errorOutput += "\nRMS upload helper timed out after 480 seconds";
         child.kill("SIGTERM");
-      }, 300_000);
+      }, 480_000);
       child.on("error", (error) => {
         clearTimeout(timer);
         errorOutput += `\n${error instanceof Error ? error.message : String(error)}`;
