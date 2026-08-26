@@ -92,7 +92,9 @@ async function loginAndUpload(csvPath, finalSubmit) {
     await page.goto('https://ad.rms.rakuten.co.jp/rpp/exclude', { waitUntil: 'domcontentloaded', timeout: 60000 });
     await page.waitForTimeout(3000);
     const body = await page.evaluate(() => document.body.innerText.slice(0, 2000));
-    if (body.includes('システムエラー') || (body.includes('ログイン') && !body.includes('除外'))) throw new Error('RMS login not completed; exclusion upload aborted');
+    if (body.includes('システムエラー') || (body.includes('ログイン') && !body.includes('除外'))) {
+      throw new Error(`RMS login not completed; exclusion upload aborted; url=${page.url()}; title=${await page.title()}; body=${body.replace(/[\r\n]+/g, ' ').slice(0, 600)}`);
+    }
 
     let openedBulkUpload = false;
     const bulkButton = page.locator('#btnBulkUploadExcludeItemOpenModal');
