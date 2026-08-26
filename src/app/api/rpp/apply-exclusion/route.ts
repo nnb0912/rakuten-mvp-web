@@ -78,7 +78,9 @@ export async function POST(request: Request) {
     const runHelper = finalSubmit
       ? "exec \"$RPP_UPLOAD_COMMAND\" \"$RPP_UPLOAD_SCRIPT\" --csv \"$RPP_UPLOAD_CSV\" --execute --final-submit --confirm=RMS_EXCLUSION_UPLOAD"
       : "exec \"$RPP_UPLOAD_COMMAND\" \"$RPP_UPLOAD_SCRIPT\" --csv \"$RPP_UPLOAD_CSV\" --execute";
-    const installBrowser = script.command === "node" ? "npx playwright install chromium >/tmp/rpp_playwright_install.log 2>&1 && " : "";
+    const installBrowser = script.command === "node"
+      ? "if ! ls /opt/render/.cache/ms-playwright/chromium_headless_shell-*/chrome-headless-shell-linux64/chrome-headless-shell >/dev/null 2>&1; then npx playwright install chromium >/tmp/rpp_playwright_install.log 2>&1; fi && "
+      : "";
     const childArgs = ["-lc", `${installBrowser}${runHelper}`];
     const child = spawn("bash", childArgs, {
       cwd: RPP_PROJECT_DIR,

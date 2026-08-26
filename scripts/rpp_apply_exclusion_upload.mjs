@@ -55,6 +55,10 @@ async function loginAndUpload(csvPath, finalSubmit) {
   const context = await browser.newContext({ acceptDownloads: true, locale: 'ja-JP' });
   const page = await context.newPage();
   try {
+    page.on('dialog', async (dialog) => {
+      await dialog.accept().catch(() => undefined);
+    });
+
     await page.goto(process.env.RMS_LOGIN_URL || 'https://glogin.rms.rakuten.co.jp/?sp_id=1', { waitUntil: 'domcontentloaded', timeout: 60000 });
     await page.waitForTimeout(2000);
 
