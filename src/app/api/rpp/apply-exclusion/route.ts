@@ -45,31 +45,57 @@ export async function POST(request: Request) {
       });
     }
 
-    const projectScriptPath = path.join(RPP_PROJECT_DIR, "rpp_apply_exclusion_upload.py");
-    const bundledScriptPath = path.join(process.cwd(), "scripts", "rpp_apply_exclusion_upload.py");
-    let scriptPath = projectScriptPath;
-    try {
-      await fs.access(scriptPath);
-    } catch {
-      scriptPath = bundledScriptPath;
+    const appRoot = /* turbopackIgnore: true */ process.cwd();
+    const projectRoot = /* turbopackIgnore: true */ RPP_PROJECT_DIR;
+    const scriptCandidates = [
+      { command: "python3", path: path.join(appRoot, "scripts", "rpp_apply_exclusion_upload.py") },
+      { command: "python3", path: path.join(projectRoot, "rpp_apply_exclusion_upload.py") },
+    ];
+    let script = scriptCandidates[0];
+    for (const candidate of scriptCandidates) {
       try {
-        await fs.access(scriptPath);
+        await fs.access(candidate.path);
+        script = candidate;
+        break;
       } catch {
-        return Response.json({
-          error: "RMS自動反映ONですが、アップロード処理がサーバーに未配置です。CSVのみ生成しました。",
-          csvPath,
-          changes: changes.length,
-          productionChange: false,
-          missingScript: projectScriptPath,
-        }, { status: 501 });
+        // Try the next bundled/project script.
       }
     }
-    const child = spawn("python3", [scriptPath, "--csv", csvPath, "--execute", "--final-submit", "--confirm=RMS_EXCLUSION_UPLOAD"], { cwd: RPP_PROJECT_DIR, env: process.env });
+    try {
+      await fs.access(script.path);
+    } catch {
+      return Response.json({
+        error: "RMS自動反映ONですが、アップロード処理がサーバーに未配置です。CSVのみ生成しました。",
+        csvPath,
+        changes: changes.length,
+        productionChange: false,
+        missingScript: scriptCandidates.map((candidate) => candidate.path),
+      }, { status: 501 });
+    }
+
+    const child = spawn("bash", ["-lc", "exec \"$RPP_UPLOAD_COMMAND\" \"$RPP_UPLOAD_SCRIPT\" --csv \"$RPP_UPLOAD_CSV\" --execute --final-submit --confirm=RMS_EXCLUSION_UPLOAD"], {
+      cwd: RPP_PROJECT_DIR,
+      env: { ...process.env, RPP_UPLOAD_COMMAND: script.command, RPP_UPLOAD_SCRIPT: script.path, RPP_UPLOAD_CSV: csvPath },
+    });
     let output = "";
     let errorOutput = "";
     child.stdout.on("data", (chunk) => { output += chunk.toString(); });
     child.stderr.on("data", (chunk) => { errorOutput += chunk.toString(); });
-    const exitCode: number = await new Promise((resolve) => child.on("close", resolve));
+    const exitCode: number = await new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        errorOutput += "\nRMS upload helper timed out after 120 seconds";
+        child.kill("SIGTERM");
+      }, 120_000);
+      child.on("error", (error) => {
+        clearTimeout(timer);
+        errorOutput += `\n${error instanceof Error ? error.message : String(error)}`;
+        resolve(1);
+      });
+      child.on("close", (code) => {
+        clearTimeout(timer);
+        resolve(code ?? 1);
+      });
+    });
     if (exitCode !== 0) {
       return Response.json({ error: "RMS反映に失敗しました", exitCode, output, errorOutput, csvPath }, { status: 500 });
     }

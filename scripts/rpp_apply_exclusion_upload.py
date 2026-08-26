@@ -74,38 +74,50 @@ async def login_and_upload(csv_path: Path, final_submit: bool) -> dict[str, obje
 
     p = await async_playwright().start()
     browser = await p.chromium.launch(headless=True, args=['--no-sandbox'])
-    page = await browser.new_page()
+    context = await browser.new_context(accept_downloads=True, locale='ja-JP')
+    page = await context.new_page()
     try:
-        login_url = os.environ.get('RMS_LOGIN_URL') or 'https://glogin.rms.rakuten.co.jp/'
-        await page.goto(login_url, wait_until='networkidle', timeout=60000)
-        # Leniently fill visible login fields when they exist. RMS login flow changes often.
-        for selector, value in [
-            ('input[name="login_id"]', login_id),
-            ('input[name="passwd"]', login_pass),
-            ('input[name="u"]', email),
-            ('input[name="p"]', email_pass),
-            ('input[type="email"]', email),
-            ('input[type="password"]', email_pass),
-        ]:
-            loc = page.locator(selector).first
-            try:
-                if await loc.count() and await loc.is_visible(timeout=1000):
-                    await loc.fill(value)
-            except Exception:
-                pass
-        for text in ['楽天会員ログイン', 'ログイン', '次へ']:
-            try:
-                btn = page.get_by_text(text, exact=False).first
-                if await btn.count() and await btn.is_visible(timeout=1000):
-                    await btn.click(timeout=3000)
-                    await page.wait_for_timeout(2000)
-            except Exception:
-                pass
-
-        await page.goto('https://ad.rms.rakuten.co.jp/rpp/exclude', wait_until='networkidle', timeout=60000)
+        login_url = os.environ.get('RMS_LOGIN_URL') or 'https://glogin.rms.rakuten.co.jp/?sp_id=1'
+        await page.goto(login_url, wait_until='domcontentloaded', timeout=60000)
         await page.wait_for_timeout(2000)
+
+        if await page.locator('input[name="login_id"]').count() > 0:
+            await page.fill('input[name="login_id"]', login_id)
+            await page.fill('input[name="passwd"]', login_pass)
+            btn = page.locator('button:has-text("楽天会員ログイン"), button:has-text("楽天会員ログインへ"), input[value*="楽天会員ログイン"]')
+            if await btn.count() > 0:
+                await btn.first.click()
+            await page.wait_for_timeout(3000)
+
+        if await page.locator('#user_id').count() > 0:
+            await page.fill('#user_id', email)
+            await page.locator('#cta001').click()
+            await page.wait_for_timeout(4000)
+
+        if await page.locator('#password_current').count() > 0:
+            await page.fill('#password_current', email_pass)
+            await page.locator('#cta011').click()
+            await page.wait_for_timeout(6000)
+
+        for _ in range(4):
+            next_btn = page.locator('a:has-text("次へ"), button:has-text("次へ"), input[value="次へ"]')
+            if await next_btn.count() > 0:
+                await next_btn.first.click()
+                await page.wait_for_timeout(3000)
+            else:
+                break
+
+        compliance = page.locator('a:has-text("遵守"), button:has-text("遵守"), input[value*="遵守"]')
+        if await compliance.count() > 0:
+            await compliance.first.click()
+            await page.wait_for_timeout(5000)
+
+        await page.goto('https://mainmenu.rms.rakuten.co.jp/?act=login&sp_id=1', wait_until='domcontentloaded', timeout=60000)
+        await page.wait_for_timeout(3000)
+        await page.goto('https://ad.rms.rakuten.co.jp/rpp/exclude', wait_until='domcontentloaded', timeout=60000)
+        await page.wait_for_timeout(3000)
         body = await page.evaluate('() => document.body.innerText.slice(0, 2000)')
-        if 'ログイン' in body and '除外' not in body:
+        if 'システムエラー' in body or ('ログイン' in body and '除外' not in body):
             raise RuntimeError('RMS login not completed; exclusion upload aborted')
 
         clicked = False

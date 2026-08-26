@@ -3,7 +3,7 @@ services:
     name: rakuten-mvp-web
     runtime: node
     plan: free
-    buildCommand: npm ci --include=dev && npm run build
+    buildCommand: npm ci --include=dev && python3 -m pip install --user playwright && python3 -m playwright install --with-deps chromium && npm run build
     startCommand: npm run start -- -p $PORT
     envVars:
       - key: NODE_ENV
