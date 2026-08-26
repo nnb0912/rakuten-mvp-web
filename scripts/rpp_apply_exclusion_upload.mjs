@@ -46,7 +46,23 @@ function parseCsv(csvPath) {
 }
 function emit(obj) { console.log(JSON.stringify(obj, null, 2)); }
 
-async function loginAndUpload(csvPath, finalSubmit) {
+async function searchExclusionStatus(page, itemCode) {
+  await page.goto('https://ad.rms.rakuten.co.jp/rpp/exclude', { waitUntil: 'domcontentloaded', timeout: 60000 });
+  await page.waitForTimeout(1500);
+  const searchInput = page.locator('input[placeholder="商品管理番号"], input[name*="item"], input[type="text"]').first();
+  if (await searchInput.count()) {
+    await searchInput.fill(itemCode);
+    const searchButton = page.locator('#btnSearchExcludeItem, button:has-text("検索"), input[value="検索"]').first();
+    if (await searchButton.count()) await searchButton.click({ timeout: 5000 }).catch(async () => searchButton.evaluate((el) => el.click()));
+    await page.waitForLoadState('networkidle', { timeout: 10000 }).catch(() => undefined);
+    await page.waitForTimeout(1500);
+  }
+  const text = await page.evaluate(() => document.body.innerText.slice(0, 3000));
+  const found = text.toLowerCase().includes(itemCode.toLowerCase()) && !text.includes('0件');
+  return { itemCode, found, textSample: text.replace(/[\r\n]+/g, ' ').slice(0, 500) };
+}
+
+async function loginAndUpload(csvPath, rows, finalSubmit) {
   const required = ['RMS_LOGIN_ID', 'RMS_LOGIN_PASS', 'RAKUTEN_EMAIL', 'RAKUTEN_EMAIL_PASS'];
   const missing = required.filter((key) => !process.env[key]);
   if (missing.length) throw new Error(`RMS credentials missing on server: ${missing.join(', ')}`);
@@ -143,14 +159,29 @@ async function loginAndUpload(csvPath, finalSubmit) {
       }
     }
     if (!uploadClicked) throw new Error('RMS final upload button not found');
+    for (let step = 0; step < 3; step += 1) {
+      await page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => undefined);
+      await page.waitForTimeout(3000);
+      const confirm = page.locator('button:has-text("登録"), button:has-text("実行"), button:has-text("OK"), button:has-text("はい"), input[value*="登録"], input[value*="実行"], input[value*="OK"]').first();
+      const text = await page.evaluate(() => document.body.innerText.slice(0, 3000));
+      if (/完了|登録しました|登録されました|受け付けました|アップロードしました|成功/.test(text)) break;
+      if (await confirm.count() && await confirm.isVisible({ timeout: 1000 }).catch(() => false)) {
+        await confirm.evaluate((node) => node.click());
+        continue;
+      }
+      break;
+    }
     await page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => undefined);
-    await page.waitForTimeout(8000);
+    await page.waitForTimeout(5000);
     const pageTextSample = await page.evaluate(() => document.body.innerText.slice(0, 3000));
     const failureText = pageTextSample.match(/[^\n]*(失敗|エラー|不正|登録できません|アップロードできません)[^\n]*/g)?.slice(0, 8) || [];
-    if (failureText.length) {
-      throw new Error(`RMS upload returned error: ${failureText.join(' / ')}`);
+    const readback = [];
+    for (const row of rows) readback.push(await searchExclusionStatus(page, row.itemCode));
+    const readbackFailures = readback.filter((row, idx) => (rows[idx].control === 'n' && !row.found) || (rows[idx].control === 'd' && row.found));
+    if (failureText.length || readbackFailures.length) {
+      throw new Error(`RMS upload verification failed: ${[...failureText, ...readbackFailures.map((row) => `${row.itemCode} readback=${row.found}`)].join(' / ')}`);
     }
-    return { fileSelected: true, finalSubmitClicked: true, pageTextSample, ...info };
+    return { fileSelected: true, finalSubmitClicked: true, pageTextSample, readback, ...info };
   } finally {
     await browser.close();
   }
@@ -167,7 +198,7 @@ async function main() {
   if (process.env.RPP_ENABLE_RMS_EXCLUSION_UPLOAD !== '1') throw new Error('RPP_ENABLE_RMS_EXCLUSION_UPLOAD=1 is required');
   const finalSubmit = hasArg('--final-submit');
   if (finalSubmit && argValue('--confirm') !== 'RMS_EXCLUSION_UPLOAD') throw new Error('--confirm=RMS_EXCLUSION_UPLOAD is required for final submit');
-  const applied = await loginAndUpload(csvPath, finalSubmit);
+  const applied = await loginAndUpload(csvPath, rows, finalSubmit);
   emit({ ...base, productionChange: finalSubmit, applied });
 }
 main().catch((e) => { console.error(`❌ エラー: ${e?.message || e}`); process.exit(1); });
