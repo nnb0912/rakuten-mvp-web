@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { readRppDashboardMeta, readRppRecommendations } from "@/lib/rppRecommendations";
+import { listRecentRppExclusionJobs } from "@/lib/rppExclusionJobs";
 import { readRppAlertTargets } from "@/lib/rppTargets";
 import RppTargetSettings from "./RppTargetSettings";
 
@@ -29,10 +30,29 @@ function readbackLabel(row: Record<string, unknown>) {
   return applied.readback.ok ? "OK" : "NG";
 }
 
+function jobStatusLabel(status: string) {
+  if (status === "pending") return "待機中";
+  if (status === "running") return "処理中";
+  if (status === "succeeded") return "反映OK";
+  if (status === "failed") return "失敗";
+  return status;
+}
+
+function jobStatusClass(status: string) {
+  if (status === "succeeded") return "status-approved";
+  if (status === "failed") return "approval-rejected";
+  return "status-hold";
+}
+
+function changeSummary(changes: { itemCode: string; currentExcluded: boolean }[]) {
+  return changes.map((row) => `${row.currentExcluded ? "除外ON" : "解除"}:${row.itemCode}`).join(" / ");
+}
+
 export default async function RppPage() {
   const data = await readRppRecommendations();
   const meta = await readRppDashboardMeta();
   const targetData = await readRppAlertTargets();
+  const exclusionJobs = await listRecentRppExclusionJobs(8);
   const summary = data.summary as { generatedAt?: string; counts?: { raise?: number; lower?: number; hold?: number; ok?: number }; safety?: { productionChange?: boolean } } | null;
   const candidateTotal = (summary?.counts?.raise ?? 0) + (summary?.counts?.lower ?? 0);
   const missingTargetCount = targetData.configuredTargets.filter((row) => !targetData.targets.some((target) => target.id === row.id)).length;
@@ -68,6 +88,31 @@ export default async function RppPage() {
           <a className="text-link" href="/api/rpp/targets">Targets API</a>
         </div>
         <RppTargetSettings initialTargets={targetData.targets} configuredTargets={targetData.configuredTargets} exclusionProducts={targetData.exclusionProducts} recommendations={data.recommendations} />
+      </section>
+
+      <section className="panel history-panel">
+        <div className="section-heading">
+          <div>
+            <h2>RMS除外アップロード状況</h2>
+            <p>RMSへ反映を押すとジョブ登録され、Mac StudioワーカーがRMSアップロードと読戻し確認を行います。</p>
+          </div>
+          <span className="status-pill status-hold">直近 {exclusionJobs.length}件</span>
+        </div>
+        {exclusionJobs.length ? (
+          <table className="wide-table">
+            <thead><tr><th>日時</th><th>状態</th><th>対象</th><th>CSV/エラー</th></tr></thead>
+            <tbody>
+              {exclusionJobs.map((job) => (
+                <tr key={job.id}>
+                  <td><small>{fmtDate(job.updatedAt)}<br />{job.id}</small></td>
+                  <td><span className={`status-pill ${jobStatusClass(job.status)}`}>{jobStatusLabel(job.status)}</span></td>
+                  <td><small>{changeSummary(job.changes)}</small></td>
+                  <td><small>{job.error ? job.error : job.csvPath ? shortPath(job.csvPath) : "-"}</small></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        ) : <p>アップロードジョブはまだありません。</p>}
       </section>
 
       <section className="panel cron-panel">
