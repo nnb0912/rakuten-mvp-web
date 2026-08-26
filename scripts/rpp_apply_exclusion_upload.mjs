@@ -57,9 +57,15 @@ async function searchExclusionStatus(page, itemCode) {
     await page.waitForLoadState('networkidle', { timeout: 10000 }).catch(() => undefined);
     await page.waitForTimeout(1500);
   }
-  const text = await page.evaluate(() => document.body.innerText.slice(0, 3000));
-  const found = text.toLowerCase().includes(itemCode.toLowerCase()) && !text.includes('0件');
-  return { itemCode, found, textSample: text.replace(/[\r\n]+/g, ' ').slice(0, 500) };
+  const status = await page.evaluate((code) => {
+    const normalized = String(code).trim().toLowerCase();
+    const text = document.body.innerText;
+    const rows = [...document.querySelectorAll('tr')].map((tr) => tr.innerText.replace(/[\r\n]+/g, ' ').trim()).filter(Boolean);
+    const exactRows = rows.filter((row) => row.split(/\s+/).some((cell) => cell.trim().toLowerCase() === normalized));
+    return { text, exactRows };
+  }, itemCode);
+  const found = status.exactRows.length > 0;
+  return { itemCode, found, exactRows: status.exactRows.slice(0, 5), textSample: status.text.replace(/[\r\n]+/g, ' ').slice(0, 500) };
 }
 
 async function loginAndUpload(csvPath, rows, finalSubmit) {
@@ -141,7 +147,7 @@ async function loginAndUpload(csvPath, rows, finalSubmit) {
     let uploadClicked = false;
     const primaryUpload = page.locator('#btnUploadFile').first();
     if (await primaryUpload.count()) {
-      await primaryUpload.evaluate((el) => el.click());
+      await primaryUpload.click({ timeout: 10000 });
       uploadClicked = true;
     }
     if (!uploadClicked) {
