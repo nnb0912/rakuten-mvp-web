@@ -48,6 +48,7 @@ export async function POST(request: Request) {
     const appRoot = /* turbopackIgnore: true */ process.cwd();
     const projectRoot = /* turbopackIgnore: true */ RPP_PROJECT_DIR;
     const scriptCandidates = [
+      { command: "node", path: path.join(appRoot, "scripts", "rpp_apply_exclusion_upload.mjs") },
       { command: "python3", path: path.join(appRoot, "scripts", "rpp_apply_exclusion_upload.py") },
       { command: "python3", path: path.join(projectRoot, "rpp_apply_exclusion_upload.py") },
     ];
