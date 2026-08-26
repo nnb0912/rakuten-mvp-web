@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
+    "build": "python3 -m pip install playwright && python3 -m playwright install chromium && next build",
     "start": "next start",
     "lint": "eslint"
   },

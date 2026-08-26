@@ -16,7 +16,7 @@ type ExclusionChange = { itemCode: string; currentExcluded: boolean; originalExc
 
 export async function POST(request: Request) {
   try {
-    const body = (await request.json()) as { changes?: ExclusionChange[]; execute?: boolean };
+    const body = (await request.json()) as { changes?: ExclusionChange[]; execute?: boolean; finalSubmit?: boolean };
     const changes = (body.changes ?? []).filter((row) => row.itemCode && row.currentExcluded !== row.originalExcluded);
     if (!changes.length) return Response.json({ error: "変更対象がありません" }, { status: 400 });
 
@@ -73,7 +73,14 @@ export async function POST(request: Request) {
       }, { status: 501 });
     }
 
-    const child = spawn("bash", ["-lc", "exec \"$RPP_UPLOAD_COMMAND\" \"$RPP_UPLOAD_SCRIPT\" --csv \"$RPP_UPLOAD_CSV\" --execute --final-submit --confirm=RMS_EXCLUSION_UPLOAD"], {
+    const finalSubmit = body.finalSubmit !== false;
+    const childArgs = [
+      "-lc",
+      finalSubmit
+        ? "exec \"$RPP_UPLOAD_COMMAND\" \"$RPP_UPLOAD_SCRIPT\" --csv \"$RPP_UPLOAD_CSV\" --execute --final-submit --confirm=RMS_EXCLUSION_UPLOAD"
+        : "exec \"$RPP_UPLOAD_COMMAND\" \"$RPP_UPLOAD_SCRIPT\" --csv \"$RPP_UPLOAD_CSV\" --execute",
+    ];
+    const child = spawn("bash", childArgs, {
       cwd: RPP_PROJECT_DIR,
       env: { ...process.env, RPP_UPLOAD_COMMAND: script.command, RPP_UPLOAD_SCRIPT: script.path, RPP_UPLOAD_CSV: csvPath },
     });
@@ -97,9 +104,9 @@ export async function POST(request: Request) {
       });
     });
     if (exitCode !== 0) {
-      return Response.json({ error: "RMS反映に失敗しました", exitCode, output, errorOutput, csvPath }, { status: 500 });
+      return Response.json({ error: "RMS反映に失敗しました", exitCode, output, errorOutput, csvPath, helper: script.command }, { status: 500 });
     }
-    return Response.json({ ok: true, productionChange: true, csvPath, changes: changes.length, output });
+    return Response.json({ ok: true, productionChange: finalSubmit, csvPath, changes: changes.length, output, helper: script.command });
   } catch (error) {
     return Response.json({ error: error instanceof Error ? error.message : String(error) }, { status: 400 });
   }

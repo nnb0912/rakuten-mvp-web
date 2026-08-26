@@ -311,7 +311,14 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
         body: JSON.stringify({ execute: true, changes: exclusionChanged.map((row) => ({ itemCode: row.itemCode, currentExcluded: row.currentExcluded, originalExcluded: row.excluded })) }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(`${data.error ?? "RMS反映に失敗しました"}${data.csvPath ? ` / CSV: ${data.csvPath}` : ""}`);
+      if (!res.ok) {
+        const detail = [data.errorOutput, data.output]
+          .filter(Boolean)
+          .join("\n")
+          .slice(0, 600)
+          .replace(/[\r\n]+/g, " / ");
+        throw new Error(`${data.error ?? "RMS反映に失敗しました"}${data.csvPath ? ` / CSV: ${data.csvPath}` : ""}${detail ? ` / 詳細: ${detail}` : ""}`);
+      }
       if (data.productionChange === false || data.disabled) {
         setMessage(`${data.reason ?? "RMS自動反映は無効です。CSVのみ生成しました。"}（${data.changes}商品 / CSV: ${data.csvPath}）`);
       } else {
