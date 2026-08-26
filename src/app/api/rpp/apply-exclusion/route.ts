@@ -14,6 +14,22 @@ function csvCell(value: string) {
 
 type ExclusionChange = { itemCode: string; currentExcluded: boolean; originalExcluded?: boolean };
 
+async function persistExclusionOverrides(changes: ExclusionChange[]) {
+  const overridePath = path.join(RPP_PROJECT_DIR, "rpp_targets", "rpp_exclusion_overrides.json");
+  await fs.mkdir(path.dirname(overridePath), { recursive: true });
+  let products: Record<string, boolean> = {};
+  try {
+    const raw = JSON.parse(await fs.readFile(overridePath, "utf8")) as { products?: Record<string, boolean> } | Record<string, boolean>;
+    const candidate = "products" in raw ? raw.products ?? {} : raw;
+    products = Object.fromEntries(Object.entries(candidate).map(([code, excluded]) => [code, Boolean(excluded)]));
+  } catch {
+    products = {};
+  }
+  for (const row of changes) products[row.itemCode.trim().toLowerCase()] = row.currentExcluded;
+  await fs.writeFile(overridePath, JSON.stringify({ updatedAt: new Date().toISOString(), products }, null, 2), "utf8");
+  return overridePath;
+}
+
 export async function POST(request: Request) {
   try {
     const body = (await request.json()) as { changes?: ExclusionChange[]; execute?: boolean; finalSubmit?: boolean };
@@ -108,7 +124,9 @@ export async function POST(request: Request) {
     if (exitCode !== 0) {
       return Response.json({ error: "RMS反映に失敗しました", exitCode, output, errorOutput, csvPath, helper: script.command }, { status: 500 });
     }
-    return Response.json({ ok: true, productionChange: finalSubmit, csvPath, changes: changes.length, output, helper: script.command });
+    let overridePath: string | undefined;
+    if (finalSubmit) overridePath = await persistExclusionOverrides(changes);
+    return Response.json({ ok: true, productionChange: finalSubmit, csvPath, changes: changes.length, output, helper: script.command, overridePath });
   } catch (error) {
     return Response.json({ error: error instanceof Error ? error.message : String(error) }, { status: 400 });
   }

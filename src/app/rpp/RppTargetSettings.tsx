@@ -138,6 +138,7 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
   const [ownerFilter, setOwnerFilter] = useState("全て");
   const [exclusionSearch, setExclusionSearch] = useState("");
   const [showExcludedProducts, setShowExcludedProducts] = useState(false);
+  const [baseExclusionProducts, setBaseExclusionProducts] = useState(exclusionProducts);
   const [exclusionOverrides, setExclusionOverrides] = useState<Record<string, boolean>>({});
   const targetFormRef = useRef<HTMLFormElement | null>(null);
 
@@ -202,10 +203,10 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
     : configuredTargets.filter((cfg) => (targetMap.get(cfg.id)?.owner || cfg.owner || "担当未設定") === ownerFilter);
   const visibleOwnerStats = ownerFilter === "全て" ? ownerStats : ownerStats.filter((row) => row.owner === ownerFilter);
 
-  const exclusionRows = useMemo(() => exclusionProducts.map((row) => ({
+  const exclusionRows = useMemo(() => baseExclusionProducts.map((row) => ({
     ...row,
     currentExcluded: exclusionOverrides[row.itemCode] ?? row.excluded,
-  })), [exclusionProducts, exclusionOverrides]);
+  })), [baseExclusionProducts, exclusionOverrides]);
   const exclusionStateMap = useMemo(() => new Map(exclusionRows.map((row) => [row.itemCode, row])), [exclusionRows]);
   const exclusionChanged = exclusionRows.filter((row) => row.currentExcluded !== row.excluded);
   const excludedProductsForOwner = exclusionRows.filter((row) => row.currentExcluded && (ownerFilter === "全て" || (row.owner || "担当未設定") === ownerFilter));
@@ -261,7 +262,7 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
 
   function toggleExcluded(itemCode: string, canRelease = true) {
     setExclusionOverrides((current) => {
-      const base = exclusionProducts.find((row) => row.itemCode === itemCode)?.excluded ?? false;
+      const base = baseExclusionProducts.find((row) => row.itemCode === itemCode)?.excluded ?? false;
       const currentValue = current[itemCode] ?? base;
       const nextValue = !currentValue;
       if (!nextValue && !canRelease && base) {
@@ -322,6 +323,12 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
       if (data.productionChange === false || data.disabled) {
         setMessage(`${data.reason ?? "RMS自動反映は無効です。CSVのみ生成しました。"}（${data.changes}商品 / CSV: ${data.csvPath}）`);
       } else {
+        const appliedRows = exclusionChanged.map((row) => ({ itemCode: row.itemCode, currentExcluded: row.currentExcluded }));
+        setBaseExclusionProducts((current) => current.map((row) => {
+          const applied = appliedRows.find((item) => item.itemCode === row.itemCode);
+          return applied ? { ...row, excluded: applied.currentExcluded } : row;
+        }));
+        setExclusionOverrides({});
         setMessage(`RMS反映を実行しました（${data.changes}商品 / CSV: ${data.csvPath}）`);
       }
     } catch (e) {
