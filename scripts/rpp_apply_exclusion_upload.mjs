@@ -16,9 +16,19 @@ function hasArg(name) { return process.argv.includes(name); }
 
 function parseCsv(csvPath) {
   if (!fs.existsSync(csvPath)) throw new Error(`CSV not found: ${csvPath}`);
-  let text = fs.readFileSync(csvPath, 'utf8');
-  if (text.charCodeAt(0) === 0xfeff) text = text.slice(1);
-  const lines = text.split(/\r?\n/).filter((line) => line.trim());
+  const buffer = fs.readFileSync(csvPath);
+  const decodeCandidates = [
+    () => new TextDecoder('utf-8').decode(buffer),
+    () => new TextDecoder('shift_jis').decode(buffer),
+  ];
+  let text = '';
+  let lines = [];
+  for (const decode of decodeCandidates) {
+    text = decode();
+    if (text.charCodeAt(0) === 0xfeff) text = text.slice(1);
+    lines = text.split(/\r?\n/).filter((line) => line.trim());
+    if (lines[0]?.includes('コントロールカラム') && lines[0]?.includes('商品管理番号')) break;
+  }
   if (!lines.length) return [];
   const parseLine = (line) => {
     const out = [];
