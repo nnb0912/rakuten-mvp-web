@@ -75,12 +75,11 @@ export async function POST(request: Request) {
     }
 
     const finalSubmit = body.finalSubmit !== false;
-    const childArgs = [
-      "-lc",
-      finalSubmit
-        ? "exec \"$RPP_UPLOAD_COMMAND\" \"$RPP_UPLOAD_SCRIPT\" --csv \"$RPP_UPLOAD_CSV\" --execute --final-submit --confirm=RMS_EXCLUSION_UPLOAD"
-        : "exec \"$RPP_UPLOAD_COMMAND\" \"$RPP_UPLOAD_SCRIPT\" --csv \"$RPP_UPLOAD_CSV\" --execute",
-    ];
+    const runHelper = finalSubmit
+      ? "exec \"$RPP_UPLOAD_COMMAND\" \"$RPP_UPLOAD_SCRIPT\" --csv \"$RPP_UPLOAD_CSV\" --execute --final-submit --confirm=RMS_EXCLUSION_UPLOAD"
+      : "exec \"$RPP_UPLOAD_COMMAND\" \"$RPP_UPLOAD_SCRIPT\" --csv \"$RPP_UPLOAD_CSV\" --execute";
+    const installBrowser = script.command === "node" ? "npx playwright install chromium >/tmp/rpp_playwright_install.log 2>&1 && " : "";
+    const childArgs = ["-lc", `${installBrowser}${runHelper}`];
     const child = spawn("bash", childArgs, {
       cwd: RPP_PROJECT_DIR,
       env: { ...process.env, RPP_UPLOAD_COMMAND: script.command, RPP_UPLOAD_SCRIPT: script.path, RPP_UPLOAD_CSV: csvPath },
@@ -91,9 +90,9 @@ export async function POST(request: Request) {
     child.stderr.on("data", (chunk) => { errorOutput += chunk.toString(); });
     const exitCode: number = await new Promise((resolve) => {
       const timer = setTimeout(() => {
-        errorOutput += "\nRMS upload helper timed out after 120 seconds";
+        errorOutput += "\nRMS upload helper timed out after 300 seconds";
         child.kill("SIGTERM");
-      }, 120_000);
+      }, 300_000);
       child.on("error", (error) => {
         clearTimeout(timer);
         errorOutput += `\n${error instanceof Error ? error.message : String(error)}`;
