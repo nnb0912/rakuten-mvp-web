@@ -320,7 +320,10 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
           .replace(/[\r\n]+/g, " / ");
         throw new Error(`${data.error ?? "RMS反映に失敗しました"}${data.csvPath ? ` / CSV: ${data.csvPath}` : ""}${detail ? ` / 詳細: ${detail}` : ""}`);
       }
-      if (data.productionChange === false || data.disabled) {
+      if (data.queued) {
+        setExclusionOverrides({});
+        setMessage(`RMS反映ジョブを登録しました（${data.changes}商品 / job: ${data.jobId}）。Mac Studioワーカーが反映・読戻し確認します。`);
+      } else if (data.productionChange === false || data.disabled) {
         setMessage(`${data.reason ?? "RMS自動反映は無効です。CSVのみ生成しました。"}（${data.changes}商品 / CSV: ${data.csvPath}）`);
       } else {
         const appliedRows = exclusionChanged.map((row) => ({ itemCode: row.itemCode, currentExcluded: row.currentExcluded }));
