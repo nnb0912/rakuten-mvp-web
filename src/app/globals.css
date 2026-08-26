@@ -122,6 +122,7 @@ small { color: var(--muted); line-height: 1.45; }
 .product-card-panel { margin-top: 18px; }
 .product-list-actions { display: flex; justify-content: flex-end; gap: 8px; flex-wrap: wrap; align-items: center; }
 .product-list-actions .primary-button, .product-list-actions .secondary-button { margin: 0; padding: 8px 12px; }
+.rms-upload-note { flex-basis: 100%; text-align: right; color: var(--muted); font-size: 11px; }
 .product-card-grid { display: grid; grid-template-columns: 1fr; gap: 6px; }
 .product-card {
   display: grid;

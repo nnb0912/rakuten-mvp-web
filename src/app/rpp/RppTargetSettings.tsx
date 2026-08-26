@@ -275,10 +275,10 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
   }
 
   function downloadExcludeCsv() {
-    const excluded = exclusionRows.filter((row) => row.currentExcluded).map((row) => row.itemCode).sort((a, b) => a.localeCompare(b, "ja"));
-    const lines = ["コントロールカラム,商品管理番号", ...excluded.map((code) => `,${csvCell(code)}`)];
-    downloadTextFile(`rpp_exclude_items_updated_${new Date().toISOString().slice(0, 10).replaceAll("-", "")}.csv`, `\uFEFF${lines.join("\r\n")}\r\n`);
-    setMessage(`RPP除外リストCSVを出力しました（除外 ${excluded.length}商品 / 変更 ${exclusionChanged.length}商品）`);
+    const changes = exclusionChanged.map((row) => [row.currentExcluded ? "n" : "d", row.itemCode]);
+    const lines = ["コントロールカラム,商品管理番号", ...changes.map((row) => row.map(csvCell).join(","))];
+    downloadTextFile(`rpp_exclude_diff_${new Date().toISOString().slice(0, 10).replaceAll("-", "")}.csv`, `\uFEFF${lines.join("\r\n")}\r\n`);
+    setMessage(`RMS手動アップロード用CSVを出力しました（変更 ${changes.length}商品 / n=除外登録, d=除外解除）`);
   }
 
   function downloadCpcCsv(cfg: RppConfiguredTarget) {
@@ -472,8 +472,9 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
             <span className="status-pill status-hold">表示 {filteredConfiguredTargets.length}件</span>
             <span className={exclusionChanged.length ? "status-pill approval-held" : "status-pill status-approved"}>変更予定 {exclusionChanged.length}件</span>
             <button className="primary-button compact-button" disabled={!exclusionChanged.length || busy} type="button" onClick={applyExclusionToRms}>RMSへ反映</button>
-            <button className="secondary-button compact-button" disabled={!exclusionChanged.length} type="button" onClick={downloadExcludeCsv}>CSV出力</button>
+            <button className="secondary-button compact-button" disabled={!exclusionChanged.length} type="button" onClick={downloadExcludeCsv}>手動CSV</button>
             <button className="secondary-button compact-button" disabled={!exclusionChanged.length} type="button" onClick={() => setExclusionOverrides({})}>変更を戻す</button>
+            <small className="rms-upload-note">自動反映がRMSログインエラーになる場合は、手動CSVをRMS除外商品の一括アップロードへ入れてください。</small>
           </div>
         </div>
         <div className="product-card-grid">
