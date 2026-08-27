@@ -323,6 +323,16 @@ async function migrateLegacyJsonTargetsIfDbEmpty() {
 }
 
 async function upsertRawTarget(target: RppAlertTarget) {
+  if (!pool) {
+    await fs.mkdir(DATA_DIR, { recursive: true });
+    const targets = await readLegacyJsonTargets();
+    const idx = targets.findIndex((row) => row.id === target.id);
+    if (idx >= 0) targets[idx] = target;
+    else targets.push(target);
+    targets.sort((a, b) => a.itemCode.localeCompare(b.itemCode, "ja") || a.keyword.localeCompare(b.keyword, "ja"));
+    await fs.writeFile(TARGETS_PATH, JSON.stringify({ targets }, null, 2));
+    return;
+  }
   await ensureRppAlertTargetsTable();
   await pool!.query(
     `insert into ${TARGETS_TABLE} (id, item_code, keyword, owner, ctr_goal, cvr_goal, roas_floor, position_goal, pc_position_goal, sp_position_goal, policy, note, ad_group, search_keywords, created_at, updated_at)
@@ -347,6 +357,15 @@ async function upsertRawTarget(target: RppAlertTarget) {
 }
 
 async function deleteRawTarget(id: string) {
+  if (!pool) {
+    const targets = await readLegacyJsonTargets();
+    const decoded = decodeURIComponent(id);
+    const next = targets.filter((row) => row.id !== id && row.id !== decoded);
+    if (next.length === targets.length) return 0;
+    await fs.mkdir(DATA_DIR, { recursive: true });
+    await fs.writeFile(TARGETS_PATH, JSON.stringify({ targets: next }, null, 2));
+    return targets.length - next.length;
+  }
   await ensureRppAlertTargetsTable();
   const result = await pool!.query(`delete from ${TARGETS_TABLE} where id = $1 or id = $2`, [id, decodeURIComponent(id)]);
   return result.rowCount ?? 0;
