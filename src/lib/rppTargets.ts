@@ -21,6 +21,8 @@ export type RppAlertTarget = {
   policy: RppOperationPolicy;
   note: string;
   adGroup: string;
+  changeLocked: boolean;
+  lockReason: string;
   searchKeywords: string[];
   createdAt: string;
   updatedAt: string;
@@ -61,6 +63,8 @@ export type RppAlertTargetInput = {
   policy?: RppOperationPolicy;
   note?: string;
   adGroup?: string;
+  changeLocked?: boolean;
+  lockReason?: string;
   searchKeywords?: string[] | string;
 };
 
@@ -130,6 +134,8 @@ function normalizeInput(input: RppAlertTargetInput) {
     policy,
     note: cleanText(input.note),
     adGroup: cleanText(input.adGroup) || "通常",
+    changeLocked: input.changeLocked === true || String(input.changeLocked ?? "").toLowerCase() === "true",
+    lockReason: cleanText(input.lockReason),
     searchKeywords,
   };
 }
@@ -235,10 +241,12 @@ async function readRawTargets(): Promise<RppAlertTarget[]> {
       note: string | null;
       search_keywords: string[] | string | null;
       ad_group: string | null;
+      change_locked: boolean | null;
+      lock_reason: string | null;
       created_at: Date | string;
       updated_at: Date | string;
     }>(
-      `select id, item_code, keyword, owner, ctr_goal, cvr_goal, roas_floor, position_goal, pc_position_goal, sp_position_goal, policy, note, ad_group, search_keywords, created_at, updated_at
+      `select id, item_code, keyword, owner, ctr_goal, cvr_goal, roas_floor, position_goal, pc_position_goal, sp_position_goal, policy, note, ad_group, change_locked, lock_reason, search_keywords, created_at, updated_at
        from ${TARGETS_TABLE}
        order by item_code asc, keyword asc`
     );
@@ -256,6 +264,8 @@ async function readRawTargets(): Promise<RppAlertTarget[]> {
       policy: row.policy,
       note: row.note ?? "",
       adGroup: row.ad_group || "通常",
+      changeLocked: row.change_locked === true,
+      lockReason: row.lock_reason || "",
       searchKeywords: Array.isArray(row.search_keywords)
         ? row.search_keywords
         : typeof row.search_keywords === "string"
@@ -267,9 +277,9 @@ async function readRawTargets(): Promise<RppAlertTarget[]> {
   }
   try {
     const raw = JSON.parse(await fs.readFile(TARGETS_PATH, "utf8")) as unknown;
-    if (Array.isArray(raw)) return (raw as RppAlertTarget[]).map((row) => ({ ...row, adGroup: row.adGroup || "通常" }));
+    if (Array.isArray(raw)) return (raw as RppAlertTarget[]).map((row) => ({ ...row, adGroup: row.adGroup || "通常", changeLocked: row.changeLocked === true, lockReason: row.lockReason || "" }));
     if (raw && typeof raw === "object" && Array.isArray((raw as { targets?: unknown }).targets)) {
-      return (raw as { targets: RppAlertTarget[] }).targets.map((row) => ({ ...row, adGroup: row.adGroup || "通常" }));
+      return (raw as { targets: RppAlertTarget[] }).targets.map((row) => ({ ...row, adGroup: row.adGroup || "通常", changeLocked: row.changeLocked === true, lockReason: row.lockReason || "" }));
     }
   } catch {}
   return [];
@@ -292,6 +302,8 @@ async function ensureRppAlertTargetsTable() {
       policy text not null default '維持',
       note text not null default '',
       ad_group text not null default '通常',
+      change_locked boolean not null default false,
+      lock_reason text not null default '',
       search_keywords jsonb not null default '[]'::jsonb,
       created_at timestamptz not null default now(),
       updated_at timestamptz not null default now()
@@ -300,15 +312,17 @@ async function ensureRppAlertTargetsTable() {
   await pool.query(`alter table ${TARGETS_TABLE} add column if not exists pc_position_goal text`);
   await pool.query(`alter table ${TARGETS_TABLE} add column if not exists sp_position_goal text`);
   await pool.query(`alter table ${TARGETS_TABLE} add column if not exists ad_group text not null default '通常'`);
+  await pool.query(`alter table ${TARGETS_TABLE} add column if not exists change_locked boolean not null default false`);
+  await pool.query(`alter table ${TARGETS_TABLE} add column if not exists lock_reason text not null default ''`);
   await pool.query(`update ${TARGETS_TABLE} set pc_position_goal = coalesce(pc_position_goal, position_goal, 'FIRST_PAGE'), sp_position_goal = coalesce(sp_position_goal, position_goal, 'FIRST_PAGE') where pc_position_goal is null or sp_position_goal is null`);
 }
 
 async function readLegacyJsonTargets(): Promise<RppAlertTarget[]> {
   try {
     const raw = JSON.parse(await fs.readFile(TARGETS_PATH, "utf8")) as unknown;
-    if (Array.isArray(raw)) return (raw as RppAlertTarget[]).map((row) => ({ ...row, adGroup: row.adGroup || "通常" }));
+    if (Array.isArray(raw)) return (raw as RppAlertTarget[]).map((row) => ({ ...row, adGroup: row.adGroup || "通常", changeLocked: row.changeLocked === true, lockReason: row.lockReason || "" }));
     if (raw && typeof raw === "object" && Array.isArray((raw as { targets?: unknown }).targets)) {
-      return (raw as { targets: RppAlertTarget[] }).targets.map((row) => ({ ...row, adGroup: row.adGroup || "通常" }));
+      return (raw as { targets: RppAlertTarget[] }).targets.map((row) => ({ ...row, adGroup: row.adGroup || "通常", changeLocked: row.changeLocked === true, lockReason: row.lockReason || "" }));
     }
   } catch {}
   return [];
@@ -335,8 +349,8 @@ async function upsertRawTarget(target: RppAlertTarget) {
   }
   await ensureRppAlertTargetsTable();
   await pool!.query(
-    `insert into ${TARGETS_TABLE} (id, item_code, keyword, owner, ctr_goal, cvr_goal, roas_floor, position_goal, pc_position_goal, sp_position_goal, policy, note, ad_group, search_keywords, created_at, updated_at)
-     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14::jsonb, $15, $16)
+    `insert into ${TARGETS_TABLE} (id, item_code, keyword, owner, ctr_goal, cvr_goal, roas_floor, position_goal, pc_position_goal, sp_position_goal, policy, note, ad_group, change_locked, lock_reason, search_keywords, created_at, updated_at)
+     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16::jsonb, $17, $18)
      on conflict (id) do update set
        item_code = excluded.item_code,
        keyword = excluded.keyword,
@@ -350,9 +364,11 @@ async function upsertRawTarget(target: RppAlertTarget) {
        policy = excluded.policy,
        note = excluded.note,
        ad_group = excluded.ad_group,
+       change_locked = excluded.change_locked,
+       lock_reason = excluded.lock_reason,
        search_keywords = excluded.search_keywords,
        updated_at = excluded.updated_at`,
-    [target.id, target.itemCode, target.keyword, target.owner, target.ctrGoal, target.cvrGoal, target.roasFloor, target.positionGoal, target.pcPositionGoal ?? target.positionGoal, target.spPositionGoal ?? target.positionGoal, target.policy, target.note, target.adGroup || "通常", JSON.stringify(target.searchKeywords), target.createdAt, target.updatedAt]
+    [target.id, target.itemCode, target.keyword, target.owner, target.ctrGoal, target.cvrGoal, target.roasFloor, target.positionGoal, target.pcPositionGoal ?? target.positionGoal, target.spPositionGoal ?? target.positionGoal, target.policy, target.note, target.adGroup || "通常", target.changeLocked === true, target.lockReason || "", JSON.stringify(target.searchKeywords), target.createdAt, target.updatedAt]
   );
 }
 
@@ -527,6 +543,8 @@ export async function seedMissingRppAlertTargets(defaults: Partial<RppAlertTarge
       keyword: row.keyword,
       owner: row.owner,
       searchKeywords: row.keyword === "商品CPC" ? (row.rppPositionKeyword ? row.rppPositionKeyword.replace("（代表KW）", "") : undefined) : row.keyword,
+      changeLocked: false,
+      lockReason: "",
       ...defaults,
     });
     additions.push({ id: row.id, ...normalized, createdAt: now, updatedAt: now });

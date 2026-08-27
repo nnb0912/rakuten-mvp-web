@@ -26,6 +26,8 @@ type FormState = {
   spPositionGoal: RppPositionGoal;
   policy: RppOperationPolicy;
   adGroup: string;
+  changeLocked: boolean;
+  lockReason: string;
   note: string;
 };
 
@@ -42,6 +44,8 @@ const blank: FormState = {
   spPositionGoal: "TOP_7",
   policy: "維持",
   adGroup: "通常",
+  changeLocked: false,
+  lockReason: "",
   note: "",
 };
 
@@ -59,6 +63,8 @@ function toForm(row: RppAlertTarget): FormState {
     spPositionGoal: row.spPositionGoal ?? row.positionGoal,
     policy: row.policy,
     adGroup: row.adGroup || "通常",
+    changeLocked: row.changeLocked === true,
+    lockReason: row.lockReason || "",
     note: row.note,
   };
 }
@@ -293,6 +299,11 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
   }
 
   function downloadCpcCsv(cfg: RppConfiguredTarget) {
+    const target = targetMap.get(cfg.id);
+    if (target?.changeLocked) {
+      setError(`変更不可リスト対象です${target.lockReason ? `（${target.lockReason}）` : ""}`);
+      return;
+    }
     const current = cfg.source === "商品CPC" ? cfg.itemCpc : cfg.keywordCpc;
     const input = window.prompt(`${cfg.itemCode} / ${cfg.keyword} の新しいCPCを入力してください（現在 ${yen(current)}）`, current ? String(current) : "");
     if (input == null) return;
@@ -395,7 +406,7 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
       const res = await fetch("/api/rpp/targets", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "seedMissing", ctrGoal: 5, cvrGoal: 5, roasFloor: 500, positionGoal: "FIRST_PAGE", pcPositionGoal: "FIRST_PAGE", spPositionGoal: "TOP_7", policy: "維持", adGroup: "通常" }),
+        body: JSON.stringify({ action: "seedMissing", ctrGoal: 5, cvrGoal: 5, roasFloor: 500, positionGoal: "FIRST_PAGE", pcPositionGoal: "FIRST_PAGE", spPositionGoal: "TOP_7", policy: "維持", adGroup: "通常", changeLocked: false, lockReason: "" }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "一括作成に失敗しました");
@@ -437,6 +448,7 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
         <div className="card"><span>目標未設定</span><strong className={missingCount ? "warn-text" : "ok-text"}>{missingCount}</strong></div>
         <div className="card"><span>担当タブ</span><strong>{ownerFilter}</strong></div>
         <div className="card"><span>広告グループ</span><strong>{groupFilter}</strong></div>
+        <div className="card"><span>変更不可</span><strong>{targets.filter((row) => row.changeLocked).length}</strong></div>
       </div>
 
       <section className="panel owner-panel">
@@ -524,6 +536,7 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
                     </div>
                     <span className="owner-mini-pill">{row?.owner || cfg.owner || "担当未設定"}</span>
                     <span className="owner-mini-pill group-mini-pill">{row?.adGroup || "通常"}</span>
+                    {row?.changeLocked ? <span className="status-pill approval-rejected">変更不可</span> : null}
                   </div>
                   <h3>{cfg.keyword}</h3>
                   <small className="product-item-name">{cfg.itemName || "商品名未取得"}</small>
@@ -539,7 +552,7 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
                   {positionRows.length > 1 ? <span className="metric-wide position-list"><small>検索KW別</small><strong>{positionRows.map((row) => `${row.keyword}: ${row.position}`).join(" / ")}</strong></span> : null}
                 </div>
                 <div className="product-card-status">
-                  {row ? <small>G {row.adGroup || "通常"}<br />検索調査KW {(row.searchKeywords ?? []).join(" / ") || "未設定"}<br />CTR {row.ctrGoal}% / CVR {row.cvrGoal}% / ROAS最低 {row.roasFloor}%<br />PC {positionGoalLabel(row.pcPositionGoal ?? row.positionGoal)} / SP {positionGoalLabel(row.spPositionGoal ?? row.positionGoal)} / {row.policy}</small> : <div className="target-status-compact"><span className="status-pill approval-held">目標未設定</span><small>商品内 {itemTargetCompletion.saved}/{itemTargetCompletion.total}件</small></div>}
+                  {row ? <small>G {row.adGroup || "通常"}{row.changeLocked ? ` / 変更不可${row.lockReason ? `:${row.lockReason}` : ""}` : ""}<br />検索調査KW {(row.searchKeywords ?? []).join(" / ") || "未設定"}<br />CTR {row.ctrGoal}% / CVR {row.cvrGoal}% / ROAS最低 {row.roasFloor}%<br />PC {positionGoalLabel(row.pcPositionGoal ?? row.positionGoal)} / SP {positionGoalLabel(row.spPositionGoal ?? row.positionGoal)} / {row.policy}</small> : <div className="target-status-compact"><span className="status-pill approval-held">目標未設定</span><small>商品内 {itemTargetCompletion.saved}/{itemTargetCompletion.total}件</small></div>}
                 </div>
                 <div className="approval-actions card-actions">
                   <div className="product-exclusion-action">
@@ -555,7 +568,7 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
                     </button>
                   </div>
                   <button disabled={busy} type="button" onClick={() => openTargetForm(row ? toForm(row) : configuredToForm(cfg))}>目標設定</button>
-                  <button disabled={busy} type="button" onClick={() => downloadCpcCsv(cfg)}>CPC調整</button>
+                  <button disabled={busy || row?.changeLocked === true} type="button" onClick={() => downloadCpcCsv(cfg)} title={row?.changeLocked ? "変更不可リスト対象です" : undefined}>CPC調整</button>
                   {row ? <button disabled={busy} type="button" onClick={() => deleteTarget(row.id)}>削除</button> : null}
                 </div>
               </article>
@@ -626,6 +639,10 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
             <datalist id="rpp-ad-groups">{adGroups.filter((g) => g !== "全て").map((g) => <option key={g} value={g} />)}</datalist>
           </div>
           <div className="form-row two-cols">
+            <label className="checkbox-field"><input type="checkbox" checked={form.changeLocked} onChange={(e) => patchForm("changeLocked", e.target.checked)} /> 変更不可リスト</label>
+            <label>変更不可理由<input value={form.lockReason} onChange={(e) => patchForm("lockReason", e.target.value)} placeholder="セール中 / 固定CPC / 要ノブ確認" disabled={!form.changeLocked} /></label>
+          </div>
+          <div className="form-row two-cols">
             <label>運用方針
               <select value={form.policy} onChange={(e) => patchForm("policy", e.target.value as RppOperationPolicy)}>
                 <option value="攻め">攻め</option>
@@ -665,6 +682,7 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
             <li><b>検索位置</b><small>「圏外」=PR枠はあるが自社広告が1ページ目に出ていない。「広告枠なし」=その検索KWで楽天側のRPP広告枠自体が出ていない。</small></li>
             <li><b>担当別保存済み</b><small>{Object.entries(grouped).map(([owner, count]) => `${owner}:${count}`).join(" / ") || "未設定"}</small></li>
             <li><b>広告グループ</b><small>{adGroups.filter((g) => g !== "全て").join(" / ") || "通常"}</small></li>
+            <li><b>変更不可リスト</b><small>CPC調整CSV出力と自動提案の変更候補から除外。理由も保存。</small></li>
           </ul>
         </div>
       </div>

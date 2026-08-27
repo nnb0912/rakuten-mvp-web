@@ -171,6 +171,8 @@ small { color: var(--muted); line-height: 1.45; }
 .target-form { display: grid; gap: 12px; }
 .target-form label, .target-form-field { display: grid; gap: 6px; color: var(--muted); font-size: 12px; font-weight: 700; }
 .target-form input, .target-form select, .target-form textarea { width: 100%; border: 1px solid var(--border); border-radius: 10px; padding: 10px 11px; color: var(--foreground); background: #fff; font: inherit; }
+.checkbox-field { display: flex !important; grid-template-columns: none !important; align-items: center; gap: 8px; color: var(--foreground) !important; }
+.checkbox-field input { width: auto; }
 .keyword-candidate-box { border: 1px solid var(--border); border-radius: 12px; background: #f9fafb; padding: 10px; display: grid; gap: 8px; }
 .keyword-candidate-box b { color: var(--foreground); font-size: 13px; }
 .search-word-chips { display: flex; gap: 8px; flex-wrap: wrap; }
