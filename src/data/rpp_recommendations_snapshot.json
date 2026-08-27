@@ -1,16 +1,19 @@
 {
   "summary": {
-    "generatedAt": "2026-08-21T16:34:37.515Z",
-    "settingsRows": 256,
-    "activeRows": 9,
-    "excludedRows": 247,
-    "performanceRows": 14,
+    "generatedAt": "2026-08-27T02:50:02.418Z",
+    "settingsRows": 716,
+    "activeRows": 28,
+    "excludedRows": 688,
+    "performanceRows": 55,
+    "keywordPerformanceRows": 17,
+    "itemPerformanceRows": 38,
+    "productCpcEstimatedRows": 38,
     "roasBar": 500,
     "counts": {
       "raise": 0,
       "lower": 0,
-      "hold": 7,
-      "ok": 2
+      "hold": 4,
+      "ok": 24
     },
     "safety": {
       "floorCpc": 40,
@@ -25,45 +28,54 @@
             "filePath": "/Users/nob/Projects/rpp-8am-notify/rpp_keyword_settings.csv",
             "ok": true,
             "status": "ok",
-            "ageHours": 16.70602843919542,
+            "ageHours": 2.94933003112793,
             "maxAgeHours": 24,
-            "mtime": "2026-08-20T23:52:15.813Z"
+            "mtime": "2026-08-26T23:53:04.830Z"
           },
           {
             "fileName": "rpp_item_settings.csv",
             "filePath": "/Users/nob/Projects/rpp-8am-notify/rpp_item_settings.csv",
             "ok": true,
             "status": "ok",
-            "ageHours": 6.878831410861545,
+            "ageHours": 2.954946184556749,
             "maxAgeHours": 24,
-            "mtime": "2026-08-21T09:41:53.722Z"
+            "mtime": "2026-08-26T23:52:44.612Z"
           },
           {
             "fileName": "rpp_exclude_items.csv",
             "filePath": "/Users/nob/Projects/rpp-8am-notify/rpp_exclude_items.csv",
             "ok": true,
             "status": "ok",
-            "ageHours": 6.896616088121203,
+            "ageHours": 2.939696271701389,
             "maxAgeHours": 24,
-            "mtime": "2026-08-21T09:40:49.697Z"
+            "mtime": "2026-08-26T23:53:39.511Z"
           },
           {
             "fileName": "rpp_keyword_reports.csv",
             "filePath": "/Users/nob/Projects/rpp-8am-notify/rpp_keyword_reports.csv",
             "ok": true,
             "status": "ok",
-            "ageHours": 16.72771169643826,
+            "ageHours": 2.9705830355495877,
             "maxAgeHours": 36,
-            "mtime": "2026-08-20T23:50:57.753Z"
+            "mtime": "2026-08-26T23:51:48.319Z"
+          },
+          {
+            "fileName": "rpp_item_reports.csv",
+            "filePath": "/Users/nob/Projects/rpp-8am-notify/rpp_item_reports.csv",
+            "ok": true,
+            "status": "ok",
+            "ageHours": 0.07221786994086371,
+            "maxAgeHours": 36,
+            "mtime": "2026-08-27T02:45:42.434Z"
           },
           {
             "fileName": "rpp_position_adjustment_log.json",
             "filePath": "/Users/nob/Projects/rpp-8am-notify/rpp_position_adjustment_log.json",
             "ok": true,
             "status": "ok",
-            "ageHours": 0.014991771172417534,
+            "ageHours": 2.8758763169352215,
             "maxAgeHours": 24,
-            "mtime": "2026-08-21T16:33:43.545Z"
+            "mtime": "2026-08-26T23:57:29.263Z"
           }
         ]
       }
@@ -71,189 +83,98 @@
   },
   "recommendations": [
     {
-      "date": "2026-08-21T16:34:37.513Z",
-      "itemCode": "y0662",
-      "itemName": "デスクライト",
-      "keyword": "デスクライト",
-      "direction": "up",
-      "action": "HOLD",
-      "currentCpc": 43,
-      "meyasuCpc": 44,
-      "proposedCpc": null,
-      "delta": null,
-      "source": "キーワードCPC",
-      "clicks": 44,
-      "spend": 3332,
-      "salesAmount": 13520,
-      "roas": 405.76,
-      "cvr": 9.09,
-      "rppPosition": "未測定",
-      "reasons": [
-        "目安CPC未満（43円 < 44円）",
-        "順位 未測定",
-        "クリック44 / ROAS406% / CVR9.09% / 売上13,520円"
-      ],
-      "blocks": [
-        "ROAS基準未満（406% < 500%）",
-        "順位未測定"
-      ],
-      "uploadReady": false,
-      "note": "Phase1: 提案のみ。RMS反映なし。"
-    },
-    {
-      "date": "2026-08-21T16:34:37.515Z",
+      "date": "2026-08-27T02:50:02.417Z",
       "itemCode": "r0606",
       "itemName": "まな板",
       "keyword": "まな板",
       "direction": "up",
       "action": "HOLD",
       "currentCpc": 40,
-      "meyasuCpc": 61,
+      "meyasuCpc": 45,
       "proposedCpc": null,
       "delta": null,
       "source": "キーワードCPC",
-      "clicks": 36,
-      "spend": 2576,
-      "salesAmount": 9020,
-      "roas": 350.15,
-      "cvr": 11.11,
-      "rppPosition": "PC 4位 / SP 4位",
+      "clicks": 96,
+      "spend": 7280,
+      "salesAmount": 23000,
+      "roas": 315.93,
+      "cvr": 10.41,
+      "rppPosition": "PC 5位 / SP 5位",
       "reasons": [
-        "目安CPC未満（40円 < 61円）",
-        "順位 PC 4位 / SP 4位",
-        "クリック36 / ROAS350% / CVR11.11% / 売上9,020円"
+        "目安CPC未満（40円 < 45円）",
+        "順位 PC 5位 / SP 5位",
+        "クリック96 / ROAS316% / CVR10.41% / 売上23,000円"
       ],
       "blocks": [
-        "ROAS基準未満（350% < 500%）",
+        "ROAS基準未満（316% < 500%）",
         "RPP順位は1ページ目内"
       ],
       "uploadReady": false,
       "note": "Phase1: 提案のみ。RMS反映なし。"
     },
     {
-      "date": "2026-08-21T16:34:37.515Z",
-      "itemCode": "r0550",
-      "itemName": "ブラケットライト",
-      "keyword": "ブラケットライト",
-      "direction": "up",
-      "action": "HOLD",
-      "currentCpc": 43,
-      "meyasuCpc": 47,
-      "proposedCpc": null,
-      "delta": null,
-      "source": "キーワードCPC",
-      "clicks": 11,
-      "spend": 829,
-      "salesAmount": 3480,
-      "roas": 419.78,
-      "cvr": 9.09,
-      "rppPosition": "PC 4位 / SP 4位",
-      "reasons": [
-        "目安CPC未満（43円 < 47円）",
-        "順位 PC 4位 / SP 4位",
-        "クリック11 / ROAS420% / CVR9.09% / 売上3,480円"
-      ],
-      "blocks": [
-        "ROAS基準未満（420% < 500%）",
-        "RPP順位は1ページ目内"
-      ],
-      "uploadReady": false,
-      "note": "Phase1: 提案のみ。RMS反映なし。"
-    },
-    {
-      "date": "2026-08-21T16:34:37.515Z",
-      "itemCode": "r0681",
-      "itemName": "調味料ラック",
-      "keyword": "キッチン 収納 調味料",
-      "direction": "up",
-      "action": "HOLD",
-      "currentCpc": 50,
-      "meyasuCpc": 66,
-      "proposedCpc": null,
-      "delta": null,
-      "source": "キーワードCPC",
-      "clicks": 2,
-      "spend": 142,
-      "salesAmount": 0,
-      "roas": 0,
-      "cvr": 0,
-      "rppPosition": "PC 3位 / SP 3位",
-      "reasons": [
-        "目安CPC未満（50円 < 66円）",
-        "順位 PC 3位 / SP 3位",
-        "クリック2 / ROAS0% / CVR0% / 売上0円"
-      ],
-      "blocks": [
-        "クリック少（2）",
-        "ROAS基準未満（0% < 500%）",
-        "CVR低め（0%）",
-        "RPP順位は1ページ目内"
-      ],
-      "uploadReady": false,
-      "note": "Phase1: 提案のみ。RMS反映なし。"
-    },
-    {
-      "date": "2026-08-21T16:34:37.515Z",
-      "itemCode": "r0887",
-      "itemName": "ミニシーラー",
-      "keyword": "シーラー ハンディタイプ",
+      "date": "2026-08-27T02:50:02.418Z",
+      "itemCode": "r0573",
+      "itemName": "糸糸[いとし]のタオル",
+      "keyword": "バスタオル",
       "direction": "up",
       "action": "HOLD",
       "currentCpc": 40,
-      "meyasuCpc": 109,
+      "meyasuCpc": 162,
       "proposedCpc": null,
       "delta": null,
       "source": "キーワードCPC",
-      "clicks": 1,
-      "spend": 80,
-      "salesAmount": 0,
-      "roas": 0,
-      "cvr": 0,
-      "rppPosition": "PC 1位 / SP 2位",
+      "clicks": 6,
+      "spend": 480,
+      "salesAmount": 4960,
+      "roas": 1033.33,
+      "cvr": 16.66,
+      "rppPosition": "未測定",
       "reasons": [
-        "目安CPC未満（40円 < 109円）",
-        "順位 PC 1位 / SP 2位",
-        "クリック1 / ROAS0% / CVR0% / 売上0円"
+        "目安CPC未満（40円 < 162円）",
+        "順位 未測定",
+        "クリック6 / ROAS1033% / CVR16.66% / 売上4,960円"
       ],
       "blocks": [
-        "クリック少（1）",
-        "ROAS基準未満（0% < 500%）",
-        "CVR低め（0%）",
-        "RPP順位は1ページ目内"
+        "順位未測定"
       ],
       "uploadReady": false,
       "note": "Phase1: 提案のみ。RMS反映なし。"
     },
     {
-      "date": "2026-08-21T16:34:37.515Z",
-      "itemCode": "r0681",
-      "itemName": "調味料ラック",
-      "keyword": "キッチン 調味料ラック 収納",
+      "date": "2026-08-27T02:50:02.418Z",
+      "itemCode": "r0573",
+      "itemName": "糸糸[いとし]のタオル",
+      "keyword": "タオル",
       "direction": "up",
       "action": "HOLD",
       "currentCpc": 40,
-      "meyasuCpc": 115,
+      "meyasuCpc": 323,
       "proposedCpc": null,
       "delta": null,
       "source": "キーワードCPC",
-      "clicks": null,
-      "spend": null,
-      "salesAmount": null,
-      "roas": null,
-      "cvr": null,
-      "rppPosition": "PC 1ページ目にいない / SP 6位",
+      "clicks": 3,
+      "spend": 240,
+      "salesAmount": 0,
+      "roas": 0,
+      "cvr": 0,
+      "rppPosition": "未測定",
       "reasons": [
-        "目安CPC未満（40円 < 115円）",
-        "順位 PC 1ページ目にいない / SP 6位"
+        "目安CPC未満（40円 < 323円）",
+        "順位 未測定",
+        "クリック3 / ROAS0% / CVR0% / 売上0円"
       ],
       "blocks": [
-        "前日レポートに該当KWなし"
+        "クリック少（3）",
+        "ROAS基準未満（0% < 500%）",
+        "CVR低め（0%）",
+        "順位未測定"
       ],
       "uploadReady": false,
       "note": "Phase1: 提案のみ。RMS反映なし。"
     },
     {
-      "date": "2026-08-21T16:34:37.515Z",
+      "date": "2026-08-27T02:50:02.418Z",
       "itemCode": "r0867",
       "itemName": "アイスボールタンブラー",
       "keyword": "アイスボール シリコン",
