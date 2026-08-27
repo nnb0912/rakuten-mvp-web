@@ -20,6 +20,7 @@ export type RppAlertTarget = {
   spPositionGoal: RppPositionGoal;
   policy: RppOperationPolicy;
   note: string;
+  adGroup: string;
   searchKeywords: string[];
   createdAt: string;
   updatedAt: string;
@@ -59,6 +60,7 @@ export type RppAlertTargetInput = {
   spPositionGoal?: RppPositionGoal;
   policy?: RppOperationPolicy;
   note?: string;
+  adGroup?: string;
   searchKeywords?: string[] | string;
 };
 
@@ -127,6 +129,7 @@ function normalizeInput(input: RppAlertTargetInput) {
     spPositionGoal,
     policy,
     note: cleanText(input.note),
+    adGroup: cleanText(input.adGroup) || "通常",
     searchKeywords,
   };
 }
@@ -231,10 +234,11 @@ async function readRawTargets(): Promise<RppAlertTarget[]> {
       policy: RppOperationPolicy;
       note: string | null;
       search_keywords: string[] | string | null;
+      ad_group: string | null;
       created_at: Date | string;
       updated_at: Date | string;
     }>(
-      `select id, item_code, keyword, owner, ctr_goal, cvr_goal, roas_floor, position_goal, pc_position_goal, sp_position_goal, policy, note, search_keywords, created_at, updated_at
+      `select id, item_code, keyword, owner, ctr_goal, cvr_goal, roas_floor, position_goal, pc_position_goal, sp_position_goal, policy, note, ad_group, search_keywords, created_at, updated_at
        from ${TARGETS_TABLE}
        order by item_code asc, keyword asc`
     );
@@ -251,6 +255,7 @@ async function readRawTargets(): Promise<RppAlertTarget[]> {
       spPositionGoal: row.sp_position_goal ?? row.position_goal,
       policy: row.policy,
       note: row.note ?? "",
+      adGroup: row.ad_group || "通常",
       searchKeywords: Array.isArray(row.search_keywords)
         ? row.search_keywords
         : typeof row.search_keywords === "string"
@@ -262,9 +267,9 @@ async function readRawTargets(): Promise<RppAlertTarget[]> {
   }
   try {
     const raw = JSON.parse(await fs.readFile(TARGETS_PATH, "utf8")) as unknown;
-    if (Array.isArray(raw)) return raw as RppAlertTarget[];
+    if (Array.isArray(raw)) return (raw as RppAlertTarget[]).map((row) => ({ ...row, adGroup: row.adGroup || "通常" }));
     if (raw && typeof raw === "object" && Array.isArray((raw as { targets?: unknown }).targets)) {
-      return (raw as { targets: RppAlertTarget[] }).targets;
+      return (raw as { targets: RppAlertTarget[] }).targets.map((row) => ({ ...row, adGroup: row.adGroup || "通常" }));
     }
   } catch {}
   return [];
@@ -286,6 +291,7 @@ async function ensureRppAlertTargetsTable() {
       sp_position_goal text,
       policy text not null default '維持',
       note text not null default '',
+      ad_group text not null default '通常',
       search_keywords jsonb not null default '[]'::jsonb,
       created_at timestamptz not null default now(),
       updated_at timestamptz not null default now()
@@ -293,15 +299,16 @@ async function ensureRppAlertTargetsTable() {
   `);
   await pool.query(`alter table ${TARGETS_TABLE} add column if not exists pc_position_goal text`);
   await pool.query(`alter table ${TARGETS_TABLE} add column if not exists sp_position_goal text`);
+  await pool.query(`alter table ${TARGETS_TABLE} add column if not exists ad_group text not null default '通常'`);
   await pool.query(`update ${TARGETS_TABLE} set pc_position_goal = coalesce(pc_position_goal, position_goal, 'FIRST_PAGE'), sp_position_goal = coalesce(sp_position_goal, position_goal, 'FIRST_PAGE') where pc_position_goal is null or sp_position_goal is null`);
 }
 
 async function readLegacyJsonTargets(): Promise<RppAlertTarget[]> {
   try {
     const raw = JSON.parse(await fs.readFile(TARGETS_PATH, "utf8")) as unknown;
-    if (Array.isArray(raw)) return raw as RppAlertTarget[];
+    if (Array.isArray(raw)) return (raw as RppAlertTarget[]).map((row) => ({ ...row, adGroup: row.adGroup || "通常" }));
     if (raw && typeof raw === "object" && Array.isArray((raw as { targets?: unknown }).targets)) {
-      return (raw as { targets: RppAlertTarget[] }).targets;
+      return (raw as { targets: RppAlertTarget[] }).targets.map((row) => ({ ...row, adGroup: row.adGroup || "通常" }));
     }
   } catch {}
   return [];
@@ -318,8 +325,8 @@ async function migrateLegacyJsonTargetsIfDbEmpty() {
 async function upsertRawTarget(target: RppAlertTarget) {
   await ensureRppAlertTargetsTable();
   await pool!.query(
-    `insert into ${TARGETS_TABLE} (id, item_code, keyword, owner, ctr_goal, cvr_goal, roas_floor, position_goal, pc_position_goal, sp_position_goal, policy, note, search_keywords, created_at, updated_at)
-     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13::jsonb, $14, $15)
+    `insert into ${TARGETS_TABLE} (id, item_code, keyword, owner, ctr_goal, cvr_goal, roas_floor, position_goal, pc_position_goal, sp_position_goal, policy, note, ad_group, search_keywords, created_at, updated_at)
+     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14::jsonb, $15, $16)
      on conflict (id) do update set
        item_code = excluded.item_code,
        keyword = excluded.keyword,
@@ -332,9 +339,10 @@ async function upsertRawTarget(target: RppAlertTarget) {
        sp_position_goal = excluded.sp_position_goal,
        policy = excluded.policy,
        note = excluded.note,
+       ad_group = excluded.ad_group,
        search_keywords = excluded.search_keywords,
        updated_at = excluded.updated_at`,
-    [target.id, target.itemCode, target.keyword, target.owner, target.ctrGoal, target.cvrGoal, target.roasFloor, target.positionGoal, target.pcPositionGoal ?? target.positionGoal, target.spPositionGoal ?? target.positionGoal, target.policy, target.note, JSON.stringify(target.searchKeywords), target.createdAt, target.updatedAt]
+    [target.id, target.itemCode, target.keyword, target.owner, target.ctrGoal, target.cvrGoal, target.roasFloor, target.positionGoal, target.pcPositionGoal ?? target.positionGoal, target.spPositionGoal ?? target.positionGoal, target.policy, target.note, target.adGroup || "通常", JSON.stringify(target.searchKeywords), target.createdAt, target.updatedAt]
   );
 }
 

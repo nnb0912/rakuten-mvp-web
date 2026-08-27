@@ -25,6 +25,7 @@ type FormState = {
   pcPositionGoal: RppPositionGoal;
   spPositionGoal: RppPositionGoal;
   policy: RppOperationPolicy;
+  adGroup: string;
   note: string;
 };
 
@@ -40,6 +41,7 @@ const blank: FormState = {
   pcPositionGoal: "FIRST_PAGE",
   spPositionGoal: "TOP_7",
   policy: "維持",
+  adGroup: "通常",
   note: "",
 };
 
@@ -56,6 +58,7 @@ function toForm(row: RppAlertTarget): FormState {
     pcPositionGoal: row.pcPositionGoal ?? row.positionGoal,
     spPositionGoal: row.spPositionGoal ?? row.positionGoal,
     policy: row.policy,
+    adGroup: row.adGroup || "通常",
     note: row.note,
   };
 }
@@ -68,7 +71,7 @@ function representativeKeyword(row: RppConfiguredTarget, snapshot?: RppConfigure
 
 function configuredToForm(row: RppConfiguredTarget): FormState {
   const defaultSearchKeyword = row.keyword === "商品CPC" ? representativeKeyword(row) : row.keyword;
-  return { ...blank, itemCode: row.itemCode, keyword: row.keyword, searchKeywords: defaultSearchKeyword, owner: row.owner ?? "" };
+  return { ...blank, itemCode: row.itemCode, keyword: row.keyword, searchKeywords: defaultSearchKeyword, owner: row.owner ?? "", adGroup: "通常" };
 }
 
 function positionGoalLabel(goal: RppPositionGoal) {
@@ -136,6 +139,7 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [ownerFilter, setOwnerFilter] = useState("全て");
+  const [groupFilter, setGroupFilter] = useState("全て");
   const [exclusionSearch, setExclusionSearch] = useState("");
   const [showExcludedProducts, setShowExcludedProducts] = useState(false);
   const [baseExclusionProducts, setBaseExclusionProducts] = useState(exclusionProducts);
@@ -168,6 +172,11 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
     acc[row.owner || "担当未設定"] = (acc[row.owner || "担当未設定"] ?? 0) + 1;
     return acc;
   }, {}), [targets]);
+  const adGroups = useMemo(() => {
+    const groups = new Set<string>(["通常"]);
+    for (const row of targets) groups.add(row.adGroup || "通常");
+    return ["全て", ...[...groups].sort((a, b) => a.localeCompare(b, "ja"))];
+  }, [targets]);
   const recommendationMap = useMemo(() => new Map(recommendations.map((row) => [metricKey(row.itemCode, row.keyword), row])), [recommendations]);
   const ownerStats = useMemo(() => {
     const stats = new Map<string, { owner: string; configured: number; saved: number; missing: number; spend: number; clicks: number; sales: number; firstPage: number; outsidePage: number; unmeasured: number }>();
@@ -203,9 +212,12 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
     currentExcluded: exclusionOverrides[row.itemCode] ?? row.excluded,
   })), [baseExclusionProducts, exclusionOverrides]);
   const exclusionStateMap = useMemo(() => new Map(exclusionRows.map((row) => [row.itemCode, row])), [exclusionRows]);
-  const filteredConfiguredTargets = ownerFilter === "全て"
-    ? configuredTargets
-    : configuredTargets.filter((cfg) => (targetMap.get(cfg.id)?.owner || cfg.owner || "担当未設定") === ownerFilter);
+  const filteredConfiguredTargets = configuredTargets.filter((cfg) => {
+    const target = targetMap.get(cfg.id);
+    const ownerOk = ownerFilter === "全て" || (target?.owner || cfg.owner || "担当未設定") === ownerFilter;
+    const groupOk = groupFilter === "全て" || (target?.adGroup || "通常") === groupFilter;
+    return ownerOk && groupOk;
+  });
   const visibleOwnerStats = ownerFilter === "全て" ? ownerStats : ownerStats.filter((row) => row.owner === ownerFilter);
   const exclusionChanged = exclusionRows.filter((row) => row.currentExcluded !== row.excluded);
   const excludedProductsForOwner = exclusionRows.filter((row) => row.excluded && (ownerFilter === "全て" || (row.owner || "担当未設定") === ownerFilter));
@@ -246,7 +258,7 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
   }
 
   function excludedProductToForm(row: RppExclusionProduct): FormState {
-    return { ...blank, itemCode: row.itemCode, keyword: "商品CPC", owner: row.owner ?? "", searchKeywords: seoWordsForItem(row.itemCode)[0] ?? "" };
+    return { ...blank, itemCode: row.itemCode, keyword: "商品CPC", owner: row.owner ?? "", adGroup: "通常", searchKeywords: seoWordsForItem(row.itemCode)[0] ?? "" };
   }
 
   function addSearchWord(word: string) {
@@ -383,7 +395,7 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
       const res = await fetch("/api/rpp/targets", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "seedMissing", ctrGoal: 5, cvrGoal: 5, roasFloor: 500, positionGoal: "FIRST_PAGE", pcPositionGoal: "FIRST_PAGE", spPositionGoal: "TOP_7", policy: "維持" }),
+        body: JSON.stringify({ action: "seedMissing", ctrGoal: 5, cvrGoal: 5, roasFloor: 500, positionGoal: "FIRST_PAGE", pcPositionGoal: "FIRST_PAGE", spPositionGoal: "TOP_7", policy: "維持", adGroup: "通常" }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "一括作成に失敗しました");
@@ -424,6 +436,7 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
         <div className="card"><span>目標保存済み</span><strong>{targets.length}</strong></div>
         <div className="card"><span>目標未設定</span><strong className={missingCount ? "warn-text" : "ok-text"}>{missingCount}</strong></div>
         <div className="card"><span>担当タブ</span><strong>{ownerFilter}</strong></div>
+        <div className="card"><span>広告グループ</span><strong>{groupFilter}</strong></div>
       </div>
 
       <section className="panel owner-panel">
@@ -438,6 +451,13 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
           {ownerStats.map((row) => (
             <button className={ownerFilter === row.owner ? "owner-tab active" : "owner-tab"} key={row.owner} type="button" onClick={() => selectOwnerFilter(row.owner)}>
               {row.owner}<small>{row.configured}件</small>
+            </button>
+          ))}
+        </div>
+        <div className="owner-tabs group-tabs">
+          {adGroups.map((group) => (
+            <button className={groupFilter === group ? "owner-tab active" : "owner-tab"} key={group} type="button" onClick={() => setGroupFilter(group)}>
+              {group}<small>{group === "全て" ? configuredTargets.length : configuredTargets.filter((cfg) => (targetMap.get(cfg.id)?.adGroup || "通常") === group).length}件</small>
             </button>
           ))}
         </div>
@@ -468,7 +488,7 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
         <div className="section-heading">
           <div>
             <h2>{ownerFilter === "全て" ? "商品/KW別一覧" : `${ownerFilter}の商品/KW`}</h2>
-            <p>担当タブに合わせて、この一覧だけが切り替わります。</p>
+            <p>担当タブ・広告グループに合わせて、この一覧だけが切り替わります。</p>
           </div>
           <div className="product-list-actions">
             <span className="status-pill status-hold">表示 {filteredConfiguredTargets.length}件</span>
@@ -503,6 +523,7 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
                       <span className="status-pill status-hold">{cfg.source}</span>
                     </div>
                     <span className="owner-mini-pill">{row?.owner || cfg.owner || "担当未設定"}</span>
+                    <span className="owner-mini-pill group-mini-pill">{row?.adGroup || "通常"}</span>
                   </div>
                   <h3>{cfg.keyword}</h3>
                   <small className="product-item-name">{cfg.itemName || "商品名未取得"}</small>
@@ -518,7 +539,7 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
                   {positionRows.length > 1 ? <span className="metric-wide position-list"><small>検索KW別</small><strong>{positionRows.map((row) => `${row.keyword}: ${row.position}`).join(" / ")}</strong></span> : null}
                 </div>
                 <div className="product-card-status">
-                  {row ? <small>検索調査KW {(row.searchKeywords ?? []).join(" / ") || "未設定"}<br />CTR {row.ctrGoal}% / CVR {row.cvrGoal}% / ROAS最低 {row.roasFloor}%<br />PC {positionGoalLabel(row.pcPositionGoal ?? row.positionGoal)} / SP {positionGoalLabel(row.spPositionGoal ?? row.positionGoal)} / {row.policy}</small> : <div className="target-status-compact"><span className="status-pill approval-held">目標未設定</span><small>商品内 {itemTargetCompletion.saved}/{itemTargetCompletion.total}件</small></div>}
+                  {row ? <small>G {row.adGroup || "通常"}<br />検索調査KW {(row.searchKeywords ?? []).join(" / ") || "未設定"}<br />CTR {row.ctrGoal}% / CVR {row.cvrGoal}% / ROAS最低 {row.roasFloor}%<br />PC {positionGoalLabel(row.pcPositionGoal ?? row.positionGoal)} / SP {positionGoalLabel(row.spPositionGoal ?? row.positionGoal)} / {row.policy}</small> : <div className="target-status-compact"><span className="status-pill approval-held">目標未設定</span><small>商品内 {itemTargetCompletion.saved}/{itemTargetCompletion.total}件</small></div>}
                 </div>
                 <div className="approval-actions card-actions">
                   <div className="product-exclusion-action">
@@ -601,6 +622,10 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
           </div>
           <div className="form-row two-cols">
             <label>担当<input value={form.owner} onChange={(e) => patchForm("owner", e.target.value)} placeholder="森下" /></label>
+            <label>広告グループ<input list="rpp-ad-groups" value={form.adGroup} onChange={(e) => patchForm("adGroup", e.target.value)} placeholder="通常 / 注力 / 季節 / 利益重視" /></label>
+            <datalist id="rpp-ad-groups">{adGroups.filter((g) => g !== "全て").map((g) => <option key={g} value={g} />)}</datalist>
+          </div>
+          <div className="form-row two-cols">
             <label>運用方針
               <select value={form.policy} onChange={(e) => patchForm("policy", e.target.value as RppOperationPolicy)}>
                 <option value="攻め">攻め</option>
@@ -639,6 +664,7 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
             <li><b>除外ON/OFF</b><small>商品単位でCSV出力。RMS本番反映はCSV確認後に別途実行</small></li>
             <li><b>検索位置</b><small>「圏外」=PR枠はあるが自社広告が1ページ目に出ていない。「広告枠なし」=その検索KWで楽天側のRPP広告枠自体が出ていない。</small></li>
             <li><b>担当別保存済み</b><small>{Object.entries(grouped).map(([owner, count]) => `${owner}:${count}`).join(" / ") || "未設定"}</small></li>
+            <li><b>広告グループ</b><small>{adGroups.filter((g) => g !== "全て").join(" / ") || "通常"}</small></li>
           </ul>
         </div>
       </div>
