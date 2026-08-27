@@ -56,6 +56,7 @@ export default async function RppPage() {
   const summary = data.summary as { generatedAt?: string; counts?: { raise?: number; lower?: number; hold?: number; ok?: number }; safety?: { productionChange?: boolean } } | null;
   const candidateTotal = (summary?.counts?.raise ?? 0) + (summary?.counts?.lower ?? 0);
   const missingTargetCount = targetData.configuredTargets.filter((row) => !targetData.targets.some((target) => target.id === row.id)).length;
+  const latestExclusionJob = exclusionJobs[0];
 
   return (
     <main className="page-shell">
@@ -90,39 +91,21 @@ export default async function RppPage() {
         <RppTargetSettings initialTargets={targetData.targets} configuredTargets={targetData.configuredTargets} exclusionProducts={targetData.exclusionProducts} recommendations={data.recommendations} />
       </section>
 
-      <section className="panel history-panel">
-        <div className="section-heading">
+      <section className="panel history-panel compact-status-panel">
+        <div className="section-heading compact-heading">
           <div>
             <h2>RMS除外アップロード状況</h2>
-            <p>RMSへ反映を押すとジョブ登録され、Mac StudioワーカーがRMSアップロードと読戻し確認を行います。</p>
+            <p>{latestExclusionJob ? `${fmtDate(latestExclusionJob.updatedAt)} / ${changeSummary(latestExclusionJob.changes)}` : "RMSへ反映後、ここに直近結果だけ表示します。"}</p>
           </div>
-          <span className="status-pill status-hold">直近 {exclusionJobs.length}件</span>
+          <span className={`status-pill ${latestExclusionJob ? jobStatusClass(latestExclusionJob.status) : "status-hold"}`}>{latestExclusionJob ? jobStatusLabel(latestExclusionJob.status) : "履歴なし"}</span>
         </div>
-        {exclusionJobs.length ? (
-          <table className="wide-table">
-            <thead><tr><th>日時</th><th>状態</th><th>対象</th><th>CSV/エラー</th></tr></thead>
-            <tbody>
-              {exclusionJobs.map((job) => (
-                <tr key={job.id}>
-                  <td><small>{fmtDate(job.updatedAt)}<br />{job.id}</small></td>
-                  <td><span className={`status-pill ${jobStatusClass(job.status)}`}>{jobStatusLabel(job.status)}</span></td>
-                  <td><small>{changeSummary(job.changes)}</small></td>
-                  <td><small>{job.error ? job.error : job.csvPath ? shortPath(job.csvPath) : "-"}</small></td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        ) : <p>アップロードジョブはまだありません。</p>}
+        {latestExclusionJob?.error ? <small className="warn-text">{latestExclusionJob.error}</small> : null}
       </section>
 
-      <section className="panel cron-panel">
-        <div className="section-heading">
-          <div>
-            <h2>朝cron実行結果</h2>
-            <p>
-              最終実行 {fmtDate(meta.cronStatus.mtime)} / {meta.cronStatus.logFile ? shortPath(meta.cronStatus.logFile) : "ログなし"}
-            </p>
-          </div>
+      <details className="panel cron-panel admin-details">
+        <summary>管理者用：朝cron実行結果</summary>
+        <div className="section-heading compact-heading">
+          <p>最終実行 {fmtDate(meta.cronStatus.mtime)} / {meta.cronStatus.logFile ? shortPath(meta.cronStatus.logFile) : "ログなし"}</p>
           <span className={`status-pill ${meta.cronStatus.ok ? "status-approved" : "approval-rejected"}`}>{meta.cronStatus.status}</span>
         </div>
         <div className="grid cards cron-cards">
@@ -133,7 +116,7 @@ export default async function RppPage() {
           <div className="card"><span>message_id</span><strong>{asText(meta.cronStatus.chatworkReadback?.messageId)}</strong></div>
           <div className="card"><span>読み戻し</span><strong>{meta.cronStatus.chatworkReadback ? "OK" : "未確認"}</strong></div>
         </div>
-      </section>
+      </details>
 
       <section className="grid two ops-grid">
         <div className="panel">
