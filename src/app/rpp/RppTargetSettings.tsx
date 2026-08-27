@@ -203,10 +203,9 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
     currentExcluded: exclusionOverrides[row.itemCode] ?? row.excluded,
   })), [baseExclusionProducts, exclusionOverrides]);
   const exclusionStateMap = useMemo(() => new Map(exclusionRows.map((row) => [row.itemCode, row])), [exclusionRows]);
-  const filteredConfiguredTargets = configuredTargets.filter((cfg) => {
-    if (exclusionStateMap.get(cfg.itemCode)?.currentExcluded) return false;
-    return ownerFilter === "全て" || (targetMap.get(cfg.id)?.owner || cfg.owner || "担当未設定") === ownerFilter;
-  });
+  const filteredConfiguredTargets = ownerFilter === "全て"
+    ? configuredTargets
+    : configuredTargets.filter((cfg) => (targetMap.get(cfg.id)?.owner || cfg.owner || "担当未設定") === ownerFilter);
   const visibleOwnerStats = ownerFilter === "全て" ? ownerStats : ownerStats.filter((row) => row.owner === ownerFilter);
   const exclusionChanged = exclusionRows.filter((row) => row.currentExcluded !== row.excluded);
   const excludedProductsForOwner = exclusionRows.filter((row) => row.currentExcluded && (ownerFilter === "全て" || (row.owner || "担当未設定") === ownerFilter));
