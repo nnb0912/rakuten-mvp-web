@@ -208,7 +208,7 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
     : configuredTargets.filter((cfg) => (targetMap.get(cfg.id)?.owner || cfg.owner || "担当未設定") === ownerFilter);
   const visibleOwnerStats = ownerFilter === "全て" ? ownerStats : ownerStats.filter((row) => row.owner === ownerFilter);
   const exclusionChanged = exclusionRows.filter((row) => row.currentExcluded !== row.excluded);
-  const excludedProductsForOwner = exclusionRows.filter((row) => row.currentExcluded && (ownerFilter === "全て" || (row.owner || "担当未設定") === ownerFilter));
+  const excludedProductsForOwner = exclusionRows.filter((row) => row.excluded && (ownerFilter === "全て" || (row.owner || "担当未設定") === ownerFilter));
   const filteredExcludedProducts = excludedProductsForOwner.filter((row) => {
     const query = exclusionSearch.trim().toLowerCase();
     if (!query) return true;
