@@ -61,6 +61,7 @@ const FRESHNESS_LIMIT_HOURS: Record<string, number> = {
   "rpp_exclude_items.csv": 24,
   "rpp_keyword_reports.csv": 36,
   "rpp_item_reports.csv": 36,
+  "rpp_item_reports_7d.csv": 36,
   "rpp_position_adjustment_log.json": 24,
 };
 
