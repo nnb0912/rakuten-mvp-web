@@ -2,6 +2,8 @@ import Link from "next/link";
 import { readRppDashboardMeta, readRppRecommendations } from "@/lib/rppRecommendations";
 import { listRecentRppExclusionJobs } from "@/lib/rppExclusionJobs";
 import { readRppAlertTargets } from "@/lib/rppTargets";
+import { readRppAutoAdjustmentSettings } from "@/lib/rppAutoAdjustmentSettings";
+import RppAutoAdjustmentSettingsPanel from "./RppAutoAdjustmentSettingsPanel";
 import RppTargetSettings from "./RppTargetSettings";
 
 export const dynamic = "force-dynamic";
@@ -48,13 +50,34 @@ function changeSummary(changes: { itemCode: string; currentExcluded: boolean }[]
   return changes.map((row) => `${row.currentExcluded ? "除外ON" : "解除"}:${row.itemCode}`).join(" / ");
 }
 
+function holdReasonCategory(row: { blocks: string[]; reasons: string[]; rppPosition: string; roas: number | null; clicks: number | null }) {
+  const text = [...row.blocks, ...row.reasons, row.rppPosition].join(" / ");
+  if (text.includes("データ最新性NG")) return { label: "データ古い", className: "approval-rejected", action: "順位/実績CSVを更新" };
+  if (text.includes("変更不可")) return { label: "変更不可", className: "status-hold", action: "対象外のまま" };
+  if (text.includes("ROAS基準未満") || (row.roas != null && row.roas < 500)) return { label: "ROAS低い", className: "approval-rejected", action: "上げずに様子見" };
+  if (text.includes("RPP広告枠なし") || text.includes("広告枠なし")) return { label: "広告枠なし", className: "status-hold", action: "検索面を確認" };
+  if (text.includes("順位未測定") || text.includes("未測定")) return { label: "順位未測定", className: "status-hold", action: "順位ログ更新" };
+  if (text.includes("RPP順位は1ページ目内") || text.includes("PC 1位") || text.includes("SP 1位")) return { label: "上位表示済み", className: "status-approved", action: "無理に上げない" };
+  if (text.includes("クリック少") || (row.clicks != null && row.clicks < 5)) return { label: "実績不足", className: "status-hold", action: "クリック蓄積待ち" };
+  if (text.includes("前日レポートに該当KWなし")) return { label: "実績なし", className: "status-hold", action: "実績CSV確認" };
+  if (text.includes("売上/ROASがあるため下げ慎重")) return { label: "下げ慎重", className: "status-hold", action: "手動判断" };
+  return { label: "その他", className: "status-hold", action: "理由確認" };
+}
+
+function compactReasons(row: { blocks: string[]; reasons: string[] }) {
+  const items = row.blocks.length ? row.blocks : row.reasons;
+  return items.slice(0, 3).join(" / ") || "理由なし";
+}
+
 export default async function RppPage() {
   const data = await readRppRecommendations();
   const meta = await readRppDashboardMeta();
   const targetData = await readRppAlertTargets();
+  const autoSettingsData = await readRppAutoAdjustmentSettings();
   const exclusionJobs = await listRecentRppExclusionJobs(8);
   const summary = data.summary as { generatedAt?: string; counts?: { raise?: number; lower?: number; hold?: number; ok?: number }; safety?: { productionChange?: boolean } } | null;
   const candidateTotal = (summary?.counts?.raise ?? 0) + (summary?.counts?.lower ?? 0);
+  const holdRows = data.recommendations.filter((row) => row.action === "HOLD");
   const missingTargetCount = targetData.configuredTargets.filter((row) => !targetData.targets.some((target) => target.id === row.id)).length;
   const latestExclusionJob = exclusionJobs[0];
 
@@ -77,6 +100,8 @@ export default async function RppPage() {
         <div className="card"><span>目標未設定</span><strong className={missingTargetCount ? "warn-text" : "ok-text"}>{missingTargetCount}</strong></div>
         <div className="card"><span>データ状態</span><strong className={meta.dataReady ? "ok-text" : "warn-text"}>{meta.dataReady ? "OK" : "要更新"}</strong></div>
       </section>
+
+      <RppAutoAdjustmentSettingsPanel initialSettings={autoSettingsData.settings} source={autoSettingsData.source} />
 
       <section className="panel target-panel">
         <div className="section-heading">
@@ -148,6 +173,45 @@ export default async function RppPage() {
         </div>
       </section>
 
+      <section className="panel history-panel hold-detail-panel">
+        <div className="section-heading compact-heading">
+          <div>
+            <h2>保留判断メモ</h2>
+            <p>保留理由を「原因」と「次アクション」に分けて表示します。RMS反映は行いません。</p>
+          </div>
+          <span className="status-pill status-hold">{holdRows.length}件</span>
+        </div>
+        {holdRows.length ? (
+          <table className="wide-table hold-detail-table">
+            <thead><tr><th>商品/KW</th><th>原因</th><th>CPC/順位</th><th>実績</th><th>次アクション</th></tr></thead>
+            <tbody>
+              {holdRows.map((row) => {
+                const category = holdReasonCategory(row);
+                return (
+                  <tr key={row.id}>
+                    <td>
+                      <b>{row.itemName} {row.itemCode}</b><br />
+                      <small>{row.keyword}</small>
+                    </td>
+                    <td>
+                      <span className={`status-pill ${category.className}`}>{category.label}</span><br />
+                      <small>{compactReasons(row)}</small>
+                    </td>
+                    <td>
+                      <b>{row.currentCpc}円</b> / 目安 {row.meyasuCpc}円<br />
+                      <small>{row.rppPosition}</small>
+                    </td>
+                    <td>
+                      <small>クリック {row.clicks ?? "-"} / ROAS {row.roas == null ? "-" : `${Math.round(row.roas)}%`} / 売上 {row.salesAmount == null ? "-" : `${Math.round(row.salesAmount).toLocaleString("ja-JP")}円`}</small>
+                    </td>
+                    <td><b>{category.action}</b></td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        ) : <p>保留はありません。</p>}
+      </section>
 
       <section className="panel history-panel">
         <h2>RMS反映ログ</h2>
