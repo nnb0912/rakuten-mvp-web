@@ -69,6 +69,19 @@ function compactReasons(row: { blocks: string[]; reasons: string[] }) {
   return items.slice(0, 3).join(" / ") || "理由なし";
 }
 
+function isAutoAdjustmentOutOfScope(row: { blocks: string[]; reasons: string[]; rppPosition: string }) {
+  const text = [...row.blocks, ...row.reasons, row.rppPosition].join(" / ");
+  return text.includes("RPP広告枠なし") || text.includes("広告枠なし") || text.includes("前日レポートに該当KWなし");
+}
+
+function outOfScopeReason(row: { blocks: string[]; reasons: string[]; rppPosition: string }) {
+  const text = [...row.blocks, ...row.reasons, row.rppPosition].join(" / ");
+  const reasons: string[] = [];
+  if (text.includes("RPP広告枠なし") || text.includes("広告枠なし")) reasons.push("広告枠なし");
+  if (text.includes("前日レポートに該当KWなし")) reasons.push("前日実績なし");
+  return reasons.join(" / ") || "対象外";
+}
+
 export default async function RppPage() {
   const data = await readRppRecommendations();
   const meta = await readRppDashboardMeta();
@@ -78,7 +91,8 @@ export default async function RppPage() {
   const summary = data.summary as { generatedAt?: string; counts?: { raise?: number; lower?: number; hold?: number; ok?: number }; safety?: { productionChange?: boolean } } | null;
   const candidateTotal = (summary?.counts?.raise ?? 0) + (summary?.counts?.lower ?? 0);
   const holdRows = data.recommendations.filter((row) => row.action === "HOLD");
-  const missingTargetCount = targetData.configuredTargets.filter((row) => !targetData.targets.some((target) => target.id === row.id)).length;
+  const outOfScopeRows = holdRows.filter(isAutoAdjustmentOutOfScope);
+  const decisionHoldRows = holdRows.filter((row) => !isAutoAdjustmentOutOfScope(row));
   const latestExclusionJob = exclusionJobs[0];
 
   return (
@@ -95,9 +109,9 @@ export default async function RppPage() {
       <section className="grid cards">
         <div className="card"><span>上げ候補</span><strong>{summary?.counts?.raise ?? 0}</strong></div>
         <div className="card"><span>下げ候補</span><strong>{summary?.counts?.lower ?? 0}</strong></div>
-        <div className="card"><span>保留</span><strong>{summary?.counts?.hold ?? 0}</strong></div>
+        <div className="card"><span>保留</span><strong>{decisionHoldRows.length}</strong></div>
+        <div className="card"><span>対象外</span><strong>{outOfScopeRows.length}</strong></div>
         <div className="card"><span>RPP設定中</span><strong>{targetData.configuredTargets.length}</strong></div>
-        <div className="card"><span>目標未設定</span><strong className={missingTargetCount ? "warn-text" : "ok-text"}>{missingTargetCount}</strong></div>
         <div className="card"><span>データ状態</span><strong className={meta.dataReady ? "ok-text" : "warn-text"}>{meta.dataReady ? "OK" : "要更新"}</strong></div>
       </section>
 
@@ -173,19 +187,59 @@ export default async function RppPage() {
         </div>
       </section>
 
+      <section className="panel history-panel hold-detail-panel out-of-scope-panel">
+        <div className="section-heading compact-heading">
+          <div>
+            <h2>自動調整対象外</h2>
+            <p>広告枠なし・前日実績なしは、CPCを自動で上げ下げせず別枠で確認します。</p>
+          </div>
+          <span className="status-pill status-hold">{outOfScopeRows.length}件</span>
+        </div>
+        {outOfScopeRows.length ? (
+          <table className="wide-table hold-detail-table">
+            <thead><tr><th>商品/KW</th><th>対象外理由</th><th>CPC/順位</th><th>実績</th><th>次アクション</th></tr></thead>
+            <tbody>
+              {outOfScopeRows.map((row) => {
+                const category = holdReasonCategory(row);
+                return (
+                  <tr key={row.id}>
+                    <td>
+                      <b>{row.itemName} {row.itemCode}</b><br />
+                      <small>{row.keyword}</small>
+                    </td>
+                    <td>
+                      <span className="status-pill status-hold">{outOfScopeReason(row)}</span><br />
+                      <small>{compactReasons(row)}</small>
+                    </td>
+                    <td>
+                      <b>{row.currentCpc}円</b> / 目安 {row.meyasuCpc}円<br />
+                      <small>{row.rppPosition}</small>
+                    </td>
+                    <td>
+                      <small>クリック {row.clicks ?? "-"} / ROAS {row.roas == null ? "-" : `${Math.round(row.roas)}%`} / 売上 {row.salesAmount == null ? "-" : `${Math.round(row.salesAmount).toLocaleString("ja-JP")}円`}</small>
+                    </td>
+                    <td><b>{category.action}</b></td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        ) : <p>対象外はありません。</p>}
+      </section>
+
       <section className="panel history-panel hold-detail-panel">
         <div className="section-heading compact-heading">
           <div>
             <h2>保留判断メモ</h2>
-            <p>保留理由を「原因」と「次アクション」に分けて表示します。RMS反映は行いません。</p>
+            <p>ROAS・CVR・順位条件で止まったものだけ表示します。RMS反映は行いません。</p>
           </div>
-          <span className="status-pill status-hold">{holdRows.length}件</span>
+          <span className="status-pill status-hold">{decisionHoldRows.length}件</span>
         </div>
-        {holdRows.length ? (
+        {decisionHoldRows.length ? (
           <table className="wide-table hold-detail-table">
             <thead><tr><th>商品/KW</th><th>原因</th><th>CPC/順位</th><th>実績</th><th>次アクション</th></tr></thead>
             <tbody>
-              {holdRows.map((row) => {
+              {decisionHoldRows.map((row) => {
                 const category = holdReasonCategory(row);
                 return (
                   <tr key={row.id}>
@@ -210,7 +264,7 @@ export default async function RppPage() {
               })}
             </tbody>
           </table>
-        ) : <p>保留はありません。</p>}
+        ) : <p>判断保留はありません。</p>}
       </section>
 
       <section className="panel history-panel">
