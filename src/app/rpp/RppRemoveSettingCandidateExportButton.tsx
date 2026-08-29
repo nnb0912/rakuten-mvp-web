@@ -12,6 +12,16 @@ type ExportRow = {
   rppPosition: string;
 };
 
+type DryRunResult = {
+  ok: boolean;
+  checkedAt: string;
+  candidateCount: number;
+  uploadLineCount: number;
+  auditLineCount: number;
+  productionChange?: boolean;
+  errors?: string[];
+};
+
 type ExportHistoryRow = {
   createdAt: string;
   candidateCount: number;
@@ -19,6 +29,7 @@ type ExportHistoryRow = {
   auditCsv: string;
   productionChange?: boolean;
   rows?: ExportRow[];
+  dryRun?: DryRunResult;
 };
 
 type ExportResult = ExportHistoryRow & {
@@ -50,15 +61,22 @@ function formatDate(value: string) {
 
 export default function RppRemoveSettingCandidateExportButton({ disabled = false }: Props) {
   const [busy, setBusy] = useState(false);
+  const [dryRunBusy, setDryRunBusy] = useState(false);
   const [confirmed, setConfirmed] = useState(false);
   const [result, setResult] = useState<ExportResult | null>(null);
+  const [dryRunResult, setDryRunResult] = useState<DryRunResult | null>(null);
   const [history, setHistory] = useState<ExportHistoryRow[]>([]);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     fetch("/api/rpp/export-remove-setting-candidates")
       .then((res) => res.json())
-      .then((data) => { if (Array.isArray(data.history)) setHistory(data.history); })
+      .then((data) => {
+        if (Array.isArray(data.history)) {
+          setHistory(data.history);
+          if (data.history[0]?.dryRun) setDryRunResult(data.history[0].dryRun);
+        }
+      })
       .catch(() => undefined);
   }, []);
 
@@ -70,6 +88,7 @@ export default function RppRemoveSettingCandidateExportButton({ disabled = false
     setBusy(true);
     setError(null);
     setResult(null);
+    setDryRunResult(null);
     try {
       const res = await fetch("/api/rpp/export-remove-setting-candidates", { method: "POST" });
       const data = await res.json();
@@ -83,6 +102,25 @@ export default function RppRemoveSettingCandidateExportButton({ disabled = false
     }
   }
 
+  async function validateDryRun() {
+    setDryRunBusy(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/rpp/validate-remove-setting-candidates", { method: "POST" });
+      const data = await res.json();
+      if (!res.ok || data.ok === false) throw new Error(data.error ?? "アップロード前ドライラン検証に失敗しました");
+      setDryRunResult(data as DryRunResult);
+      setHistory((current) => current.length ? [{ ...current[0], dryRun: data as DryRunResult }, ...current.slice(1)] : current);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setDryRunBusy(false);
+    }
+  }
+
+  const latestHistory = history[0];
+  const canDryRun = Boolean(latestHistory || result);
+
   return (
     <div className="export-box out-of-scope-export-box">
       <label className="checkbox-field confirm-export-check">
@@ -92,8 +130,12 @@ export default function RppRemoveSettingCandidateExportButton({ disabled = false
       <button className="secondary-button compact-button" type="button" onClick={exportCsv} disabled={busy || disabled || !confirmed}>
         {busy ? "CSV生成中..." : "設定解除候補CSV"}
       </button>
+      <button className="secondary-button compact-button" type="button" onClick={validateDryRun} disabled={dryRunBusy || disabled || !canDryRun}>
+        {dryRunBusy ? "ドライラン確認中..." : "アップロード前ドライラン確認"}
+      </button>
       <small>RMS反映なし。確認済みチェック後、設定解除候補だけを手動確認用CSV/監査CSVに出します。</small>
-      {history.length ? <small className="export-history-note">最新履歴: {formatDate(history[0].createdAt)} / {history[0].candidateCount}件 / {shortPath(history[0].uploadCsv)}</small> : null}
+      {latestHistory ? <small className="export-history-note">最新履歴: {formatDate(latestHistory.createdAt)} / {latestHistory.candidateCount}件 / {shortPath(latestHistory.uploadCsv)}</small> : null}
+      {dryRunResult ? <small className={dryRunResult.ok ? "dryrun-ok" : "dryrun-ng"}>ドライラン確認: {dryRunResult.ok ? "OK" : "NG"} / 候補{dryRunResult.candidateCount}件 / CSV{dryRunResult.uploadLineCount}行 / 監査{dryRunResult.auditLineCount}行 / RMS反映なし</small> : null}
       {error ? <p className="error-box">{error}</p> : null}
       {result ? (
         <div className="export-result remove-export-preview">
@@ -124,7 +166,7 @@ export default function RppRemoveSettingCandidateExportButton({ disabled = false
           <ul>
             {history.slice(0, 5).map((row) => (
               <li key={`${row.createdAt}-${row.uploadCsv}`}>
-                <b>{formatDate(row.createdAt)}</b> / {row.candidateCount}件 / RMS反映なし<br />
+                <b>{formatDate(row.createdAt)}</b> / {row.candidateCount}件 / RMS反映なし{row.dryRun?.ok ? " / ドライランOK" : ""}<br />
                 <small>{shortPath(row.uploadCsv)}</small>
               </li>
             ))}
