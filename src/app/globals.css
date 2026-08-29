@@ -85,7 +85,8 @@ small { color: var(--muted); line-height: 1.45; }
 .meta-list li:last-child { border-bottom: 0; padding-bottom: 0; }
 .history-panel { margin-top: 16px; }
 .hold-detail-panel { overflow-x: auto; }
-.out-of-scope-summary { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+.out-of-scope-summary { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; align-items: flex-start; }
+.out-of-scope-export-box { max-width: 420px; justify-items: end; }
 .hold-detail-table th:first-child, .hold-detail-table td:first-child { width: 18%; }
 .hold-detail-table th:nth-child(2), .hold-detail-table td:nth-child(2) { width: 30%; text-align: left; }
 .hold-detail-table th:nth-child(5), .hold-detail-table td:nth-child(5) { width: 14%; }

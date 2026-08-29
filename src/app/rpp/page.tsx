@@ -4,6 +4,7 @@ import { listRecentRppExclusionJobs } from "@/lib/rppExclusionJobs";
 import { readRppAlertTargets } from "@/lib/rppTargets";
 import { readRppAutoAdjustmentSettings } from "@/lib/rppAutoAdjustmentSettings";
 import RppAutoAdjustmentSettingsPanel from "./RppAutoAdjustmentSettingsPanel";
+import RppRemoveSettingCandidateExportButton from "./RppRemoveSettingCandidateExportButton";
 import RppTargetSettings from "./RppTargetSettings";
 
 export const dynamic = "force-dynamic";
@@ -210,6 +211,7 @@ export default async function RppPage() {
           <div className="out-of-scope-summary">
             <span className="status-pill approval-rejected">設定解除候補 {removeSettingCandidates.length}件</span>
             <span className="status-pill status-hold">検索面確認 {searchSurfaceCandidates.length}件</span>
+            <RppRemoveSettingCandidateExportButton disabled={!removeSettingCandidates.length} />
           </div>
         </div>
         {outOfScopeRows.length ? (
