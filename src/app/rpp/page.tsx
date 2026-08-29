@@ -82,6 +82,18 @@ function outOfScopeReason(row: { blocks: string[]; reasons: string[]; rppPositio
   return reasons.join(" / ") || "対象外";
 }
 
+function outOfScopeOperation(row: { blocks: string[]; reasons: string[]; rppPosition: string; roas: number | null; clicks: number | null; salesAmount: number | null }) {
+  const text = [...row.blocks, ...row.reasons, row.rppPosition].join(" / ");
+  const noRppSlot = text.includes("RPP広告枠なし") || text.includes("広告枠なし");
+  const noPerf = text.includes("前日レポートに該当KWなし") || row.clicks == null;
+  const noSalesWithClicks = row.clicks != null && row.clicks >= 5 && (row.salesAmount ?? 0) <= 0 && (row.roas ?? 0) <= 0;
+  if (noRppSlot && noSalesWithClicks) return { label: "RPP設定解除候補", className: "approval-rejected", note: "広告枠なし＋クリックあり売上0。RMS反映前に人が確認。" };
+  if (noRppSlot && noPerf) return { label: "検索面確認候補", className: "status-hold", note: "広告枠なし＋前日実績なし。検索面/商品状態を確認。" };
+  if (noRppSlot) return { label: "検索面確認候補", className: "status-hold", note: "広告枠なし。RPP面の表示有無を確認。" };
+  if (noPerf) return { label: "実績確認候補", className: "status-hold", note: "前日実績なし。CSV/配信状態を確認。" };
+  return { label: "確認候補", className: "status-hold", note: "人が確認。" };
+}
+
 export default async function RppPage() {
   const data = await readRppRecommendations();
   const meta = await readRppDashboardMeta();
@@ -93,6 +105,8 @@ export default async function RppPage() {
   const holdRows = data.recommendations.filter((row) => row.action === "HOLD");
   const outOfScopeRows = holdRows.filter(isAutoAdjustmentOutOfScope);
   const decisionHoldRows = holdRows.filter((row) => !isAutoAdjustmentOutOfScope(row));
+  const removeSettingCandidates = outOfScopeRows.filter((row) => outOfScopeOperation(row).label === "RPP設定解除候補");
+  const searchSurfaceCandidates = outOfScopeRows.filter((row) => outOfScopeOperation(row).label === "検索面確認候補");
   const latestExclusionJob = exclusionJobs[0];
 
   return (
@@ -193,19 +207,26 @@ export default async function RppPage() {
             <h2>自動調整対象外</h2>
             <p>広告枠なし・前日実績なしは、CPCを自動で上げ下げせず別枠で確認します。</p>
           </div>
-          <span className="status-pill status-hold">{outOfScopeRows.length}件</span>
+          <div className="out-of-scope-summary">
+            <span className="status-pill approval-rejected">設定解除候補 {removeSettingCandidates.length}件</span>
+            <span className="status-pill status-hold">検索面確認 {searchSurfaceCandidates.length}件</span>
+          </div>
         </div>
         {outOfScopeRows.length ? (
           <table className="wide-table hold-detail-table">
-            <thead><tr><th>商品/KW</th><th>対象外理由</th><th>CPC/順位</th><th>実績</th><th>次アクション</th></tr></thead>
+            <thead><tr><th>商品/KW</th><th>運用候補</th><th>対象外理由</th><th>CPC/順位</th><th>実績</th></tr></thead>
             <tbody>
               {outOfScopeRows.map((row) => {
-                const category = holdReasonCategory(row);
+                const operation = outOfScopeOperation(row);
                 return (
                   <tr key={row.id}>
                     <td>
                       <b>{row.itemName} {row.itemCode}</b><br />
                       <small>{row.keyword}</small>
+                    </td>
+                    <td>
+                      <span className={`status-pill ${operation.className}`}>{operation.label}</span><br />
+                      <small>{operation.note}</small>
                     </td>
                     <td>
                       <span className="status-pill status-hold">{outOfScopeReason(row)}</span><br />
@@ -218,7 +239,6 @@ export default async function RppPage() {
                     <td>
                       <small>クリック {row.clicks ?? "-"} / ROAS {row.roas == null ? "-" : `${Math.round(row.roas)}%`} / 売上 {row.salesAmount == null ? "-" : `${Math.round(row.salesAmount).toLocaleString("ja-JP")}円`}</small>
                     </td>
-                    <td><b>{category.action}</b></td>
                   </tr>
                 );
               })}
