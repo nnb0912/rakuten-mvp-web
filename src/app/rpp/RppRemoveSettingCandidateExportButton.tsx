@@ -34,10 +34,15 @@ function pct(value: number | null) {
 
 export default function RppRemoveSettingCandidateExportButton({ disabled = false }: Props) {
   const [busy, setBusy] = useState(false);
+  const [confirmed, setConfirmed] = useState(false);
   const [result, setResult] = useState<ExportResult | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   async function exportCsv() {
+    if (!confirmed) {
+      setError("CSV生成前に『検索面・商品状態を確認済み』へチェックしてください。");
+      return;
+    }
     setBusy(true);
     setError(null);
     setResult(null);
@@ -55,10 +60,14 @@ export default function RppRemoveSettingCandidateExportButton({ disabled = false
 
   return (
     <div className="export-box out-of-scope-export-box">
-      <button className="secondary-button compact-button" type="button" onClick={exportCsv} disabled={busy || disabled}>
+      <label className="checkbox-field confirm-export-check">
+        <input type="checkbox" checked={confirmed} onChange={(e) => setConfirmed(e.target.checked)} disabled={busy || disabled} />
+        検索面・商品状態を確認済み
+      </label>
+      <button className="secondary-button compact-button" type="button" onClick={exportCsv} disabled={busy || disabled || !confirmed}>
         {busy ? "CSV生成中..." : "設定解除候補CSV"}
       </button>
-      <small>RMS反映なし。設定解除候補だけを手動確認用CSV/監査CSVに出します。</small>
+      <small>RMS反映なし。確認済みチェック後、設定解除候補だけを手動確認用CSV/監査CSVに出します。</small>
       {error ? <p className="error-box">{error}</p> : null}
       {result ? (
         <div className="export-result remove-export-preview">

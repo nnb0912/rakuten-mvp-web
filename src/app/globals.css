@@ -88,6 +88,7 @@ small { color: var(--muted); line-height: 1.45; }
 .out-of-scope-summary { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; align-items: flex-start; }
 .out-of-scope-export-box { max-width: 520px; justify-items: end; }
 .remove-export-preview { width: min(760px, 100%); overflow-x: auto; }
+.confirm-export-check { font-size: 12px; font-weight: 800; justify-content: flex-end; }
 .mini-preview-table { margin-top: 10px; min-width: 680px; font-size: 12px; }
 .mini-preview-table th, .mini-preview-table td { padding: 7px 6px; }
 .mini-preview-table th:first-child, .mini-preview-table td:first-child { width: 72px; }
