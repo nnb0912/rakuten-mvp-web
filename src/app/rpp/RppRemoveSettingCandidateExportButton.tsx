@@ -120,6 +120,8 @@ export default function RppRemoveSettingCandidateExportButton({ disabled = false
 
   const latestHistory = history[0];
   const canDryRun = Boolean(latestHistory || result);
+  const uploadReady = Boolean(latestHistory?.dryRun?.ok || dryRunResult?.ok);
+  const uploadRows = latestHistory?.rows ?? result?.rows ?? [];
 
   return (
     <div className="export-box out-of-scope-export-box">
@@ -136,6 +138,18 @@ export default function RppRemoveSettingCandidateExportButton({ disabled = false
       <small>RMS反映なし。確認済みチェック後、設定解除候補だけを手動確認用CSV/監査CSVに出します。</small>
       {latestHistory ? <small className="export-history-note">最新履歴: {formatDate(latestHistory.createdAt)} / {latestHistory.candidateCount}件 / {shortPath(latestHistory.uploadCsv)}</small> : null}
       {dryRunResult ? <small className={dryRunResult.ok ? "dryrun-ok" : "dryrun-ng"}>ドライラン確認: {dryRunResult.ok ? "OK" : "NG"} / 候補{dryRunResult.candidateCount}件 / CSV{dryRunResult.uploadLineCount}行 / 監査{dryRunResult.auditLineCount}行 / RMS反映なし</small> : null}
+      {uploadReady && latestHistory ? (
+        <div className="upload-ready-box">
+          <b>アップロード候補固定: {latestHistory.candidateCount}件 / RMS未反映</b>
+          <small>対象CSV: {shortPath(latestHistory.uploadCsv)}</small>
+          <small>最終確認: {formatDate(latestHistory.dryRun?.checkedAt ?? dryRunResult?.checkedAt ?? latestHistory.createdAt)} / ドライランOK</small>
+          {uploadRows.length ? (
+            <ul>
+              {uploadRows.map((row) => <li key={`${row.itemCode}-${row.keyword}`}>{row.itemCode} / {row.keyword} / d削除候補</li>)}
+            </ul>
+          ) : null}
+        </div>
+      ) : null}
       {error ? <p className="error-box">{error}</p> : null}
       {result ? (
         <div className="export-result remove-export-preview">
