@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 type ExportRow = {
   itemCode: string;
@@ -12,12 +12,18 @@ type ExportRow = {
   rppPosition: string;
 };
 
-type ExportResult = {
+type ExportHistoryRow = {
+  createdAt: string;
   candidateCount: number;
   uploadCsv: string;
   auditCsv: string;
   productionChange?: boolean;
   rows?: ExportRow[];
+};
+
+type ExportResult = ExportHistoryRow & {
+  history?: string;
+  historyRows?: ExportHistoryRow[];
 };
 
 type Props = {
@@ -32,11 +38,29 @@ function pct(value: number | null) {
   return value == null ? "-" : `${Math.round(value).toLocaleString("ja-JP")}%`;
 }
 
+function shortPath(path: string) {
+  return path.split("/").slice(-2).join("/");
+}
+
+function formatDate(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString("ja-JP", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
+}
+
 export default function RppRemoveSettingCandidateExportButton({ disabled = false }: Props) {
   const [busy, setBusy] = useState(false);
   const [confirmed, setConfirmed] = useState(false);
   const [result, setResult] = useState<ExportResult | null>(null);
+  const [history, setHistory] = useState<ExportHistoryRow[]>([]);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetch("/api/rpp/export-remove-setting-candidates")
+      .then((res) => res.json())
+      .then((data) => { if (Array.isArray(data.history)) setHistory(data.history); })
+      .catch(() => undefined);
+  }, []);
 
   async function exportCsv() {
     if (!confirmed) {
@@ -51,6 +75,7 @@ export default function RppRemoveSettingCandidateExportButton({ disabled = false
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "設定解除候補CSV生成に失敗しました");
       setResult(data as ExportResult);
+      if (Array.isArray(data.historyRows)) setHistory(data.historyRows);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -68,6 +93,7 @@ export default function RppRemoveSettingCandidateExportButton({ disabled = false
         {busy ? "CSV生成中..." : "設定解除候補CSV"}
       </button>
       <small>RMS反映なし。確認済みチェック後、設定解除候補だけを手動確認用CSV/監査CSVに出します。</small>
+      {history.length ? <small className="export-history-note">最新履歴: {formatDate(history[0].createdAt)} / {history[0].candidateCount}件 / {shortPath(history[0].uploadCsv)}</small> : null}
       {error ? <p className="error-box">{error}</p> : null}
       {result ? (
         <div className="export-result remove-export-preview">
@@ -91,6 +117,19 @@ export default function RppRemoveSettingCandidateExportButton({ disabled = false
             </table>
           ) : <small>プレビュー対象行はありません。</small>}
         </div>
+      ) : null}
+      {history.length > 1 ? (
+        <details className="remove-export-history">
+          <summary>CSV生成履歴 {history.length}件</summary>
+          <ul>
+            {history.slice(0, 5).map((row) => (
+              <li key={`${row.createdAt}-${row.uploadCsv}`}>
+                <b>{formatDate(row.createdAt)}</b> / {row.candidateCount}件 / RMS反映なし<br />
+                <small>{shortPath(row.uploadCsv)}</small>
+              </li>
+            ))}
+          </ul>
+        </details>
       ) : null}
     </div>
   );

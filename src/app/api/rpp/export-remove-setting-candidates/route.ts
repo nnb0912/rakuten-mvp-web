@@ -1,10 +1,12 @@
 import { spawn } from "child_process";
+import fs from "fs";
 import path from "path";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 const RPP_PROJECT_DIR = process.env.RPP_PROJECT_DIR ?? "/Users/nob/Projects/rpp-8am-notify";
+const HISTORY_PATH = path.join(/* turbopackIgnore: true */ RPP_PROJECT_DIR, "rpp_uploads", "remove_setting_export_history.json");
 
 function runExport() {
   return new Promise<{ stdout: string; stderr: string; code: number | null }>((resolve) => {
@@ -22,6 +24,20 @@ function runExport() {
   });
 }
 
+function readHistory() {
+  if (!fs.existsSync(HISTORY_PATH)) return [];
+  const parsed = JSON.parse(fs.readFileSync(HISTORY_PATH, "utf8"));
+  return Array.isArray(parsed) ? parsed.slice(0, 10) : [];
+}
+
+export async function GET() {
+  try {
+    return Response.json({ ok: true, productionChange: false, history: readHistory() });
+  } catch (e) {
+    return Response.json({ ok: false, productionChange: false, error: e instanceof Error ? e.message : String(e) }, { status: 500 });
+  }
+}
+
 export async function POST() {
   const result = await runExport();
   if (result.code !== 0) {
@@ -29,7 +45,7 @@ export async function POST() {
   }
   try {
     const parsed = JSON.parse(result.stdout);
-    return Response.json({ ok: true, productionChange: false, ...parsed });
+    return Response.json({ ok: true, productionChange: false, ...parsed, historyRows: readHistory() });
   } catch {
     return Response.json({ ok: true, productionChange: false, raw: result.stdout });
   }
