@@ -86,7 +86,11 @@ small { color: var(--muted); line-height: 1.45; }
 .history-panel { margin-top: 16px; }
 .hold-detail-panel { overflow-x: auto; }
 .out-of-scope-summary { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; align-items: flex-start; }
-.out-of-scope-export-box { max-width: 420px; justify-items: end; }
+.out-of-scope-export-box { max-width: 520px; justify-items: end; }
+.remove-export-preview { width: min(760px, 100%); overflow-x: auto; }
+.mini-preview-table { margin-top: 10px; min-width: 680px; font-size: 12px; }
+.mini-preview-table th, .mini-preview-table td { padding: 7px 6px; }
+.mini-preview-table th:first-child, .mini-preview-table td:first-child { width: 72px; }
 .hold-detail-table th:first-child, .hold-detail-table td:first-child { width: 18%; }
 .hold-detail-table th:nth-child(2), .hold-detail-table td:nth-child(2) { width: 30%; text-align: left; }
 .hold-detail-table th:nth-child(5), .hold-detail-table td:nth-child(5) { width: 14%; }
