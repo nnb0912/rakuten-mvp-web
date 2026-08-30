@@ -30,6 +30,11 @@ function readHistory() {
   return Array.isArray(parsed) ? parsed.slice(0, 10) : [];
 }
 
+function writeHistory(history: unknown[]) {
+  fs.mkdirSync(path.dirname(HISTORY_PATH), { recursive: true });
+  fs.writeFileSync(HISTORY_PATH, `${JSON.stringify(history.slice(0, 50), null, 2)}\n`);
+}
+
 export async function GET() {
   try {
     return Response.json({ ok: true, productionChange: false, history: readHistory() });
@@ -48,5 +53,18 @@ export async function POST() {
     return Response.json({ ok: true, productionChange: false, ...parsed, historyRows: readHistory() });
   } catch {
     return Response.json({ ok: true, productionChange: false, raw: result.stdout });
+  }
+}
+
+export async function DELETE() {
+  try {
+    const history = readHistory();
+    if (!history.length) return Response.json({ ok: true, productionChange: false, history: [] });
+    const [latest, ...rest] = history;
+    const unlocked = { ...latest, dryRun: undefined, fixedClearedAt: new Date().toISOString() };
+    writeHistory([unlocked, ...rest]);
+    return Response.json({ ok: true, productionChange: false, history: readHistory() });
+  } catch (e) {
+    return Response.json({ ok: false, productionChange: false, error: e instanceof Error ? e.message : String(e) }, { status: 500 });
   }
 }

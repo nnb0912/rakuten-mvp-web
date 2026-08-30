@@ -62,6 +62,7 @@ function formatDate(value: string) {
 export default function RppRemoveSettingCandidateExportButton({ disabled = false }: Props) {
   const [busy, setBusy] = useState(false);
   const [dryRunBusy, setDryRunBusy] = useState(false);
+  const [clearBusy, setClearBusy] = useState(false);
   const [confirmed, setConfirmed] = useState(false);
   const [result, setResult] = useState<ExportResult | null>(null);
   const [dryRunResult, setDryRunResult] = useState<DryRunResult | null>(null);
@@ -102,6 +103,36 @@ export default function RppRemoveSettingCandidateExportButton({ disabled = false
     }
   }
 
+  async function exportAndValidate() {
+    if (!confirmed) {
+      setError("固定候補の更新前に『検索面・商品状態を確認済み』へチェックしてください。");
+      return;
+    }
+    setBusy(true);
+    setDryRunBusy(true);
+    setError(null);
+    setResult(null);
+    setDryRunResult(null);
+    try {
+      const exportRes = await fetch("/api/rpp/export-remove-setting-candidates", { method: "POST" });
+      const exportData = await exportRes.json();
+      if (!exportRes.ok) throw new Error(exportData.error ?? "設定解除候補CSV生成に失敗しました");
+      setResult(exportData as ExportResult);
+      const exportedHistory = Array.isArray(exportData.historyRows) ? exportData.historyRows as ExportHistoryRow[] : history;
+
+      const dryRunRes = await fetch("/api/rpp/validate-remove-setting-candidates", { method: "POST" });
+      const dryRunData = await dryRunRes.json();
+      if (!dryRunRes.ok || dryRunData.ok === false) throw new Error(dryRunData.error ?? "アップロード前ドライラン検証に失敗しました");
+      setDryRunResult(dryRunData as DryRunResult);
+      setHistory(exportedHistory.length ? [{ ...exportedHistory[0], dryRun: dryRunData as DryRunResult }, ...exportedHistory.slice(1)] : exportedHistory);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setDryRunBusy(false);
+      setBusy(false);
+    }
+  }
+
   async function validateDryRun() {
     setDryRunBusy(true);
     setError(null);
@@ -118,9 +149,25 @@ export default function RppRemoveSettingCandidateExportButton({ disabled = false
     }
   }
 
+  async function clearFixedCandidate() {
+    setClearBusy(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/rpp/export-remove-setting-candidates", { method: "DELETE" });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "固定候補の解除に失敗しました");
+      if (Array.isArray(data.history)) setHistory(data.history);
+      setDryRunResult(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setClearBusy(false);
+    }
+  }
+
   const latestHistory = history[0];
   const canDryRun = Boolean(latestHistory || result);
-  const uploadReady = Boolean(latestHistory?.dryRun?.ok || dryRunResult?.ok);
+  const uploadReady = Boolean(latestHistory && latestHistory.candidateCount > 0 && (latestHistory.dryRun?.ok || dryRunResult?.ok));
   const uploadRows = latestHistory?.rows ?? result?.rows ?? [];
 
   return (
@@ -131,6 +178,9 @@ export default function RppRemoveSettingCandidateExportButton({ disabled = false
       </label>
       <button className="secondary-button compact-button" type="button" onClick={exportCsv} disabled={busy || disabled || !confirmed}>
         {busy ? "CSV生成中..." : "設定解除候補CSV"}
+      </button>
+      <button className="secondary-button compact-button" type="button" onClick={exportAndValidate} disabled={busy || dryRunBusy || disabled || !confirmed}>
+        {busy || dryRunBusy ? "固定候補更新中..." : "固定候補を再生成"}
       </button>
       <button className="secondary-button compact-button" type="button" onClick={validateDryRun} disabled={dryRunBusy || disabled || !canDryRun}>
         {dryRunBusy ? "ドライラン確認中..." : "アップロード前ドライラン確認"}
@@ -143,6 +193,9 @@ export default function RppRemoveSettingCandidateExportButton({ disabled = false
           <b>アップロード候補固定: {latestHistory.candidateCount}件 / RMS未反映</b>
           <small>対象CSV: {shortPath(latestHistory.uploadCsv)}</small>
           <small>最終確認: {formatDate(latestHistory.dryRun?.checkedAt ?? dryRunResult?.checkedAt ?? latestHistory.createdAt)} / ドライランOK</small>
+          <button className="secondary-button compact-button" type="button" onClick={clearFixedCandidate} disabled={clearBusy || disabled}>
+            {clearBusy ? "固定解除中..." : "固定解除"}
+          </button>
           {uploadRows.length ? (
             <ul>
               {uploadRows.map((row) => <li key={`${row.itemCode}-${row.keyword}`}>{row.itemCode} / {row.keyword} / d削除候補</li>)}
@@ -190,3 +243,4 @@ export default function RppRemoveSettingCandidateExportButton({ disabled = false
     </div>
   );
 }
+
