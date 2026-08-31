@@ -2,12 +2,17 @@ import Link from "next/link";
 import { readRppDashboardMeta, readRppRecommendations } from "@/lib/rppRecommendations";
 import { listRecentRppExclusionJobs } from "@/lib/rppExclusionJobs";
 import { readRppAlertTargets } from "@/lib/rppTargets";
+import { listRppAuditEvents } from "@/lib/rppAuditLog";
 import { readRppAutoAdjustmentSettings } from "@/lib/rppAutoAdjustmentSettings";
 import { readRppExperimentHistory } from "@/lib/rppExperiments";
 import { readRppBudgetSettings, type RppBudgetMetrics } from "@/lib/rppBudgetSettings";
+import { readRppDailySpendActuals } from "@/lib/rppComparisons";
+import { readRppStrategySettings } from "@/lib/rppStrategySettings";
 import RppAutoAdjustmentSettingsPanel from "./RppAutoAdjustmentSettingsPanel";
 import RppBudgetPanel from "./RppBudgetPanel";
+import RppPeriodComparison from "./RppPeriodComparison";
 import RppRemoveSettingCandidateExportButton from "./RppRemoveSettingCandidateExportButton";
+import RppStrategyPanel from "./RppStrategyPanel";
 import RppTargetSettings from "./RppTargetSettings";
 
 export const dynamic = "force-dynamic";
@@ -99,9 +104,9 @@ function outOfScopeOperation(row: { blocks: string[]; reasons: string[]; rppPosi
 }
 
 export default async function RppPage() {
-  const [data, meta, targetData, autoSettingsData, experimentHistory, exclusionJobs, budgetData] = await Promise.all([
+  const [data, meta, targetData, autoSettingsData, experimentHistory, exclusionJobs, budgetData, strategyData, dailyActuals, auditEvents] = await Promise.all([
     readRppRecommendations(), readRppDashboardMeta(), readRppAlertTargets(), readRppAutoAdjustmentSettings(),
-    readRppExperimentHistory(), listRecentRppExclusionJobs(8), readRppBudgetSettings(),
+    readRppExperimentHistory(), listRecentRppExclusionJobs(8), readRppBudgetSettings(), readRppStrategySettings(), readRppDailySpendActuals(), listRppAuditEvents(30),
   ]);
   const summary = data.summary as { generatedAt?: string; counts?: { raise?: number; lower?: number; hold?: number; ok?: number }; safety?: { productionChange?: boolean }; budgetMetrics?: RppBudgetMetrics } | null;
   const candidateTotal = (summary?.counts?.raise ?? 0) + (summary?.counts?.lower ?? 0);
@@ -151,7 +156,9 @@ export default async function RppPage() {
         <div className="card"><span>データ状態</span><strong className={meta.dataReady ? "ok-text" : "warn-text"}>{meta.dataReady ? "OK" : "要更新"}</strong></div>
       </section>
 
-      <RppBudgetPanel initialSettings={budgetData.settings} source={budgetData.source} metrics={summary?.budgetMetrics ?? null} />
+      <RppBudgetPanel initialSettings={budgetData.settings} source={budgetData.source} metrics={{ ...(summary?.budgetMetrics ?? {}), dailyActuals }} />
+      <RppPeriodComparison />
+      <RppStrategyPanel initialSettings={strategyData.settings} source={strategyData.source} />
 
       <section className="panel target-panel" id="rpp-products">
         <RppTargetSettings initialTargets={targetData.targets} configuredTargets={targetData.configuredTargets} exclusionProducts={targetData.exclusionProducts} recommendations={data.recommendations} initialExperiments={experimentHistory} />
@@ -301,6 +308,12 @@ export default async function RppPage() {
             </tbody>
           </table>
         ) : <p>判断保留はありません。</p>}
+      </section>
+
+      <section className="panel history-panel" id="rpp-audit">
+        <h2>統合監査ログ</h2>
+        {auditEvents.length ? <table className="wide-table"><thead><tr><th>日時</th><th>イベント</th><th>対象</th><th>実行者</th><th>状態</th></tr></thead><tbody>{auditEvents.map((row) => <tr key={row.id}><td>{fmtDate(row.occurredAt)}</td><td><b>{row.eventType}</b></td><td>{row.entityId}</td><td><small>{row.actorId}</small></td><td><span className={`status-pill ${row.status === "failed" || row.status === "blocked" ? "approval-rejected" : "status-approved"}`}>{row.status}{row.productionChange ? " / 本番変更" : ""}</span></td></tr>)}</tbody></table> : <p>監査イベントはまだありません。</p>}
+        <small>追記専用。更新・削除はDBトリガーで拒否します。</small>
       </section>
 
       <section className="panel history-panel">
