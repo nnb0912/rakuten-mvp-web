@@ -633,7 +633,9 @@ export async function seedMissingRppAlertTargets(defaults: Partial<RppAlertTarge
       itemCode: row.itemCode,
       keyword: row.keyword,
       owner: row.owner,
-      searchKeywords: row.keyword === "商品CPC" ? (row.rppPositionKeyword ? row.rppPositionKeyword.replace("（代表KW）", "") : undefined) : row.keyword,
+      searchKeywords: row.keyword === "商品CPC"
+        ? (row.rppPositionKeyword ? row.rppPositionKeyword.replace("（代表KW）", "") : cleanText(row.itemName).slice(0, 40))
+        : row.keyword,
       changeLocked: false,
       lockReason: "",
       ...defaults,
