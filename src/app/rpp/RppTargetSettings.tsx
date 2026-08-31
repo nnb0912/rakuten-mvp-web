@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useRef, useState, type FormEvent } from "react";
+import { useMemo, useState, type FormEvent } from "react";
 import configuredTargetsSnapshot from "@/data/rpp_configured_targets.json";
 import seoKeywords from "@/data/seo_keywords.json";
 import { buildRppOptimizationPreview, type RppOptimizationMode } from "@/lib/rppOptimization";
@@ -175,13 +175,16 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
   const [groupFilter, setGroupFilter] = useState("全て");
   const [tableSearch, setTableSearch] = useState("");
   const [tableStatusFilter, setTableStatusFilter] = useState<"ALL" | "CANDIDATE" | "ATTENTION" | "EXCLUDED">("ALL");
+  const [modeFilter, setModeFilter] = useState<"ALL" | RppOptimizationMode>("ALL");
+  const [protectionFilter, setProtectionFilter] = useState<"ALL" | RppProtectionType>("ALL");
+  const [formDrawerOpen, setFormDrawerOpen] = useState(false);
   const [exclusionSearch, setExclusionSearch] = useState("");
   const [showExcludedProducts, setShowExcludedProducts] = useState(false);
   const [baseExclusionProducts, setBaseExclusionProducts] = useState(exclusionProducts);
   const [exclusionOverrides, setExclusionOverrides] = useState<Record<string, boolean>>({});
   const [selectedOptimizationIds, setSelectedOptimizationIds] = useState<Set<string>>(() => new Set());
   const [experiments, setExperiments] = useState<RppExperimentRecord[]>(initialExperiments);
-  const targetFormRef = useRef<HTMLFormElement | null>(null);
+
 
   async function refreshExperiments() {
     const response = await fetch("/api/rpp/experiments", { cache: "no-store" });
@@ -298,9 +301,10 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
       || (tableStatusFilter === "CANDIDATE" && preview?.proposedCpc != null && preview.proposedCpc !== preview.currentCpc)
       || (tableStatusFilter === "ATTENTION" && (!target || /未測定|圏外|広告枠なし|測定エラー/.test(position)))
       || (tableStatusFilter === "EXCLUDED" && excluded);
-    return ownerOk && groupOk && searchOk && statusOk;
+    const modeOk = modeFilter === "ALL" || (target?.optimizationMode || "ROAS") === modeFilter;
+    const protectionOk = protectionFilter === "ALL" || (target?.protectionType || "NORMAL") === protectionFilter;
+    return ownerOk && groupOk && searchOk && statusOk && modeOk && protectionOk;
   });
-  const visibleOwnerStats = ownerFilter === "全て" ? ownerStats : ownerStats.filter((row) => row.owner === ownerFilter);
   const exclusionChanged = exclusionRows.filter((row) => row.currentExcluded !== row.excluded);
   const excludedProductsForOwner = exclusionRows.filter((row) => row.excluded && (ownerFilter === "全て" || (row.owner || "担当未設定") === ownerFilter));
   const filteredExcludedProducts = excludedProductsForOwner.filter((row) => {
@@ -336,7 +340,7 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
 
   function openTargetForm(nextForm: FormState) {
     setForm(nextForm);
-    setTimeout(() => targetFormRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 0);
+    setFormDrawerOpen(true);
   }
 
   function excludedProductToForm(row: RppExclusionProduct): FormState {
@@ -539,6 +543,7 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
         await refreshExperiments();
       }
       setForm(blank);
+      setFormDrawerOpen(false);
       setMessage(historySaved ? "目標と実験開始スナップショットを保存しました" : "保存しました");
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -609,13 +614,7 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
     <div className="target-settings">
       {error ? <p className="error-box">{error}</p> : null}
       {message ? <p className="success-box">{message}</p> : null}
-      <section className="panel owner-panel">
-        <div className="section-heading">
-          <div>
-            <h2>担当者別タブ</h2>
-            <p>担当を押すと画面遷移/スクロールせず、この場で担当別の集計カードと商品カードに切り替わります。</p>
-          </div>
-        </div>
+      <section className="owner-filter-strip" aria-label="担当・広告グループ絞り込み">
         <div className="owner-tabs">
           <button className={ownerFilter === "全て" ? "owner-tab active" : "owner-tab"} type="button" onClick={() => selectOwnerFilter("全て")}>全て</button>
           {ownerStats.map((row) => (
@@ -630,27 +629,6 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
               {group}<small>{group === "全て" ? configuredTargets.length : configuredTargets.filter((cfg) => (targetMap.get(cfg.id)?.adGroup || "通常") === group).length}件</small>
             </button>
           ))}
-        </div>
-        <div className={ownerFilter === "全て" ? "owner-card-grid" : "owner-card-grid owner-card-grid-single"}>
-          {visibleOwnerStats.map((row) => {
-            const roas = row.spend > 0 ? Math.round((row.sales / row.spend) * 100) : null;
-            return (
-              <button className={ownerFilter === row.owner ? "owner-card active" : "owner-card"} key={row.owner} type="button" onClick={() => selectOwnerFilter(row.owner)}>
-                <div className="owner-card-head">
-                  <b>{row.owner}</b>
-                  <span>{row.configured}件</span>
-                </div>
-                <div className="owner-card-metrics">
-                  <span><small>広告費</small><strong>{yenNumber(row.spend)}</strong></span>
-                  <span><small>クリック</small><strong>{row.clicks.toLocaleString("ja-JP")}</strong></span>
-                  <span><small>売上</small><strong>{yenNumber(row.sales)}</strong></span>
-                  <span><small>ROAS</small><strong>{roas == null ? "-" : `${roas}%`}</strong></span>
-                </div>
-                <small>保存 {row.saved} / 未設定 {row.missing}</small>
-                <small>検索位置 1P内 {row.firstPage} / 1P外 {row.outsidePage} / 未測定 {row.unmeasured}</small>
-              </button>
-            );
-          })}
         </div>
       </section>
 
@@ -684,6 +662,9 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
               <button className={tableStatusFilter === value ? "active" : ""} key={value} type="button" onClick={() => setTableStatusFilter(value)}>{label}</button>
             ))}
           </div>
+          <label className="compact-select">モード<select value={modeFilter} onChange={(event) => setModeFilter(event.target.value as "ALL" | RppOptimizationMode)}><option value="ALL">すべて</option><option value="ROAS">ROAS逆算</option><option value="POSITION">順位目標</option><option value="FIXED">CPC固定</option></select></label>
+          <label className="compact-select">保護<select value={protectionFilter} onChange={(event) => setProtectionFilter(event.target.value as "ALL" | RppProtectionType)}><option value="ALL">すべて</option><option value="NORMAL">通常</option><option value="BLOCK">ブロック</option><option value="WHITELIST">ホワイト</option><option value="LOCKED">変更不可</option><option value="FOCUS">注力</option></select></label>
+          <button className="filter-clear" type="button" onClick={() => { setTableSearch(""); setTableStatusFilter("ALL"); setModeFilter("ALL"); setProtectionFilter("ALL"); setOwnerFilter("全て"); setGroupFilter("全て"); }}>条件クリア</button>
           <small>表示 {filteredConfiguredTargets.length} / {configuredTargets.length}件</small>
         </div>
         <div className="optimization-preview-bar">
@@ -846,8 +827,11 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
         ) : <p className="experiment-empty">順位目標またはCPC固定モードを保存すると、ここに開始スナップショットが追加されます。</p>}
       </section>
 
-      <div className="grid two target-grid">
-        <form className="target-form" id="rpp-target-form" ref={targetFormRef} onSubmit={saveTarget}>
+      {formDrawerOpen ? <button className="rpp-drawer-backdrop" aria-label="設定を閉じる" type="button" onClick={() => setFormDrawerOpen(false)} /> : null}
+      <aside className={formDrawerOpen ? "rpp-target-drawer open" : "rpp-target-drawer"} id="rpp-target-form" aria-hidden={!formDrawerOpen}>
+        <div className="rpp-drawer-head"><div><small>ROW SETTINGS</small><h2>{form.itemCode || "商品/KW"} の運用設定</h2><p>{form.keyword || "一覧の設定ボタンから対象を選択"}</p></div><button type="button" aria-label="閉じる" onClick={() => setFormDrawerOpen(false)}>×</button></div>
+        <div className="rpp-drawer-body">
+        <form className="target-form" onSubmit={saveTarget}>
           <div className="form-row two-cols">
             <label>商品管理番号<input value={form.itemCode} onChange={(e) => patchForm("itemCode", e.target.value)} placeholder="r0606" required /></label>
             <label>RPP設定KW<input value={form.keyword} onChange={(e) => patchForm("keyword", e.target.value)} placeholder="まな板 / 商品CPC" required /></label>
@@ -921,7 +905,7 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
           <label>メモ<textarea value={form.note} onChange={(e) => patchForm("note", e.target.value)} placeholder="通常検索が強い場合はRPPは1ページ目内でOK、など" /></label>
           <div className="inline-links form-actions">
             <button className="primary-button" disabled={busy} type="submit">目標を保存</button>
-            <button className="secondary-button" disabled={busy} type="button" onClick={() => setForm(blank)}>クリア</button>
+            <button className="secondary-button" disabled={busy} type="button" onClick={() => { setForm(blank); setFormDrawerOpen(false); }}>閉じる</button>
             <button className="secondary-button" disabled={busy || missingCount === 0} type="button" onClick={seedMissingTargets}>未設定を一括作成</button>
           </div>
         </form>
@@ -939,7 +923,8 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
             <li><b>CPC固定</b><small>サムネ・商品名等の検証用。順位/CPC条件を固定し、CTR・CVR・ROASを比較。</small></li>
           </ul>
         </div>
-      </div>
+        </div>
+      </aside>
 
     </div>
   );

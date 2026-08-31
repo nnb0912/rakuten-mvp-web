@@ -4,7 +4,9 @@ import { listRecentRppExclusionJobs } from "@/lib/rppExclusionJobs";
 import { readRppAlertTargets } from "@/lib/rppTargets";
 import { readRppAutoAdjustmentSettings } from "@/lib/rppAutoAdjustmentSettings";
 import { readRppExperimentHistory } from "@/lib/rppExperiments";
+import { readRppBudgetSettings, type RppBudgetMetrics } from "@/lib/rppBudgetSettings";
 import RppAutoAdjustmentSettingsPanel from "./RppAutoAdjustmentSettingsPanel";
+import RppBudgetPanel from "./RppBudgetPanel";
 import RppRemoveSettingCandidateExportButton from "./RppRemoveSettingCandidateExportButton";
 import RppTargetSettings from "./RppTargetSettings";
 
@@ -97,13 +99,11 @@ function outOfScopeOperation(row: { blocks: string[]; reasons: string[]; rppPosi
 }
 
 export default async function RppPage() {
-  const data = await readRppRecommendations();
-  const meta = await readRppDashboardMeta();
-  const targetData = await readRppAlertTargets();
-  const autoSettingsData = await readRppAutoAdjustmentSettings();
-  const experimentHistory = await readRppExperimentHistory();
-  const exclusionJobs = await listRecentRppExclusionJobs(8);
-  const summary = data.summary as { generatedAt?: string; counts?: { raise?: number; lower?: number; hold?: number; ok?: number }; safety?: { productionChange?: boolean } } | null;
+  const [data, meta, targetData, autoSettingsData, experimentHistory, exclusionJobs, budgetData] = await Promise.all([
+    readRppRecommendations(), readRppDashboardMeta(), readRppAlertTargets(), readRppAutoAdjustmentSettings(),
+    readRppExperimentHistory(), listRecentRppExclusionJobs(8), readRppBudgetSettings(),
+  ]);
+  const summary = data.summary as { generatedAt?: string; counts?: { raise?: number; lower?: number; hold?: number; ok?: number }; safety?: { productionChange?: boolean }; budgetMetrics?: RppBudgetMetrics } | null;
   const candidateTotal = (summary?.counts?.raise ?? 0) + (summary?.counts?.lower ?? 0);
   const holdRows = data.recommendations.filter((row) => row.action === "HOLD");
   const outOfScopeRows = holdRows.filter(isAutoAdjustmentOutOfScope);
@@ -118,6 +118,7 @@ export default async function RppPage() {
         <div className="rpp-console-brand"><span>R</span><div><b>RPP CONTROL</b><small>atRise operations</small></div></div>
         <nav>
           <a className="active" href="#rpp-dashboard">ダッシュボード</a>
+          <a href="#rpp-budget">予算管理</a>
           <a href="#rpp-products">商品・キーワード</a>
           <a href="#rpp-optimization">CPC最適化</a>
           <a href="#rpp-experiments">実験トラッキング</a>
@@ -150,16 +151,9 @@ export default async function RppPage() {
         <div className="card"><span>データ状態</span><strong className={meta.dataReady ? "ok-text" : "warn-text"}>{meta.dataReady ? "OK" : "要更新"}</strong></div>
       </section>
 
+      <RppBudgetPanel initialSettings={budgetData.settings} source={budgetData.source} metrics={summary?.budgetMetrics ?? null} />
+
       <section className="panel target-panel" id="rpp-products">
-        <div className="section-heading">
-          <div>
-            <h2>RPPアラート目標設定</h2>
-            <p>
-              自動化前に、商品/KWごとのCTR・CVR・ROAS・検索位置目標を設定します。保存先 {targetData.source} / {targetData.targets.length}件
-            </p>
-          </div>
-          <a className="text-link" href="/api/rpp/targets">Targets API</a>
-        </div>
         <RppTargetSettings initialTargets={targetData.targets} configuredTargets={targetData.configuredTargets} exclusionProducts={targetData.exclusionProducts} recommendations={data.recommendations} initialExperiments={experimentHistory} />
       </section>
 

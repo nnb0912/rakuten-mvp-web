@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import datetime as dt
 import json
 import os
@@ -65,6 +66,47 @@ def file_rows() -> list[dict]:
     return rows
 
 
+def _number(value: object) -> float:
+    try:
+        return float(str(value or "0").replace(",", ""))
+    except ValueError:
+        return 0.0
+
+
+def budget_metrics() -> dict | None:
+    path = PROJECT / "rpp_item_reports_7d.csv"
+    if not path.exists():
+        return None
+    with path.open("r", encoding="cp932", errors="replace", newline="") as handle:
+        rows = list(csv.DictReader(handle))
+    if not rows:
+        return None
+    spend = sum(_number(row.get("実績額(合計)")) for row in rows)
+    sales = sum(_number(row.get("売上金額(合計720時間)")) for row in rows)
+    clicks = sum(_number(row.get("クリック数(合計)")) for row in rows)
+    orders = sum(_number(row.get("売上件数(合計720時間)")) for row in rows)
+    days = 7
+    now = dt.datetime.now(dt.timezone(dt.timedelta(hours=9)))
+    if now.month == 12:
+        next_month = dt.datetime(now.year + 1, 1, 1, tzinfo=now.tzinfo)
+    else:
+        next_month = dt.datetime(now.year, now.month + 1, 1, tzinfo=now.tzinfo)
+    days_in_month = (next_month - dt.datetime(now.year, now.month, 1, tzinfo=now.tzinfo)).days
+    daily_average = spend / days
+    return {
+        "dateRange": rows[0].get("日付") or "",
+        "days": days,
+        "spend": round(spend),
+        "sales": round(sales),
+        "clicks": round(clicks),
+        "orders": round(orders),
+        "roas": round(sales / spend * 100, 1) if spend else None,
+        "dailyAverage": round(daily_average),
+        "projectedMonthlySpend": round(daily_average * days_in_month),
+        "source": "rpp_item_reports_7d.csv",
+    }
+
+
 def cron_status() -> dict:
     logs = sorted((PROJECT / "rpp_logs").glob("rpp_morning_chatwork_notify_????????_??????.log"), key=lambda p: p.stat().st_mtime)
     if not logs:
@@ -111,6 +153,7 @@ def main() -> int:
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
     source, recommendations = latest_recommendation()
+    recommendations.setdefault("summary", {})["budgetMetrics"] = budget_metrics()
     payload = {
         "syncedAt": dt.datetime.now(dt.timezone.utc).isoformat().replace("+00:00", "Z"),
         "recommendations": recommendations,
