@@ -123,6 +123,7 @@ export default async function RppPage() {
         <div className="rpp-console-brand"><span>R</span><div><b>RPP CONTROL</b><small>atRise operations</small></div></div>
         <nav>
           <a className="active" href="#rpp-dashboard">ダッシュボード</a>
+          <a href="#rpp-guide">画面の見方</a>
           <a href="#rpp-budget">予算管理</a>
           <a href="#rpp-products">商品・キーワード</a>
           <a href="#rpp-optimization">CPC最適化</a>
@@ -155,6 +156,21 @@ export default async function RppPage() {
         <div className="card"><span>RPP設定中</span><strong>{targetData.configuredTargets.length}</strong></div>
         <div className="card"><span>データ状態</span><strong className={meta.dataReady ? "ok-text" : "warn-text"}>{meta.dataReady ? "OK" : "要更新"}</strong></div>
       </section>
+
+      <details className="panel rpp-view-guide" id="rpp-guide" open>
+        <summary>
+          <span><b>画面の見方</b><small>最初にここを確認</small></span>
+          <span className="status-pill status-approved">閲覧ガイド</span>
+        </summary>
+        <div className="rpp-guide-grid">
+          <div><b>1. 上部KPI</b><p>上げ・下げ・保留・対象外の件数と、データ状態を確認します。「要更新」の日は候補を反映しません。</p></div>
+          <div><b>2. 予算管理</b><p>月予算、消化率、月末着地を確認します。ここは監視専用で、RMS予算を自動変更しません。</p></div>
+          <div><b>3. 担当者別に見る</b><p>「商品・キーワード」の担当者タブを選ぶと、その担当の商品・KWだけに絞れます。広告グループとの併用も可能です。</p></div>
+          <div><b>4. 商品・KW一覧</b><p>現CPC→提案CPC、ROAS、PC/SP順位、モード、保護状態を横1行で確認します。「設定」で右側の編集画面が開きます。</p></div>
+          <div><b>5. 状態の意味</b><p><span className="status-pill status-approved">上げ</span> 露出拡大候補　<span className="status-pill status-hold">保留</span> データ・条件待ち　<span className="status-pill approval-rejected">下げ/異常</span> 採算や鮮度を要確認</p></div>
+          <div><b>6. 反映前の確認</b><p>対象行、変更前後CPC、予測効果、rollbackを確認してから反映します。「提案のみ」の間はRMSへ自動反映されません。</p></div>
+        </div>
+      </details>
 
       <RppBudgetPanel initialSettings={budgetData.settings} source={budgetData.source} metrics={{ ...(summary?.budgetMetrics ?? {}), dailyActuals }} />
       <RppPeriodComparison />
