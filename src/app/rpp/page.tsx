@@ -3,6 +3,7 @@ import { readRppDashboardMeta, readRppRecommendations } from "@/lib/rppRecommend
 import { listRecentRppExclusionJobs } from "@/lib/rppExclusionJobs";
 import { readRppAlertTargets } from "@/lib/rppTargets";
 import { readRppAutoAdjustmentSettings } from "@/lib/rppAutoAdjustmentSettings";
+import { readRppExperimentHistory } from "@/lib/rppExperiments";
 import RppAutoAdjustmentSettingsPanel from "./RppAutoAdjustmentSettingsPanel";
 import RppRemoveSettingCandidateExportButton from "./RppRemoveSettingCandidateExportButton";
 import RppTargetSettings from "./RppTargetSettings";
@@ -100,6 +101,7 @@ export default async function RppPage() {
   const meta = await readRppDashboardMeta();
   const targetData = await readRppAlertTargets();
   const autoSettingsData = await readRppAutoAdjustmentSettings();
+  const experimentHistory = await readRppExperimentHistory();
   const exclusionJobs = await listRecentRppExclusionJobs(8);
   const summary = data.summary as { generatedAt?: string; counts?: { raise?: number; lower?: number; hold?: number; ok?: number }; safety?: { productionChange?: boolean } } | null;
   const candidateTotal = (summary?.counts?.raise ?? 0) + (summary?.counts?.lower ?? 0);
@@ -111,17 +113,32 @@ export default async function RppPage() {
   const latestExclusionJob = exclusionJobs[0];
 
   return (
-    <main className="page-shell">
-      <section className="hero section-heading">
+    <div className="rpp-console-shell">
+      <aside className="rpp-console-nav" aria-label="RPPメニュー">
+        <div className="rpp-console-brand"><span>R</span><div><b>RPP CONTROL</b><small>atRise operations</small></div></div>
+        <nav>
+          <a className="active" href="#rpp-dashboard">ダッシュボード</a>
+          <a href="#rpp-products">商品・キーワード</a>
+          <a href="#rpp-optimization">CPC最適化</a>
+          <a href="#rpp-experiments">実験トラッキング</a>
+          <a href="#rpp-target-form">運用モード設定</a>
+          <a href="#rpp-excluded">除外・保護リスト</a>
+          <a href="#rpp-data">データ・実行履歴</a>
+        </nav>
+        <div className="rpp-console-safe"><b>提案のみ</b><small>RMSへ自動反映しません</small></div>
+        <Link className="rpp-console-back" href="/">← 管理トップへ</Link>
+      </aside>
+      <main className="page-shell rpp-console-main">
+      <section className="hero section-heading rpp-console-hero" id="rpp-dashboard">
         <div>
           <p className="eyebrow">Rakuten RPP / operations</p>
           <h1>RPP広告運用候補</h1>
           <p>担当別の商品/KW一覧から、目標設定・広告除外ON/OFF・RMS反映を確認します。</p>
         </div>
-        <Link className="text-link" href="/">MVPトップへ</Link>
+        <div className="rpp-console-live"><span />運用データ接続中</div>
       </section>
 
-      <section className="grid cards">
+      <section className="grid cards rpp-kpi-strip">
         <div className="card"><span>上げ候補</span><strong>{summary?.counts?.raise ?? 0}</strong></div>
         <div className="card"><span>下げ候補</span><strong>{summary?.counts?.lower ?? 0}</strong></div>
         <div className="card"><span>保留</span><strong>{decisionHoldRows.length}</strong></div>
@@ -130,9 +147,9 @@ export default async function RppPage() {
         <div className="card"><span>データ状態</span><strong className={meta.dataReady ? "ok-text" : "warn-text"}>{meta.dataReady ? "OK" : "要更新"}</strong></div>
       </section>
 
-      <RppAutoAdjustmentSettingsPanel initialSettings={autoSettingsData.settings} source={autoSettingsData.source} />
+      <div id="rpp-optimization"><RppAutoAdjustmentSettingsPanel initialSettings={autoSettingsData.settings} source={autoSettingsData.source} /></div>
 
-      <section className="panel target-panel">
+      <section className="panel target-panel" id="rpp-products">
         <div className="section-heading">
           <div>
             <h2>RPPアラート目標設定</h2>
@@ -142,7 +159,7 @@ export default async function RppPage() {
           </div>
           <a className="text-link" href="/api/rpp/targets">Targets API</a>
         </div>
-        <RppTargetSettings initialTargets={targetData.targets} configuredTargets={targetData.configuredTargets} exclusionProducts={targetData.exclusionProducts} recommendations={data.recommendations} />
+        <RppTargetSettings initialTargets={targetData.targets} configuredTargets={targetData.configuredTargets} exclusionProducts={targetData.exclusionProducts} recommendations={data.recommendations} initialExperiments={experimentHistory} />
       </section>
 
       <section className="panel history-panel compact-status-panel">
@@ -172,7 +189,7 @@ export default async function RppPage() {
         </div>
       </details>
 
-      <section className="grid two ops-grid">
+      <section className="grid two ops-grid" id="rpp-data">
         <div className="panel">
           <h2>最新データ</h2>
           <ul className="meta-list">
@@ -327,6 +344,7 @@ export default async function RppPage() {
           </table>
         ) : <p>CSV履歴はまだありません。</p>}
       </section>
-    </main>
+      </main>
+    </div>
   );
 }

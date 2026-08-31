@@ -6,12 +6,14 @@ import seoKeywords from "@/data/seo_keywords.json";
 import { buildRppOptimizationPreview, type RppOptimizationMode } from "@/lib/rppOptimization";
 import type { RppRecommendationWithApproval } from "@/lib/rppRecommendations";
 import type { RppAlertTarget, RppConfiguredTarget, RppExclusionProduct, RppOperationPolicy, RppPositionGoal, RppProtectionType } from "@/lib/rppTargets";
+import type { RppExperimentRecord } from "@/lib/rppExperiments";
 
 type Props = {
   initialTargets: RppAlertTarget[];
   configuredTargets: RppConfiguredTarget[];
   exclusionProducts: RppExclusionProduct[];
   recommendations: RppRecommendationWithApproval[];
+  initialExperiments: RppExperimentRecord[];
 };
 
 type FormState = {
@@ -96,17 +98,20 @@ function configuredToForm(row: RppConfiguredTarget): FormState {
   return { ...blank, itemCode: row.itemCode, keyword: row.keyword, searchKeywords: defaultSearchKeyword, owner: row.owner ?? "", adGroup: "通常" };
 }
 
-function positionGoalLabel(goal: RppPositionGoal) {
-  if (goal === "TOP_3") return "RPP広告3位以内";
-  if (goal === "TOP_5") return "RPP広告5位以内";
-  if (goal === "TOP_7") return "RPP広告7位以内";
-  return "RPP広告1ページ目内";
-}
-
 function optimizationModeLabel(mode: RppOptimizationMode) {
   if (mode === "POSITION") return "順位目標";
   if (mode === "FIXED") return "CPC固定";
   return "ROAS逆算";
+}
+
+function experimentStatusLabel(status: RppExperimentRecord["status"]) {
+  if (status === "COMPLETED") return "終了";
+  if (status === "EXPIRED") return "終了実績待ち";
+  return "実験中";
+}
+
+function experimentMetric(value: number | null, suffix = "%") {
+  return value == null ? "-" : `${Math.round(value * 10) / 10}${suffix}`;
 }
 
 const POSITION_GOAL_OPTIONS: { value: RppPositionGoal; label: string }[] = [
@@ -160,7 +165,7 @@ function seoWordsForItem(itemCode: string) {
   return SEO_KEYWORDS[code] || SEO_KEYWORDS[code.toLowerCase()] || SEO_KEYWORDS[code.toUpperCase()] || [];
 }
 
-export default function RppTargetSettings({ initialTargets, configuredTargets, exclusionProducts, recommendations }: Props) {
+export default function RppTargetSettings({ initialTargets, configuredTargets, exclusionProducts, recommendations, initialExperiments }: Props) {
   const [targets, setTargets] = useState(initialTargets);
   const [form, setForm] = useState<FormState>(blank);
   const [busy, setBusy] = useState(false);
@@ -173,7 +178,16 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
   const [baseExclusionProducts, setBaseExclusionProducts] = useState(exclusionProducts);
   const [exclusionOverrides, setExclusionOverrides] = useState<Record<string, boolean>>({});
   const [selectedOptimizationIds, setSelectedOptimizationIds] = useState<Set<string>>(() => new Set());
+  const [experiments, setExperiments] = useState<RppExperimentRecord[]>(initialExperiments);
   const targetFormRef = useRef<HTMLFormElement | null>(null);
+
+  async function refreshExperiments() {
+    const response = await fetch("/api/rpp/experiments", { cache: "no-store" });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error ?? "実験履歴の取得に失敗しました");
+    setExperiments(data.experiments ?? []);
+  }
+
 
   const targetMap = useMemo(() => new Map(targets.map((row) => [row.id, row])), [targets]);
   const positionSnapshotMap = useMemo(() => {
@@ -447,6 +461,9 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
     setError(null);
     setMessage(null);
     try {
+      if (form.optimizationMode !== "ROAS" && !form.experimentEndDate) {
+        throw new Error("順位目標・CPC固定モードでは実験終了日が必須です");
+      }
       const payload = {
         ...form,
         changeLocked: form.protectionType === "LOCKED",
@@ -479,10 +496,74 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
         const next = current.filter((row) => row.id !== data.target.id);
         return [...next, data.target].sort((a, b) => a.itemCode.localeCompare(b.itemCode, "ja") || a.keyword.localeCompare(b.keyword, "ja"));
       });
+      let historySaved = false;
+      if (payload.optimizationMode !== "ROAS" && payload.experimentBaseline) {
+        const historyResponse = await fetch("/api/rpp/experiments", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            targetId: data.target.id,
+            itemCode: data.target.itemCode,
+            keyword: data.target.keyword,
+            optimizationMode: payload.optimizationMode,
+            endDate: payload.experimentEndDate,
+            startedAt: data.target.experimentStartedAt,
+            baseline: payload.experimentBaseline,
+            settings: {
+              fixedCpc: payload.fixedCpc,
+              maxCpc: payload.maxCpc,
+              pcPositionGoal: payload.pcPositionGoal,
+              spPositionGoal: payload.spPositionGoal,
+              ctrGoal: payload.ctrGoal,
+              cvrGoal: payload.cvrGoal,
+              roasFloor: payload.roasFloor,
+            },
+          }),
+        });
+        const historyData = await historyResponse.json();
+        if (!historyResponse.ok) throw new Error(`目標は保存しましたが実験履歴の作成に失敗しました: ${historyData.error ?? "不明"}`);
+        historySaved = true;
+        await refreshExperiments();
+      }
       setForm(blank);
-      setMessage("保存しました");
+      setMessage(historySaved ? "目標と実験開始スナップショットを保存しました" : "保存しました");
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function finishExperiment(experiment: RppExperimentRecord) {
+    setBusy(true);
+    setError(null);
+    setMessage(null);
+    try {
+      const rec = recommendationMap.get(metricKey(experiment.itemCode, experiment.keyword));
+      const position = rec?.rppPosition || "未測定";
+      const parts = positionParts(position);
+      const response = await fetch("/api/rpp/experiments", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: experiment.id,
+          result: {
+            capturedAt: new Date().toISOString(),
+            ctr: null,
+            cvr: rec?.cvr ?? null,
+            roas: rec?.roas ?? null,
+            pcPosition: parts.find((part) => part.device === "PC")?.status || position,
+            spPosition: parts.find((part) => part.device === "SP")?.status || position,
+          },
+          note: experiment.status === "EXPIRED" ? "終了日到来後に最新実績を取得" : "運用画面から終了実績を取得",
+        }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error ?? "終了実績の保存に失敗しました");
+      await refreshExperiments();
+      setMessage(`${experiment.itemCode} / ${experiment.keyword} の終了実績を保存しました`);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
     } finally {
       setBusy(false);
     }
@@ -504,24 +585,6 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
       const refreshed = await fetch("/api/rpp/targets").then((r) => r.json());
       setTargets(refreshed.targets ?? []);
       setMessage(`未設定 ${data.added}件を作成しました`);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function deleteTarget(id: string) {
-    if (!window.confirm("この目標設定を削除しますか？")) return;
-    setBusy(true);
-    setError(null);
-    setMessage(null);
-    try {
-      const res = await fetch(`/api/rpp/targets?id=${encodeURIComponent(id)}`, { method: "DELETE" });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error ?? "削除に失敗しました");
-      setTargets((current) => current.filter((row) => row.id !== id));
-      setMessage("削除しました");
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -621,82 +684,81 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
             <button className="primary-button compact-button" type="button" disabled={!selectedOptimizationPreviews.length} onClick={downloadOptimizationPreviewPair}>提案＋戻しCSV</button>
           </div>
         </div>
-        <div className="product-card-grid">
-          {filteredConfiguredTargets.map((cfg) => {
-            const row = targetMap.get(cfg.id);
-            const rec = recommendationMap.get(metricKey(cfg.itemCode, cfg.keyword));
-            const snapshot = positionSnapshotMap.get(cfg.id);
-            const position = rec?.rppPosition || cfg.rppPosition || snapshot?.rppPosition || "未測定";
-            const positionKeyword = representativeKeyword(cfg, snapshot);
-            const positionRows = (cfg.rppPositions || snapshot?.rppPositions || (positionKeyword ? [{ keyword: positionKeyword, position }] : [])).filter((row) => row.keyword && row.position);
-            const exclusionState = exclusionStateMap.get(cfg.itemCode);
-            const currentExcluded = exclusionState?.currentExcluded ?? false;
-            const exclusionChangedForItem = exclusionState ? currentExcluded !== exclusionState.excluded : false;
-            const canUndoAccidentalExclusion = Boolean(exclusionState && exclusionState.excluded === false && currentExcluded === true);
-            const itemTargetCompletion = itemTargetCompletionMap.get(cfg.itemCode) ?? { total: 1, saved: row ? 1 : 0, missing: row ? 0 : 1 };
-            const canReleaseExclusion = itemTargetCompletion.saved > 0;
-            const roas = rec?.roas ?? (rec?.spend && rec.salesAmount != null ? Math.round((rec.salesAmount / rec.spend) * 100) : null);
-            const optimization = optimizationPreviewMap.get(cfg.id)?.preview;
-            const optimizationActionable = optimization?.proposedCpc != null && optimization.proposedCpc !== optimization.currentCpc;
-            return (
-              <article className="product-card" key={cfg.id}>
-                <div className="product-row-info">
-                  <div className="product-card-head">
-                    <div>
-                      <b>{cfg.itemCode}</b>
-                      <span className="status-pill status-hold">{cfg.source}</span>
-                    </div>
-                    <span className="owner-mini-pill">{row?.owner || cfg.owner || "担当未設定"}</span>
-                    <span className="owner-mini-pill group-mini-pill">{row?.adGroup || "通常"}</span>
-                    {row?.protectionType && row.protectionType !== "NORMAL" ? <span className="status-pill approval-rejected">{{ BLOCK: "ブロック", WHITELIST: "ホワイト", LOCKED: "変更不可", FOCUS: "注力" }[row.protectionType]}</span> : null}
-                  </div>
-                  <h3>{cfg.keyword}</h3>
-                  <small className="product-item-name">{cfg.itemName || "商品名未取得"}</small>
-                </div>
-                <div className="product-card-metrics">
-                  <span className="metric-muted"><small>商品CPC</small><strong>{yen(cfg.itemCpc)}</strong></span>
-                  <span className="metric-muted"><small>KW CPC</small><strong>{yen(cfg.keywordCpc)}</strong></span>
-                  <span><small>広告費</small><strong>{yenNumber(rec?.spend ?? 0)}</strong></span>
-                  <span><small>クリック</small><strong>{(rec?.clicks ?? 0).toLocaleString("ja-JP")}</strong></span>
-                  <span><small>売上</small><strong>{yenNumber(rec?.salesAmount ?? 0)}</strong></span>
-                  <span><small>ROAS</small><strong>{roas == null ? "-" : `${Math.round(roas)}%`}</strong></span>
-                  <span><small>モード</small><strong className={`optimization-mode-pill mode-${(row?.optimizationMode || "ROAS").toLowerCase()}`}>{optimizationModeLabel(row?.optimizationMode || "ROAS")}</strong></span>
-                  <span><small>提案CPC</small><strong className={optimization?.delta == null ? "" : optimization.delta > 0 ? "cpc-up" : optimization.delta < 0 ? "cpc-down" : ""}>{optimization?.proposedCpc == null ? "-" : `${optimization.currentCpc}→${optimization.proposedCpc}円`}</strong></span>
-                  <span><small>改善後ROAS</small><strong>{optimization?.projectedRoas == null ? "-" : `${Math.round(optimization.projectedRoas)}%`}</strong></span>
-                  <span><small>削減見込み</small><strong>{optimization?.savings == null ? "-" : yenNumber(optimization.savings)}</strong></span>
-                  <span className="metric-wide position-metric"><small>検索位置{positionKeyword ? `（${positionKeyword}）` : ""}</small><strong className="position-value">{positionParts(position).map((part) => <span key={`${part.device}-${part.status}`}><b>{part.device}</b><em>{part.status}</em></span>)}</strong></span>
-                  {positionRows.length > 1 ? <span className="metric-wide position-list"><small>検索KW別</small><strong>{positionRows.map((row) => `${row.keyword}: ${row.position}`).join(" / ")}</strong></span> : null}
-                </div>
-                <div className="product-card-status">
-                  {row ? <small>G {row.adGroup || "通常"}{row.protectionType && row.protectionType !== "NORMAL" ? ` / 保護:${row.protectionType}${row.lockReason ? `:${row.lockReason}` : ""}` : ""}<br />検索調査KW {(row.searchKeywords ?? []).join(" / ") || "未設定"}<br />CTR {row.ctrGoal}% / CVR {row.cvrGoal}% / 目標ROAS {row.roasFloor}%<br />{row.optimizationMode || "ROAS"}{row.fixedCpc ? ` / 固定${row.fixedCpc}円` : ""}{row.maxCpc ? ` / 上限${row.maxCpc}円` : ""}{row.experimentEndDate ? ` / 〜${row.experimentEndDate}` : ""}{row.experimentBaseline ? ` / 基準保存済` : ""}<br />PC {positionGoalLabel(row.pcPositionGoal ?? row.positionGoal)} / SP {positionGoalLabel(row.spPositionGoal ?? row.positionGoal)} / {row.policy}</small> : <div className="target-status-compact"><span className="status-pill approval-held">目標未設定</span><small>商品内 {itemTargetCompletion.saved}/{itemTargetCompletion.total}件</small></div>}
-                </div>
-                <div className="approval-actions card-actions">
-                  <label className="optimization-check" title={optimization?.blockedReason || undefined}>
-                    <input type="checkbox" checked={selectedOptimizationIds.has(cfg.id)} disabled={!optimizationActionable} onChange={() => toggleOptimizationSelection(cfg.id)} /> 提案対象
-                  </label>
-                  <div className="product-exclusion-action">
-                    <span className={`status-pill ${currentExcluded ? "approval-rejected" : "status-approved"}`}>{currentExcluded ? "除外ON" : "配信中"}</span>
-                    {exclusionChangedForItem ? <small>CSV変更予定</small> : null}
-                    <button
-                      disabled={busy || (currentExcluded && !canReleaseExclusion && !canUndoAccidentalExclusion)}
-                      type="button"
-                      onClick={() => toggleExcluded(cfg.itemCode, canReleaseExclusion)}
-                      title={currentExcluded && !canReleaseExclusion && !canUndoAccidentalExclusion ? "この商品に目標が1つ以上入るまで除外解除できません" : undefined}
-                    >
-                      {exclusionChangedForItem ? "元に戻す" : currentExcluded ? "除外解除" : "広告除外ON"}
-                    </button>
-                  </div>
-                  <button disabled={busy} type="button" onClick={() => openTargetForm(row ? toForm(row) : configuredToForm(cfg))}>目標設定</button>
-                  <button disabled={busy || row?.changeLocked === true || row?.protectionType === "BLOCK"} type="button" onClick={() => downloadCpcCsv(cfg)} title={row?.changeLocked || row?.protectionType === "BLOCK" ? "変更対象外です" : undefined}>CPC調整</button>
-                  {row ? <button disabled={busy} type="button" onClick={() => deleteTarget(row.id)}>削除</button> : null}
-                </div>
-              </article>
-            );
-          })}
+        <div className="adant-ops-table-wrap">
+          <table className="adant-ops-table">
+            <thead>
+              <tr>
+                <th className="select-col">選択</th>
+                <th className="product-col">商品 / キーワード</th>
+                <th>担当 / G</th>
+                <th>実績</th>
+                <th>CPC</th>
+                <th>ROAS</th>
+                <th>検索順位</th>
+                <th>運用モード</th>
+                <th>保護</th>
+                <th>配信</th>
+                <th className="actions-col">操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filteredConfiguredTargets.map((cfg) => {
+                const row = targetMap.get(cfg.id);
+                const rec = recommendationMap.get(metricKey(cfg.itemCode, cfg.keyword));
+                const snapshot = positionSnapshotMap.get(cfg.id);
+                const position = rec?.rppPosition || cfg.rppPosition || snapshot?.rppPosition || "未測定";
+                const positionKeyword = representativeKeyword(cfg, snapshot);
+                const exclusionState = exclusionStateMap.get(cfg.itemCode);
+                const currentExcluded = exclusionState?.currentExcluded ?? false;
+                const exclusionChangedForItem = exclusionState ? currentExcluded !== exclusionState.excluded : false;
+                const canUndoAccidentalExclusion = Boolean(exclusionState && exclusionState.excluded === false && currentExcluded === true);
+                const itemTargetCompletion = itemTargetCompletionMap.get(cfg.itemCode) ?? { total: 1, saved: row ? 1 : 0, missing: row ? 0 : 1 };
+                const canReleaseExclusion = itemTargetCompletion.saved > 0;
+                const roas = rec?.roas ?? (rec?.spend && rec.salesAmount != null ? Math.round((rec.salesAmount / rec.spend) * 100) : null);
+                const optimization = optimizationPreviewMap.get(cfg.id)?.preview;
+                const optimizationActionable = optimization?.proposedCpc != null && optimization.proposedCpc !== optimization.currentCpc;
+                const positions = positionParts(position);
+                const protectionLabel = row?.protectionType && row.protectionType !== "NORMAL"
+                  ? ({ BLOCK: "ブロック", WHITELIST: "ホワイト", LOCKED: "変更不可", FOCUS: "注力" }[row.protectionType])
+                  : "通常";
+                return (
+                  <tr key={cfg.id} className={selectedOptimizationIds.has(cfg.id) ? "selected" : currentExcluded ? "excluded" : ""}>
+                    <td className="select-col">
+                      <label className="optimization-check icon-check" title={optimization?.blockedReason || undefined}>
+                        <input aria-label={`${cfg.itemCode}を提案対象にする`} type="checkbox" checked={selectedOptimizationIds.has(cfg.id)} disabled={!optimizationActionable} onChange={() => toggleOptimizationSelection(cfg.id)} />
+                      </label>
+                    </td>
+                    <td className="product-col">
+                      <div className="adant-product-code"><b>{cfg.itemCode}</b><span>{cfg.source}</span></div>
+                      <strong>{cfg.keyword}</strong>
+                      <small title={cfg.itemName}>{cfg.itemName || "商品名未取得"}</small>
+                    </td>
+                    <td><b>{row?.owner || cfg.owner || "未設定"}</b><small>{row?.adGroup || "通常"}</small></td>
+                    <td className="number-cell"><b>{yenNumber(rec?.spend ?? 0)}</b><small>{(rec?.clicks ?? 0).toLocaleString("ja-JP")} click / 売上 {yenNumber(rec?.salesAmount ?? 0)}</small></td>
+                    <td className="cpc-cell">
+                      <b>{optimization?.currentCpc ? `${optimization.currentCpc}円` : cfg.source === "商品CPC" ? yen(cfg.itemCpc) : yen(cfg.keywordCpc)}</b>
+                      <span className={optimization?.delta == null ? "" : optimization.delta > 0 ? "cpc-up" : optimization.delta < 0 ? "cpc-down" : ""}>→ {optimization?.proposedCpc == null ? "提案なし" : `${optimization.proposedCpc}円`}</span>
+                      <small>{optimization?.savings == null ? "" : `効果 ${yenNumber(optimization.savings)}`}</small>
+                    </td>
+                    <td className="number-cell"><b>{roas == null ? "-" : `${Math.round(roas)}%`}</b><small>→ {optimization?.projectedRoas == null ? "-" : `${Math.round(optimization.projectedRoas)}%`}</small></td>
+                    <td className="rank-cell" title={positionKeyword || undefined}>{positions.map((part) => <span key={`${part.device}-${part.status}`}><b>{part.device}</b><em>{part.status}</em></span>)}</td>
+                    <td><span className={`optimization-mode-pill mode-${(row?.optimizationMode || "ROAS").toLowerCase()}`}>{optimizationModeLabel(row?.optimizationMode || "ROAS")}</span><small>{row?.experimentEndDate ? `〜${row.experimentEndDate}` : `目標 ${row?.roasFloor ?? 500}%`}</small></td>
+                    <td><span className={`protection-pill protection-${(row?.protectionType || "NORMAL").toLowerCase()}`}>{protectionLabel}</span><small>{row?.lockReason || ""}</small></td>
+                    <td><span className={`delivery-dot ${currentExcluded ? "off" : "on"}`}><i />{currentExcluded ? "除外ON" : "配信中"}</span>{exclusionChangedForItem ? <small className="pending-change">変更予定</small> : null}</td>
+                    <td className="actions-col">
+                      <button disabled={busy} type="button" onClick={() => openTargetForm(row ? toForm(row) : configuredToForm(cfg))}>設定</button>
+                      <button disabled={busy || row?.changeLocked === true || row?.protectionType === "BLOCK"} type="button" onClick={() => downloadCpcCsv(cfg)} title={row?.changeLocked || row?.protectionType === "BLOCK" ? "変更対象外です" : undefined}>CPC</button>
+                      <button className={currentExcluded ? "restore-button" : "danger-ghost"} disabled={busy || (currentExcluded && !canReleaseExclusion && !canUndoAccidentalExclusion)} type="button" onClick={() => toggleExcluded(cfg.itemCode, canReleaseExclusion)} title={currentExcluded && !canReleaseExclusion && !canUndoAccidentalExclusion ? "この商品に目標が1つ以上入るまで除外解除できません" : undefined}>{exclusionChangedForItem ? "戻す" : currentExcluded ? "再開" : "除外"}</button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
           {!filteredConfiguredTargets.length ? <p>この担当のRPP設定中商品/KWはありません。</p> : null}
         </div>
         {excludedProductsForOwner.length ? (
-          <div className="excluded-product-block">
+          <div className="excluded-product-block" id="rpp-excluded">
             <div className="section-heading compact-heading">
               <div>
                 <h3>除外中商品（広告ON戻し）</h3>
@@ -735,8 +797,36 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
         ) : null}
       </section>
 
+      <section className="panel experiment-history-panel" id="rpp-experiments">
+        <div className="section-heading compact-heading">
+          <div><h2>実験トラッキング</h2><p>順位目標・CPC固定の開始値を保存し、終了時に同じ指標で比較します。</p></div>
+          <div className="experiment-summary">
+            <span>実験中 <b>{experiments.filter((row) => row.status === "ACTIVE").length}</b></span>
+            <span>終了実績待ち <b>{experiments.filter((row) => row.status === "EXPIRED").length}</b></span>
+            <span>終了 <b>{experiments.filter((row) => row.status === "COMPLETED").length}</b></span>
+          </div>
+        </div>
+        {experiments.length ? (
+          <div className="experiment-table-wrap">
+            <table className="experiment-table">
+              <thead><tr><th>商品 / KW</th><th>モード・期間</th><th>開始値</th><th>終了値</th><th>状態</th><th>操作</th></tr></thead>
+              <tbody>{experiments.slice(0, 30).map((experiment) => (
+                <tr key={experiment.id}>
+                  <td><b>{experiment.itemCode}</b><small>{experiment.keyword}</small></td>
+                  <td><span className={`optimization-mode-pill mode-${experiment.optimizationMode.toLowerCase()}`}>{optimizationModeLabel(experiment.optimizationMode)}</span><small>{experiment.startedAt.slice(0, 10)} → {experiment.endDate}</small></td>
+                  <td><b>CVR {experimentMetric(experiment.baseline.cvr)} / ROAS {experimentMetric(experiment.baseline.roas)}</b><small>PC {experiment.baseline.pcPosition || "-"} / SP {experiment.baseline.spPosition || "-"}</small></td>
+                  <td><b>CVR {experimentMetric(experiment.result?.cvr ?? null)} / ROAS {experimentMetric(experiment.result?.roas ?? null)}</b><small>PC {experiment.result?.pcPosition || "-"} / SP {experiment.result?.spPosition || "-"}</small></td>
+                  <td><span className={`experiment-status status-${experiment.status.toLowerCase()}`}>{experimentStatusLabel(experiment.status)}</span></td>
+                  <td><button disabled={busy || experiment.status === "COMPLETED"} type="button" onClick={() => finishExperiment(experiment)}>{experiment.status === "EXPIRED" ? "終了実績を取得" : experiment.status === "ACTIVE" ? "今すぐ終了" : "記録済み"}</button></td>
+                </tr>
+              ))}</tbody>
+            </table>
+          </div>
+        ) : <p className="experiment-empty">順位目標またはCPC固定モードを保存すると、ここに開始スナップショットが追加されます。</p>}
+      </section>
+
       <div className="grid two target-grid">
-        <form className="target-form" ref={targetFormRef} onSubmit={saveTarget}>
+        <form className="target-form" id="rpp-target-form" ref={targetFormRef} onSubmit={saveTarget}>
           <div className="form-row two-cols">
             <label>商品管理番号<input value={form.itemCode} onChange={(e) => patchForm("itemCode", e.target.value)} placeholder="r0606" required /></label>
             <label>RPP設定KW<input value={form.keyword} onChange={(e) => patchForm("keyword", e.target.value)} placeholder="まな板 / 商品CPC" required /></label>

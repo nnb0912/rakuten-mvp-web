@@ -250,7 +250,117 @@ small { color: var(--muted); line-height: 1.45; }
 .meta-list.compact li { display: grid; }
 .target-table th:first-child, .target-table td:first-child { width: 18%; }
 
+/* RPP console: ADant-inspired dense operator workspace */
+.rpp-console-shell { min-height: 100vh; display: grid; grid-template-columns: 220px minmax(0, 1fr); background: #f3f5f9; }
+.rpp-console-nav { position: sticky; top: 0; height: 100vh; display: flex; flex-direction: column; gap: 18px; padding: 20px 14px; background: #111827; color: #d1d5db; z-index: 20; }
+.rpp-console-brand { display: flex; align-items: center; gap: 10px; padding: 2px 8px 16px; border-bottom: 1px solid #263244; }
+.rpp-console-brand > span { display: grid; place-items: center; width: 34px; height: 34px; border-radius: 9px; background: #e11d48; color: white; font-size: 18px; font-weight: 900; }
+.rpp-console-brand div { display: grid; }
+.rpp-console-brand b { color: #fff; font-size: 13px; letter-spacing: .06em; }
+.rpp-console-brand small { color: #7f8da3; font-size: 10px; }
+.rpp-console-nav nav { display: grid; gap: 4px; }
+.rpp-console-nav nav a { border-radius: 7px; padding: 9px 10px; font-size: 12px; font-weight: 700; }
+.rpp-console-nav nav a:hover, .rpp-console-nav nav a.active { background: #243044; color: #fff; }
+.rpp-console-nav nav a.active { box-shadow: inset 3px 0 #fb7185; }
+.rpp-console-safe { margin-top: auto; display: grid; gap: 2px; padding: 11px; border: 1px solid #365066; border-radius: 9px; background: #172536; }
+.rpp-console-safe b { color: #7dd3fc; font-size: 12px; }
+.rpp-console-safe small { color: #94a3b8; font-size: 10px; }
+.rpp-console-back { padding: 6px 8px; color: #94a3b8; font-size: 11px; font-weight: 700; }
+.rpp-console-main { width: 100%; max-width: 1680px; padding: 20px 22px 50px; }
+.rpp-console-hero { align-items: center; margin-bottom: 14px; }
+.rpp-console-hero h1 { margin: 0; font-size: 26px; }
+.rpp-console-hero p { margin: 2px 0; font-size: 12px; }
+.rpp-console-hero .eyebrow { font-size: 10px; }
+.rpp-console-live { display: inline-flex; align-items: center; gap: 7px; border: 1px solid #dbe3ef; border-radius: 999px; background: #fff; padding: 7px 10px; color: #475569; font-size: 11px; font-weight: 800; }
+.rpp-console-live span { width: 7px; height: 7px; border-radius: 50%; background: #22c55e; box-shadow: 0 0 0 3px #dcfce7; }
+.rpp-kpi-strip { gap: 8px; }
+.rpp-kpi-strip .card { border-radius: 9px; padding: 11px 12px; box-shadow: none; }
+.rpp-kpi-strip .card span { margin-bottom: 2px; font-size: 10px; text-transform: uppercase; letter-spacing: .04em; }
+.rpp-kpi-strip .card strong { font-size: 21px; }
+.rpp-console-main .panel { border-radius: 10px; box-shadow: none; }
+.rpp-console-main .owner-panel { padding: 13px; }
+.rpp-console-main .owner-panel .section-heading { display: none; }
+.rpp-console-main .owner-card-grid { display: none; }
+.rpp-console-main .owner-tabs { margin-bottom: 7px; gap: 5px; }
+.rpp-console-main .owner-tab { border-radius: 6px; padding: 6px 10px; font-size: 11px; }
+.rpp-console-main .owner-tab.active { background: #1f2937; }
+.rpp-console-main .product-card-panel { padding: 0; overflow: visible; }
+.rpp-console-main .product-card-panel > .section-heading { margin: 0; padding: 13px 14px 8px; }
+.rpp-console-main .product-card-panel > .section-heading h2 { margin: 0; font-size: 16px; }
+.rpp-console-main .product-card-panel > .section-heading p { font-size: 11px; }
+.rpp-console-main .optimization-preview-bar { margin: 0; border-width: 1px 0; border-radius: 0; padding: 10px 14px; background: #f8fafc; }
+.adant-ops-table-wrap { width: 100%; overflow-x: auto; border-top: 1px solid #e5e7eb; }
+.adant-ops-table { min-width: 1390px; table-layout: fixed; font-size: 11px; background: #fff; }
+.adant-ops-table th { position: sticky; top: 0; z-index: 3; background: #f1f4f8; color: #64748b; padding: 7px 8px; text-align: left; white-space: nowrap; border-bottom: 1px solid #d8e0ea; }
+.adant-ops-table td { height: 58px; padding: 6px 8px; text-align: left; vertical-align: middle; border-bottom: 1px solid #edf0f4; }
+.adant-ops-table tbody tr:hover { background: #f8fbff; }
+.adant-ops-table tbody tr.selected { background: #eff6ff; box-shadow: inset 3px 0 #3b82f6; }
+.adant-ops-table tbody tr.excluded { background: #fafafa; opacity: .72; }
+.adant-ops-table th:first-child, .adant-ops-table td:first-child { width: 46px; text-align: center; }
+.adant-ops-table .product-col { width: 300px; }
+.adant-ops-table th:nth-child(3) { width: 90px; }
+.adant-ops-table th:nth-child(4) { width: 150px; }
+.adant-ops-table th:nth-child(5) { width: 105px; }
+.adant-ops-table th:nth-child(6) { width: 86px; }
+.adant-ops-table th:nth-child(7) { width: 120px; }
+.adant-ops-table th:nth-child(8) { width: 105px; }
+.adant-ops-table th:nth-child(9) { width: 86px; }
+.adant-ops-table th:nth-child(10) { width: 82px; }
+.adant-ops-table .actions-col { width: 154px; }
+.adant-ops-table td > b, .adant-ops-table td > strong { display: block; color: #111827; font-size: 12px; }
+.adant-ops-table td > small { display: block; overflow: hidden; color: #718096; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+.adant-product-code { display: flex; align-items: center; gap: 5px; }
+.adant-product-code b { color: #111827; font-size: 12px; }
+.adant-product-code span { border-radius: 3px; background: #e9eef5; padding: 1px 4px; color: #5b6676; font-size: 9px; font-weight: 800; }
+.adant-ops-table .product-col > strong { overflow: hidden; max-width: 280px; text-overflow: ellipsis; white-space: nowrap; }
+.adant-ops-table .product-col > small { max-width: 280px; }
+.cpc-cell > b, .cpc-cell > span { display: inline; margin-right: 4px; font-weight: 900; }
+.rank-cell span { display: grid; grid-template-columns: 20px 1fr; gap: 4px; }
+.rank-cell b { color: #64748b; font-size: 10px; }
+.rank-cell em { color: #111827; font-style: normal; font-weight: 800; }
+.protection-pill, .delivery-dot { display: inline-flex; align-items: center; gap: 5px; border-radius: 999px; padding: 3px 6px; font-size: 10px; font-weight: 900; white-space: nowrap; }
+.protection-normal { background: #f1f5f9; color: #475569; }
+.protection-block, .protection-locked { background: #fee2e2; color: #b91c1c; }
+.protection-whitelist { background: #dcfce7; color: #15803d; }
+.protection-focus { background: #fef3c7; color: #b45309; }
+.delivery-dot { padding-left: 0; }
+.delivery-dot i { width: 7px; height: 7px; border-radius: 50%; }
+.delivery-dot.on { color: #15803d; }.delivery-dot.on i { background: #22c55e; }
+.delivery-dot.off { color: #b91c1c; }.delivery-dot.off i { background: #ef4444; }
+.pending-change { color: #b45309 !important; font-weight: 900; }
+.adant-ops-table .actions-col { display: table-cell; white-space: nowrap; }
+.adant-ops-table .actions-col button { margin-right: 3px; border: 1px solid #d6dde7; border-radius: 5px; background: #fff; padding: 5px 7px; color: #334155; font-size: 10px; font-weight: 800; cursor: pointer; }
+.adant-ops-table .actions-col button:disabled { opacity: .35; cursor: not-allowed; }
+.adant-ops-table .actions-col .danger-ghost { color: #b91c1c; }
+.adant-ops-table .actions-col .restore-button { border-color: #86efac; color: #15803d; }
+.icon-check input { width: 15px; height: 15px; accent-color: #2563eb; }
+.experiment-history-panel { margin-top: 12px; padding: 14px; }
+.experiment-summary { display: flex; gap: 5px; flex-wrap: wrap; }
+.experiment-summary span { border: 1px solid #dde3ec; border-radius: 6px; background: #f8fafc; padding: 5px 8px; color: #64748b; font-size: 10px; font-weight: 800; }
+.experiment-summary b { margin-left: 4px; color: #111827; font-size: 13px; }
+.experiment-table-wrap { overflow-x: auto; }
+.experiment-table { min-width: 980px; table-layout: fixed; font-size: 11px; }
+.experiment-table th, .experiment-table td { padding: 7px 8px; text-align: left; vertical-align: middle; }
+.experiment-table th:first-child, .experiment-table td:first-child { width: 160px; }
+.experiment-table th:nth-child(2) { width: 150px; }
+.experiment-table th:nth-child(3), .experiment-table th:nth-child(4) { width: 220px; }
+.experiment-table th:nth-child(5) { width: 105px; }
+.experiment-table th:nth-child(6) { width: 120px; }
+.experiment-table td > b, .experiment-table td > small { display: block; }
+.experiment-table button { border: 1px solid #cbd5e1; border-radius: 5px; background: #fff; padding: 5px 8px; color: #334155; font-size: 10px; font-weight: 800; cursor: pointer; }
+.experiment-table button:disabled { opacity: .45; cursor: not-allowed; }
+.experiment-status { display: inline-flex; border-radius: 999px; padding: 3px 7px; font-size: 10px; font-weight: 900; }
+.experiment-status.status-active { background: #dbeafe; color: #1d4ed8; }
+.experiment-status.status-expired { background: #fef3c7; color: #b45309; }
+.experiment-status.status-completed { background: #dcfce7; color: #15803d; }
+.experiment-empty { margin: 6px 0 0; padding: 12px; border: 1px dashed #cbd5e1; border-radius: 7px; background: #f8fafc; font-size: 11px; }
+.rpp-console-main .target-form { border: 1px solid var(--border); border-radius: 10px; background: #fff; padding: 16px; }
+
 @media (max-width: 1180px) {
+  .rpp-console-shell { grid-template-columns: 176px minmax(0, 1fr); }
+  .rpp-console-nav { padding: 16px 10px; }
+  .rpp-console-brand b { font-size: 11px; }
+  .rpp-console-main { padding: 16px 12px 40px; }
   .optimization-preview-bar { align-items: flex-start; }
   .product-card {
     grid-template-columns: minmax(150px, .9fr) minmax(260px, 1.6fr) minmax(78px, .35fr) minmax(132px, auto);
@@ -282,6 +392,19 @@ small { color: var(--muted); line-height: 1.45; }
 }
 
 @media (max-width: 760px) {
+  .rpp-console-shell { display: block; }
+  .rpp-console-nav { position: sticky; height: auto; padding: 8px 10px; gap: 7px; }
+  .rpp-console-brand { display: none; }
+  .rpp-console-nav nav { display: flex; gap: 4px; overflow-x: auto; }
+  .rpp-console-nav nav a { flex: 0 0 auto; padding: 7px 9px; }
+  .rpp-console-safe, .rpp-console-back { display: none; }
+  .rpp-console-main { padding: 12px 8px 32px; }
+  .rpp-console-hero h1 { font-size: 22px; }
+  .rpp-console-live { display: none; }
+  .rpp-kpi-strip { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .rpp-console-main .product-card-panel > .section-heading { display: grid; }
+  .adant-ops-table-wrap { border: 1px solid #e2e8f0; }
+  .adant-ops-table { min-width: 1280px; }
   .cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .two { grid-template-columns: 1fr; }
   .owner-card-grid, .product-card-grid { grid-template-columns: 1fr; }
