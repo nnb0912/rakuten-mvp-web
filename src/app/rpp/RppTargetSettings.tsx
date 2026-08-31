@@ -3,8 +3,9 @@
 import { useMemo, useRef, useState, type FormEvent } from "react";
 import configuredTargetsSnapshot from "@/data/rpp_configured_targets.json";
 import seoKeywords from "@/data/seo_keywords.json";
+import { buildRppOptimizationPreview, type RppOptimizationMode } from "@/lib/rppOptimization";
 import type { RppRecommendationWithApproval } from "@/lib/rppRecommendations";
-import type { RppAlertTarget, RppConfiguredTarget, RppExclusionProduct, RppOperationPolicy, RppPositionGoal } from "@/lib/rppTargets";
+import type { RppAlertTarget, RppConfiguredTarget, RppExclusionProduct, RppOperationPolicy, RppPositionGoal, RppProtectionType } from "@/lib/rppTargets";
 
 type Props = {
   initialTargets: RppAlertTarget[];
@@ -28,6 +29,11 @@ type FormState = {
   adGroup: string;
   changeLocked: boolean;
   lockReason: string;
+  protectionType: RppProtectionType;
+  optimizationMode: RppOptimizationMode;
+  fixedCpc: string;
+  maxCpc: string;
+  experimentEndDate: string;
   note: string;
 };
 
@@ -46,6 +52,11 @@ const blank: FormState = {
   adGroup: "通常",
   changeLocked: false,
   lockReason: "",
+  protectionType: "NORMAL",
+  optimizationMode: "ROAS",
+  fixedCpc: "",
+  maxCpc: "",
+  experimentEndDate: "",
   note: "",
 };
 
@@ -65,6 +76,11 @@ function toForm(row: RppAlertTarget): FormState {
     adGroup: row.adGroup || "通常",
     changeLocked: row.changeLocked === true,
     lockReason: row.lockReason || "",
+    protectionType: row.protectionType || (row.changeLocked ? "LOCKED" : "NORMAL"),
+    optimizationMode: row.optimizationMode || "ROAS",
+    fixedCpc: row.fixedCpc == null ? "" : String(row.fixedCpc),
+    maxCpc: row.maxCpc == null ? "" : String(row.maxCpc),
+    experimentEndDate: row.experimentEndDate || "",
     note: row.note,
   };
 }
@@ -85,6 +101,12 @@ function positionGoalLabel(goal: RppPositionGoal) {
   if (goal === "TOP_5") return "RPP広告5位以内";
   if (goal === "TOP_7") return "RPP広告7位以内";
   return "RPP広告1ページ目内";
+}
+
+function optimizationModeLabel(mode: RppOptimizationMode) {
+  if (mode === "POSITION") return "順位目標";
+  if (mode === "FIXED") return "CPC固定";
+  return "ROAS逆算";
 }
 
 const POSITION_GOAL_OPTIONS: { value: RppPositionGoal; label: string }[] = [
@@ -150,6 +172,7 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
   const [showExcludedProducts, setShowExcludedProducts] = useState(false);
   const [baseExclusionProducts, setBaseExclusionProducts] = useState(exclusionProducts);
   const [exclusionOverrides, setExclusionOverrides] = useState<Record<string, boolean>>({});
+  const [selectedOptimizationIds, setSelectedOptimizationIds] = useState<Set<string>>(() => new Set());
   const targetFormRef = useRef<HTMLFormElement | null>(null);
 
   const targetMap = useMemo(() => new Map(targets.map((row) => [row.id, row])), [targets]);
@@ -184,6 +207,32 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
     return ["全て", ...[...groups].sort((a, b) => a.localeCompare(b, "ja"))];
   }, [targets]);
   const recommendationMap = useMemo(() => new Map(recommendations.map((row) => [metricKey(row.itemCode, row.keyword), row])), [recommendations]);
+  const optimizationPreviews = useMemo(() => configuredTargets.map((cfg) => {
+    const target = targetMap.get(cfg.id);
+    const rec = recommendationMap.get(metricKey(cfg.itemCode, cfg.keyword));
+    const currentCpc = cfg.source === "商品CPC" ? cfg.itemCpc : cfg.keywordCpc;
+    const preview = buildRppOptimizationPreview({
+      mode: target?.optimizationMode || "ROAS",
+      cpcKind: cfg.source === "商品CPC" ? "ITEM" : "KEYWORD",
+      currentCpc,
+      actualRoas: rec?.roas ?? (rec?.spend && rec.salesAmount != null ? (rec.salesAmount / rec.spend) * 100 : null),
+      targetRoas: target?.roasFloor ?? 500,
+      spend: rec?.spend ?? null,
+      sales: rec?.salesAmount ?? null,
+      positionSuggestedCpc: rec?.proposedCpc ?? null,
+      fixedCpc: target?.fixedCpc ?? null,
+      maxCpc: target?.maxCpc ?? null,
+      changeLocked: target?.changeLocked,
+      protectionType: target?.protectionType,
+      experimentEndDate: target?.experimentEndDate,
+    });
+    return { cfg, target, rec, preview };
+  }), [configuredTargets, recommendationMap, targetMap]);
+  const optimizationPreviewMap = useMemo(() => new Map(optimizationPreviews.map((row) => [row.cfg.id, row])), [optimizationPreviews]);
+  const actionableOptimizationPreviews = optimizationPreviews.filter((row) => row.preview.proposedCpc != null && row.preview.proposedCpc !== row.preview.currentCpc);
+  const selectedOptimizationPreviews = actionableOptimizationPreviews.filter((row) => selectedOptimizationIds.has(row.cfg.id));
+  const selectedSavings = selectedOptimizationPreviews.reduce((sum, row) => sum + (row.preview.savings ?? 0), 0);
+  const selectedProjectedSpend = selectedOptimizationPreviews.reduce((sum, row) => sum + (row.preview.projectedSpend ?? 0), 0);
   const ownerStats = useMemo(() => {
     const stats = new Map<string, { owner: string; configured: number; saved: number; missing: number; spend: number; clicks: number; sales: number; firstPage: number; outsidePage: number; unmeasured: number }>();
     const ensure = (owner: string) => {
@@ -291,6 +340,35 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
     });
   }
 
+  function toggleOptimizationSelection(id: string) {
+    setSelectedOptimizationIds((current) => {
+      const next = new Set(current);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function downloadOptimizationPreviewPair() {
+    if (!selectedOptimizationPreviews.length) return;
+    const header = ["種別", "商品管理番号", "キーワード", "現在CPC", "提案CPC", "削減見込み", "改善後ROAS"];
+    const rows = selectedOptimizationPreviews.map(({ cfg, preview }) => [
+      cfg.source,
+      cfg.itemCode,
+      cfg.keyword,
+      String(preview.currentCpc),
+      String(preview.proposedCpc),
+      String(Math.round(preview.savings ?? 0)),
+      preview.projectedRoas == null ? "" : String(Math.round(preview.projectedRoas)),
+    ]);
+    const rollbackRows = selectedOptimizationPreviews.map(({ cfg, preview }) => [cfg.source, cfg.itemCode, cfg.keyword, String(preview.proposedCpc), String(preview.currentCpc), "", ""]);
+    const ymd = new Date().toISOString().replace(/[-:T]/g, "").slice(0, 12);
+    const toCsv = (data: string[][]) => `\uFEFF${[header, ...data].map((row) => row.map(csvCell).join(",")).join("\r\n")}\r\n`;
+    downloadTextFile(`rpp_optimization_preview_${ymd}.csv`, toCsv(rows));
+    downloadTextFile(`rpp_optimization_rollback_${ymd}.csv`, toCsv(rollbackRows));
+    setMessage(`提案用・戻し用CSVを対で出力しました（${selectedOptimizationPreviews.length}件）。RMS反映はしていません。`);
+  }
+
   function downloadExcludeCsv() {
     const changes = exclusionChanged.map((row) => [row.currentExcluded ? "n" : "d", row.itemCode]);
     const lines = ["コントロールカラム,商品管理番号", ...changes.map((row) => row.map(csvCell).join(","))];
@@ -300,7 +378,7 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
 
   function downloadCpcCsv(cfg: RppConfiguredTarget) {
     const target = targetMap.get(cfg.id);
-    if (target?.changeLocked) {
+    if (target?.changeLocked || target?.protectionType === "BLOCK") {
       setError(`変更不可リスト対象です${target.lockReason ? `（${target.lockReason}）` : ""}`);
       return;
     }
@@ -371,11 +449,24 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
     try {
       const payload = {
         ...form,
+        changeLocked: form.protectionType === "LOCKED",
         positionGoal: form.pcPositionGoal,
         searchKeywords: form.searchKeywords.split(/[\n,、]+/).map((kw) => kw.trim()).filter(Boolean),
         ctrGoal: Number(form.ctrGoal),
         cvrGoal: Number(form.cvrGoal),
         roasFloor: Number(form.roasFloor),
+        fixedCpc: form.fixedCpc.trim() ? Number(form.fixedCpc) : null,
+        maxCpc: form.maxCpc.trim() ? Number(form.maxCpc) : null,
+        experimentStartedAt: form.optimizationMode === "ROAS" ? "" : (targetMap.get(`${encodeURIComponent(form.itemCode.toLowerCase())}__${encodeURIComponent(form.keyword)}`)?.experimentStartedAt || new Date().toISOString()),
+        experimentBaseline: (() => {
+          const id = `${encodeURIComponent(form.itemCode.toLowerCase())}__${encodeURIComponent(form.keyword)}`;
+          const existing = targetMap.get(id)?.experimentBaseline;
+          if (form.optimizationMode === "ROAS") return null;
+          if (existing) return existing;
+          const rec = recommendationMap.get(metricKey(form.itemCode, form.keyword));
+          const position = rec?.rppPosition || "";
+          return { capturedAt: new Date().toISOString(), ctr: null, cvr: rec?.cvr ?? null, roas: rec?.roas ?? null, pcPosition: position, spPosition: position };
+        })(),
       };
       const res = await fetch("/api/rpp/targets", {
         method: "POST",
@@ -406,7 +497,7 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
       const res = await fetch("/api/rpp/targets", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "seedMissing", ctrGoal: 5, cvrGoal: 5, roasFloor: 500, positionGoal: "FIRST_PAGE", pcPositionGoal: "FIRST_PAGE", spPositionGoal: "TOP_7", policy: "維持", adGroup: "通常", changeLocked: false, lockReason: "" }),
+        body: JSON.stringify({ action: "seedMissing", ctrGoal: 5, cvrGoal: 5, roasFloor: 500, positionGoal: "FIRST_PAGE", pcPositionGoal: "FIRST_PAGE", spPositionGoal: "TOP_7", policy: "維持", adGroup: "通常", protectionType: "NORMAL", changeLocked: false, lockReason: "" }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "一括作成に失敗しました");
@@ -448,7 +539,7 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
         <div className="card"><span>目標未設定</span><strong className={missingCount ? "warn-text" : "ok-text"}>{missingCount}</strong></div>
         <div className="card"><span>担当タブ</span><strong>{ownerFilter}</strong></div>
         <div className="card"><span>広告グループ</span><strong>{groupFilter}</strong></div>
-        <div className="card"><span>変更不可</span><strong>{targets.filter((row) => row.changeLocked).length}</strong></div>
+        <div className="card"><span>保護設定</span><strong>{targets.filter((row) => row.protectionType && row.protectionType !== "NORMAL").length}</strong></div>
       </div>
 
       <section className="panel owner-panel">
@@ -511,6 +602,25 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
             <small className="rms-upload-note">自動反映がRMSログインエラーになる場合は、手動CSVをRMS除外商品の一括アップロードへ入れてください。</small>
           </div>
         </div>
+        <div className="optimization-preview-bar">
+          <div className="optimization-preview-main">
+            <div className="optimization-preview-title">
+              <div><b>最適化プレビュー</b><small>実績を分析し、ルールで判断してから提案します。RMSには自動反映しません。</small></div>
+              <div className="optimization-flow" aria-label="最適化フロー"><span>分析</span><i>→</i><span>判断</span><i>→</i><span>提案</span></div>
+            </div>
+            <div className="optimization-summary-grid">
+              <span><small>候補</small><strong>{actionableOptimizationPreviews.length}件</strong></span>
+              <span><small>選択</small><strong>{selectedOptimizationPreviews.length}件</strong></span>
+              <span><small>予測広告費</small><strong>{yenNumber(selectedProjectedSpend)}</strong></span>
+              <span className={selectedSavings >= 0 ? "saving-positive" : "saving-negative"}><small>削減見込み</small><strong>{yenNumber(selectedSavings)}</strong></span>
+            </div>
+          </div>
+          <div className="product-list-actions">
+            <button className="secondary-button compact-button" type="button" disabled={!actionableOptimizationPreviews.length} onClick={() => setSelectedOptimizationIds(new Set(actionableOptimizationPreviews.map((row) => row.cfg.id)))}>候補を全選択</button>
+            <button className="secondary-button compact-button" type="button" disabled={!selectedOptimizationPreviews.length} onClick={() => setSelectedOptimizationIds(new Set())}>選択解除</button>
+            <button className="primary-button compact-button" type="button" disabled={!selectedOptimizationPreviews.length} onClick={downloadOptimizationPreviewPair}>提案＋戻しCSV</button>
+          </div>
+        </div>
         <div className="product-card-grid">
           {filteredConfiguredTargets.map((cfg) => {
             const row = targetMap.get(cfg.id);
@@ -526,6 +636,8 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
             const itemTargetCompletion = itemTargetCompletionMap.get(cfg.itemCode) ?? { total: 1, saved: row ? 1 : 0, missing: row ? 0 : 1 };
             const canReleaseExclusion = itemTargetCompletion.saved > 0;
             const roas = rec?.roas ?? (rec?.spend && rec.salesAmount != null ? Math.round((rec.salesAmount / rec.spend) * 100) : null);
+            const optimization = optimizationPreviewMap.get(cfg.id)?.preview;
+            const optimizationActionable = optimization?.proposedCpc != null && optimization.proposedCpc !== optimization.currentCpc;
             return (
               <article className="product-card" key={cfg.id}>
                 <div className="product-row-info">
@@ -536,7 +648,7 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
                     </div>
                     <span className="owner-mini-pill">{row?.owner || cfg.owner || "担当未設定"}</span>
                     <span className="owner-mini-pill group-mini-pill">{row?.adGroup || "通常"}</span>
-                    {row?.changeLocked ? <span className="status-pill approval-rejected">変更不可</span> : null}
+                    {row?.protectionType && row.protectionType !== "NORMAL" ? <span className="status-pill approval-rejected">{{ BLOCK: "ブロック", WHITELIST: "ホワイト", LOCKED: "変更不可", FOCUS: "注力" }[row.protectionType]}</span> : null}
                   </div>
                   <h3>{cfg.keyword}</h3>
                   <small className="product-item-name">{cfg.itemName || "商品名未取得"}</small>
@@ -548,13 +660,20 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
                   <span><small>クリック</small><strong>{(rec?.clicks ?? 0).toLocaleString("ja-JP")}</strong></span>
                   <span><small>売上</small><strong>{yenNumber(rec?.salesAmount ?? 0)}</strong></span>
                   <span><small>ROAS</small><strong>{roas == null ? "-" : `${Math.round(roas)}%`}</strong></span>
+                  <span><small>モード</small><strong className={`optimization-mode-pill mode-${(row?.optimizationMode || "ROAS").toLowerCase()}`}>{optimizationModeLabel(row?.optimizationMode || "ROAS")}</strong></span>
+                  <span><small>提案CPC</small><strong className={optimization?.delta == null ? "" : optimization.delta > 0 ? "cpc-up" : optimization.delta < 0 ? "cpc-down" : ""}>{optimization?.proposedCpc == null ? "-" : `${optimization.currentCpc}→${optimization.proposedCpc}円`}</strong></span>
+                  <span><small>改善後ROAS</small><strong>{optimization?.projectedRoas == null ? "-" : `${Math.round(optimization.projectedRoas)}%`}</strong></span>
+                  <span><small>削減見込み</small><strong>{optimization?.savings == null ? "-" : yenNumber(optimization.savings)}</strong></span>
                   <span className="metric-wide position-metric"><small>検索位置{positionKeyword ? `（${positionKeyword}）` : ""}</small><strong className="position-value">{positionParts(position).map((part) => <span key={`${part.device}-${part.status}`}><b>{part.device}</b><em>{part.status}</em></span>)}</strong></span>
                   {positionRows.length > 1 ? <span className="metric-wide position-list"><small>検索KW別</small><strong>{positionRows.map((row) => `${row.keyword}: ${row.position}`).join(" / ")}</strong></span> : null}
                 </div>
                 <div className="product-card-status">
-                  {row ? <small>G {row.adGroup || "通常"}{row.changeLocked ? ` / 変更不可${row.lockReason ? `:${row.lockReason}` : ""}` : ""}<br />検索調査KW {(row.searchKeywords ?? []).join(" / ") || "未設定"}<br />CTR {row.ctrGoal}% / CVR {row.cvrGoal}% / ROAS最低 {row.roasFloor}%<br />PC {positionGoalLabel(row.pcPositionGoal ?? row.positionGoal)} / SP {positionGoalLabel(row.spPositionGoal ?? row.positionGoal)} / {row.policy}</small> : <div className="target-status-compact"><span className="status-pill approval-held">目標未設定</span><small>商品内 {itemTargetCompletion.saved}/{itemTargetCompletion.total}件</small></div>}
+                  {row ? <small>G {row.adGroup || "通常"}{row.protectionType && row.protectionType !== "NORMAL" ? ` / 保護:${row.protectionType}${row.lockReason ? `:${row.lockReason}` : ""}` : ""}<br />検索調査KW {(row.searchKeywords ?? []).join(" / ") || "未設定"}<br />CTR {row.ctrGoal}% / CVR {row.cvrGoal}% / 目標ROAS {row.roasFloor}%<br />{row.optimizationMode || "ROAS"}{row.fixedCpc ? ` / 固定${row.fixedCpc}円` : ""}{row.maxCpc ? ` / 上限${row.maxCpc}円` : ""}{row.experimentEndDate ? ` / 〜${row.experimentEndDate}` : ""}{row.experimentBaseline ? ` / 基準保存済` : ""}<br />PC {positionGoalLabel(row.pcPositionGoal ?? row.positionGoal)} / SP {positionGoalLabel(row.spPositionGoal ?? row.positionGoal)} / {row.policy}</small> : <div className="target-status-compact"><span className="status-pill approval-held">目標未設定</span><small>商品内 {itemTargetCompletion.saved}/{itemTargetCompletion.total}件</small></div>}
                 </div>
                 <div className="approval-actions card-actions">
+                  <label className="optimization-check" title={optimization?.blockedReason || undefined}>
+                    <input type="checkbox" checked={selectedOptimizationIds.has(cfg.id)} disabled={!optimizationActionable} onChange={() => toggleOptimizationSelection(cfg.id)} /> 提案対象
+                  </label>
                   <div className="product-exclusion-action">
                     <span className={`status-pill ${currentExcluded ? "approval-rejected" : "status-approved"}`}>{currentExcluded ? "除外ON" : "配信中"}</span>
                     {exclusionChangedForItem ? <small>CSV変更予定</small> : null}
@@ -568,7 +687,7 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
                     </button>
                   </div>
                   <button disabled={busy} type="button" onClick={() => openTargetForm(row ? toForm(row) : configuredToForm(cfg))}>目標設定</button>
-                  <button disabled={busy || row?.changeLocked === true} type="button" onClick={() => downloadCpcCsv(cfg)} title={row?.changeLocked ? "変更不可リスト対象です" : undefined}>CPC調整</button>
+                  <button disabled={busy || row?.changeLocked === true || row?.protectionType === "BLOCK"} type="button" onClick={() => downloadCpcCsv(cfg)} title={row?.changeLocked || row?.protectionType === "BLOCK" ? "変更対象外です" : undefined}>CPC調整</button>
                   {row ? <button disabled={busy} type="button" onClick={() => deleteTarget(row.id)}>削除</button> : null}
                 </div>
               </article>
@@ -639,8 +758,16 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
             <datalist id="rpp-ad-groups">{adGroups.filter((g) => g !== "全て").map((g) => <option key={g} value={g} />)}</datalist>
           </div>
           <div className="form-row two-cols">
-            <label className="checkbox-field"><input type="checkbox" checked={form.changeLocked} onChange={(e) => patchForm("changeLocked", e.target.checked)} /> 変更不可リスト</label>
-            <label>変更不可理由<input value={form.lockReason} onChange={(e) => patchForm("lockReason", e.target.value)} placeholder="セール中 / 固定CPC / 要ノブ確認" disabled={!form.changeLocked} /></label>
+            <label>保護区分
+              <select value={form.protectionType} onChange={(e) => patchForm("protectionType", e.target.value as RppProtectionType)}>
+                <option value="NORMAL">通常</option>
+                <option value="BLOCK">ブロック（完全対象外）</option>
+                <option value="WHITELIST">ホワイト（除外判定から保護）</option>
+                <option value="LOCKED">変更不可（CPC固定）</option>
+                <option value="FOCUS">注力（上限内で積極運用）</option>
+              </select>
+            </label>
+            <label>保護理由<input value={form.lockReason} onChange={(e) => patchForm("lockReason", e.target.value)} placeholder="セール中 / 戦略商品 / 要確認" disabled={form.protectionType === "NORMAL"} /></label>
           </div>
           <div className="form-row two-cols">
             <label>運用方針
@@ -652,10 +779,23 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
               </select>
             </label>
           </div>
+          <div className="optimization-mode-selector">
+            <span>最適化モード</span>
+            <div className="optimization-mode-options">
+              <button className={form.optimizationMode === "ROAS" ? "active mode-roas" : "mode-roas"} type="button" onClick={() => patchForm("optimizationMode", "ROAS")}><b>ROAS逆算</b><small>通常運用・利益重視</small></button>
+              <button className={form.optimizationMode === "POSITION" ? "active mode-position" : "mode-position"} type="button" onClick={() => patchForm("optimizationMode", "POSITION")}><b>順位目標</b><small>PC/SP露出実験</small></button>
+              <button className={form.optimizationMode === "FIXED" ? "active mode-fixed" : "mode-fixed"} type="button" onClick={() => patchForm("optimizationMode", "FIXED")}><b>CPC固定</b><small>サムネ等の効果検証</small></button>
+            </div>
+          </div>
+          <div className="form-row three-cols optimization-mode-fields">
+            <label>固定CPC<input type="number" min="1" step="1" value={form.fixedCpc} onChange={(e) => patchForm("fixedCpc", e.target.value)} disabled={form.optimizationMode !== "FIXED"} placeholder="例 50" /></label>
+            <label>CPC上限<input type="number" min="1" step="1" value={form.maxCpc} onChange={(e) => patchForm("maxCpc", e.target.value)} placeholder="未設定なら安全幅のみ" /></label>
+            <label>実験終了日<input type="date" value={form.experimentEndDate} onChange={(e) => patchForm("experimentEndDate", e.target.value)} disabled={form.optimizationMode === "ROAS"} /></label>
+          </div>
           <div className="form-row five-cols">
             <label>CTR目標<input type="number" min="0" step="0.1" value={form.ctrGoal} onChange={(e) => patchForm("ctrGoal", e.target.value)} /></label>
             <label>CVR目標<input type="number" min="0" step="0.1" value={form.cvrGoal} onChange={(e) => patchForm("cvrGoal", e.target.value)} /></label>
-            <label>ROAS最低<input type="number" min="0" step="10" value={form.roasFloor} onChange={(e) => patchForm("roasFloor", e.target.value)} /></label>
+            <label>目標ROAS<input type="number" min="0" step="10" value={form.roasFloor} onChange={(e) => patchForm("roasFloor", e.target.value)} /></label>
             <label>PC検索位置目標
               <select value={form.pcPositionGoal} onChange={(e) => patchForm("pcPositionGoal", e.target.value as RppPositionGoal)}>
                 {PC_POSITION_GOAL_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
@@ -682,7 +822,10 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
             <li><b>検索位置</b><small>「圏外」=PR枠はあるが自社広告が1ページ目に出ていない。「広告枠なし」=その検索KWで楽天側のRPP広告枠自体が出ていない。</small></li>
             <li><b>担当別保存済み</b><small>{Object.entries(grouped).map(([owner, count]) => `${owner}:${count}`).join(" / ") || "未設定"}</small></li>
             <li><b>広告グループ</b><small>{adGroups.filter((g) => g !== "全て").join(" / ") || "通常"}</small></li>
-            <li><b>変更不可リスト</b><small>CPC調整CSV出力と自動提案の変更候補から除外。理由も保存。</small></li>
+            <li><b>4保護区分</b><small>ブロック=完全対象外 / ホワイト=除外保護 / 変更不可=CPC固定 / 注力=上限内で積極運用。</small></li>
+            <li><b>ROAS逆算</b><small>通常運用。目標ROASに近づくようCPCを逆算し、1回の変更を下限-50%・上限+20%に制限。</small></li>
+            <li><b>順位目標</b><small>既存のPC/SP検索順位提案を利用。CPC上限とROAS実績を併記して実験判断。</small></li>
+            <li><b>CPC固定</b><small>サムネ・商品名等の検証用。順位/CPC条件を固定し、CTR・CVR・ROASを比較。</small></li>
           </ul>
         </div>
       </div>
