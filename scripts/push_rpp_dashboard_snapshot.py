@@ -127,7 +127,10 @@ def main() -> int:
         raise RuntimeError(f"snapshot POST failed: HTTP {status} {posted.get('error', 'unknown error')}")
     read_status, readback = request("GET", auth)
     snapshot = readback.get("snapshot") or {}
-    if read_status != 200 or snapshot.get("syncedAt") != payload["syncedAt"]:
+    expected_at = dt.datetime.fromisoformat(payload["syncedAt"].replace("Z", "+00:00"))
+    actual_value = snapshot.get("syncedAt")
+    actual_at = dt.datetime.fromisoformat(actual_value.replace("Z", "+00:00")) if isinstance(actual_value, str) else None
+    if read_status != 200 or actual_at is None or abs((actual_at - expected_at).total_seconds()) >= 0.001:
         raise RuntimeError(f"snapshot readback mismatch: HTTP {read_status}")
     print(json.dumps({**summary, "dryRun": False, "syncedAt": payload["syncedAt"], "readback": "OK"}, ensure_ascii=False))
     return 0
