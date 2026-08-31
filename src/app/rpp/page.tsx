@@ -135,7 +135,10 @@ export default async function RppPage() {
           <h1>RPP広告運用候補</h1>
           <p>担当別の商品/KW一覧から、目標設定・広告除外ON/OFF・RMS反映を確認します。</p>
         </div>
-        <div className="rpp-console-live"><span />運用データ接続中</div>
+        <div className={`rpp-console-live ${meta.dataReady ? "" : "is-stale"}`}>
+          <span />
+          {meta.dataReady ? `最新化済 ${fmtDate(summary?.generatedAt)}` : `要更新・最終候補 ${fmtDate(summary?.generatedAt)}`}
+        </div>
       </section>
 
       <section className="grid cards rpp-kpi-strip">
