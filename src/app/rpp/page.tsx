@@ -147,8 +147,6 @@ export default async function RppPage() {
         <div className="card"><span>データ状態</span><strong className={meta.dataReady ? "ok-text" : "warn-text"}>{meta.dataReady ? "OK" : "要更新"}</strong></div>
       </section>
 
-      <div id="rpp-optimization"><RppAutoAdjustmentSettingsPanel initialSettings={autoSettingsData.settings} source={autoSettingsData.source} /></div>
-
       <section className="panel target-panel" id="rpp-products">
         <div className="section-heading">
           <div>
@@ -161,6 +159,8 @@ export default async function RppPage() {
         </div>
         <RppTargetSettings initialTargets={targetData.targets} configuredTargets={targetData.configuredTargets} exclusionProducts={targetData.exclusionProducts} recommendations={data.recommendations} initialExperiments={experimentHistory} />
       </section>
+
+      <div id="rpp-optimization"><RppAutoAdjustmentSettingsPanel initialSettings={autoSettingsData.settings} source={autoSettingsData.source} /></div>
 
       <section className="panel history-panel compact-status-panel">
         <div className="section-heading compact-heading">

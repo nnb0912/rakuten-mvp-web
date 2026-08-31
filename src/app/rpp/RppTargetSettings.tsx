@@ -173,6 +173,8 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
   const [message, setMessage] = useState<string | null>(null);
   const [ownerFilter, setOwnerFilter] = useState("全て");
   const [groupFilter, setGroupFilter] = useState("全て");
+  const [tableSearch, setTableSearch] = useState("");
+  const [tableStatusFilter, setTableStatusFilter] = useState<"ALL" | "CANDIDATE" | "ATTENTION" | "EXCLUDED">("ALL");
   const [exclusionSearch, setExclusionSearch] = useState("");
   const [showExcludedProducts, setShowExcludedProducts] = useState(false);
   const [baseExclusionProducts, setBaseExclusionProducts] = useState(exclusionProducts);
@@ -285,7 +287,18 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
     const target = targetMap.get(cfg.id);
     const ownerOk = ownerFilter === "全て" || (target?.owner || cfg.owner || "担当未設定") === ownerFilter;
     const groupOk = groupFilter === "全て" || (target?.adGroup || "通常") === groupFilter;
-    return ownerOk && groupOk;
+    const query = tableSearch.trim().toLowerCase();
+    const searchOk = !query || [cfg.itemCode, cfg.keyword, cfg.itemName, target?.owner, target?.adGroup]
+      .filter(Boolean)
+      .some((value) => String(value).toLowerCase().includes(query));
+    const preview = optimizationPreviewMap.get(cfg.id)?.preview;
+    const position = recommendationMap.get(metricKey(cfg.itemCode, cfg.keyword))?.rppPosition || cfg.rppPosition || positionSnapshotMap.get(cfg.id)?.rppPosition || "未測定";
+    const excluded = exclusionStateMap.get(cfg.itemCode)?.currentExcluded === true;
+    const statusOk = tableStatusFilter === "ALL"
+      || (tableStatusFilter === "CANDIDATE" && preview?.proposedCpc != null && preview.proposedCpc !== preview.currentCpc)
+      || (tableStatusFilter === "ATTENTION" && (!target || /未測定|圏外|広告枠なし|測定エラー/.test(position)))
+      || (tableStatusFilter === "EXCLUDED" && excluded);
+    return ownerOk && groupOk && searchOk && statusOk;
   });
   const visibleOwnerStats = ownerFilter === "全て" ? ownerStats : ownerStats.filter((row) => row.owner === ownerFilter);
   const exclusionChanged = exclusionRows.filter((row) => row.currentExcluded !== row.excluded);
@@ -596,15 +609,6 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
     <div className="target-settings">
       {error ? <p className="error-box">{error}</p> : null}
       {message ? <p className="success-box">{message}</p> : null}
-      <div className="grid cards target-summary-cards">
-        <div className="card"><span>RPP設定中</span><strong>{configuredTargets.length}</strong></div>
-        <div className="card"><span>目標保存済み</span><strong>{targets.length}</strong></div>
-        <div className="card"><span>目標未設定</span><strong className={missingCount ? "warn-text" : "ok-text"}>{missingCount}</strong></div>
-        <div className="card"><span>担当タブ</span><strong>{ownerFilter}</strong></div>
-        <div className="card"><span>広告グループ</span><strong>{groupFilter}</strong></div>
-        <div className="card"><span>保護設定</span><strong>{targets.filter((row) => row.protectionType && row.protectionType !== "NORMAL").length}</strong></div>
-      </div>
-
       <section className="panel owner-panel">
         <div className="section-heading">
           <div>
@@ -664,6 +668,23 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
             <button className="secondary-button compact-button" disabled={!exclusionChanged.length} type="button" onClick={() => setExclusionOverrides({})}>変更を戻す</button>
             <small className="rms-upload-note">自動反映がRMSログインエラーになる場合は、手動CSVをRMS除外商品の一括アップロードへ入れてください。</small>
           </div>
+        </div>
+        <div className="adant-list-toolbar" aria-label="商品・キーワード絞り込み">
+          <label className="adant-list-search">
+            <span>検索</span>
+            <input value={tableSearch} onChange={(event) => setTableSearch(event.target.value)} placeholder="商品番号・商品名・KW・担当" />
+          </label>
+          <div className="adant-status-filters">
+            {([
+              ["ALL", "すべて"],
+              ["CANDIDATE", `CPC候補 ${actionableOptimizationPreviews.length}`],
+              ["ATTENTION", "要確認"],
+              ["EXCLUDED", "除外中"],
+            ] as const).map(([value, label]) => (
+              <button className={tableStatusFilter === value ? "active" : ""} key={value} type="button" onClick={() => setTableStatusFilter(value)}>{label}</button>
+            ))}
+          </div>
+          <small>表示 {filteredConfiguredTargets.length} / {configuredTargets.length}件</small>
         </div>
         <div className="optimization-preview-bar">
           <div className="optimization-preview-main">

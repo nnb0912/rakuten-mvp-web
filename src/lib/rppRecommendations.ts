@@ -1,5 +1,6 @@
 import { promises as fs } from "fs";
 import path from "path";
+import { readLatestRppDashboardSnapshot, type RppSnapshotFile } from "./rppDashboardSnapshots";
 
 export type RppApprovalStatus = "pending" | "approved" | "rejected" | "held";
 
@@ -103,9 +104,13 @@ async function writeApprovals(approvals: ApprovalFile) {
 }
 
 export async function readRppRecommendations() {
-  const filePath = await latestRecommendationPath();
+  let filePath: string | null = await latestRecommendationPath();
   let data: RecommendationFile | null = null;
-  if (filePath) {
+  const syncedSnapshot = await readLatestRppDashboardSnapshot();
+  if (syncedSnapshot) {
+    filePath = "db:rpp_dashboard_snapshots";
+    data = syncedSnapshot.recommendations as RecommendationFile;
+  } else if (filePath) {
     data = JSON.parse(await fs.readFile(filePath, "utf8")) as RecommendationFile;
   } else {
     try {
@@ -152,6 +157,14 @@ async function statInfo(fileName: string) {
   } catch {
     return { name: fileName, filePath, exists: false, ok: false, status: "未取得", ageHours: null, maxAgeHours, size: 0, mtime: null };
   }
+}
+
+function snapshotStatInfo(file: RppSnapshotFile) {
+  const maxAgeHours = FRESHNESS_LIMIT_HOURS[file.name] ?? 24;
+  if (!file.exists || !file.mtime) return { ...file, filePath: `synced:${file.name}`, ok: false, status: "未取得", ageHours: null, maxAgeHours };
+  const ageHours = (Date.now() - new Date(file.mtime).getTime()) / 36e5;
+  const ok = Number.isFinite(ageHours) && ageHours <= maxAgeHours;
+  return { ...file, filePath: `synced:${file.name}`, ok, status: ok ? "OK" : "古い", ageHours, maxAgeHours };
 }
 
 function reasonCounts(rows: RppRecommendationWithApproval[]) {
@@ -242,16 +255,21 @@ async function cronStatus() {
 
 export async function readRppDashboardMeta() {
   const data = await readRppRecommendations();
+  const syncedSnapshot = await readLatestRppDashboardSnapshot();
   const actionable = data.recommendations.filter((row) => row.action === "RAISE" || row.action === "LOWER");
   const approvedActionable = actionable.filter((row) => row.approvalStatus === "approved");
   const holdRows = data.recommendations.filter((row) => row.action === "HOLD");
-  const latestFiles = await Promise.all([
-    statInfo("rpp_keyword_settings.csv"),
-    statInfo("rpp_item_settings.csv"),
-    statInfo("rpp_exclude_items.csv"),
-    statInfo("rpp_keyword_reports.csv"),
-    statInfo("rpp_position_adjustment_log.json"),
-  ]);
+  const latestFiles = syncedSnapshot?.latestFiles.length
+    ? syncedSnapshot.latestFiles.map(snapshotStatInfo)
+    : await Promise.all([
+      statInfo("rpp_keyword_settings.csv"),
+      statInfo("rpp_item_settings.csv"),
+      statInfo("rpp_exclude_items.csv"),
+      statInfo("rpp_keyword_reports.csv"),
+      statInfo("rpp_position_adjustment_log.json"),
+    ]);
+
+  const snapshotCronStatus = syncedSnapshot?.cronStatus as Awaited<ReturnType<typeof cronStatus>> | null | undefined;
 
   return {
     latestFiles,
@@ -261,6 +279,6 @@ export async function readRppDashboardMeta() {
     approvedActionableCount: approvedActionable.length,
     uploadHistory: await uploadHistory(),
     applyHistory: await applyHistory(),
-    cronStatus: await cronStatus(),
+    cronStatus: snapshotCronStatus ?? await cronStatus(),
   };
 }

@@ -288,6 +288,13 @@ small { color: var(--muted); line-height: 1.45; }
 .rpp-console-main .product-card-panel > .section-heading { margin: 0; padding: 13px 14px 8px; }
 .rpp-console-main .product-card-panel > .section-heading h2 { margin: 0; font-size: 16px; }
 .rpp-console-main .product-card-panel > .section-heading p { font-size: 11px; }
+.adant-list-toolbar { position: sticky; top: 0; z-index: 6; display: grid; grid-template-columns: minmax(260px, 1fr) auto auto; gap: 10px; align-items: center; border-top: 1px solid #e5e7eb; padding: 8px 14px; background: rgba(255,255,255,.97); backdrop-filter: blur(8px); }
+.adant-list-search { display: flex; align-items: center; gap: 8px; color: #64748b; font-size: 10px; font-weight: 900; }
+.adant-list-search input { width: min(420px, 100%); border: 1px solid #d7dee8; border-radius: 6px; background: #f8fafc; padding: 7px 9px; color: #111827; font: inherit; }
+.adant-status-filters { display: flex; gap: 3px; padding: 3px; border-radius: 7px; background: #eef2f6; }
+.adant-status-filters button { border: 0; border-radius: 5px; background: transparent; padding: 5px 8px; color: #64748b; font-size: 10px; font-weight: 900; cursor: pointer; }
+.adant-status-filters button.active { background: #fff; color: #111827; box-shadow: 0 1px 3px rgba(15,23,42,.12); }
+.adant-list-toolbar > small { color: #64748b; font-size: 10px; font-weight: 800; white-space: nowrap; }
 .rpp-console-main .optimization-preview-bar { margin: 0; border-width: 1px 0; border-radius: 0; padding: 10px 14px; background: #f8fafc; }
 .adant-ops-table-wrap { width: 100%; overflow-x: auto; border-top: 1px solid #e5e7eb; }
 .adant-ops-table { min-width: 1390px; table-layout: fixed; font-size: 11px; background: #fff; }
@@ -403,6 +410,10 @@ small { color: var(--muted); line-height: 1.45; }
   .rpp-console-live { display: none; }
   .rpp-kpi-strip { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .rpp-console-main .product-card-panel > .section-heading { display: grid; }
+  .adant-list-toolbar { position: static; grid-template-columns: 1fr; padding: 8px; }
+  .adant-list-search input { width: 100%; }
+  .adant-status-filters { overflow-x: auto; }
+  .adant-status-filters button { flex: 0 0 auto; }
   .adant-ops-table-wrap { border: 1px solid #e2e8f0; }
   .adant-ops-table { min-width: 1280px; }
   .cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
