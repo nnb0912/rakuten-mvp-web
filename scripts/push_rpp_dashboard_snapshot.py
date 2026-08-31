@@ -73,6 +73,46 @@ def _number(value: object) -> float:
         return 0.0
 
 
+def performance_daily(path: Path | None = None) -> dict | None:
+    path = path or (PROJECT / "rpp_item_reports.csv")
+    if not path.exists():
+        return None
+    with path.open("r", encoding="cp932", errors="replace", newline="") as handle:
+        records = list(csv.DictReader(handle))
+    if not records:
+        return None
+    ranges = {str(row.get("日付") or "").strip() for row in records}
+    if len(ranges) != 1:
+        raise RuntimeError(f"item daily report contains multiple date ranges: {sorted(ranges)}")
+    label = next(iter(ranges))
+    match = __import__("re").fullmatch(r"(\d{4})年(\d{2})月(\d{2})日～(\d{4})年(\d{2})月(\d{2})日", label)
+    if not match or match.group(1, 2, 3) != match.group(4, 5, 6):
+        raise RuntimeError(f"item report is not a single-day report: {label}")
+    date = f"{match.group(1)}-{match.group(2)}-{match.group(3)}"
+    rows = []
+    for row in records:
+        item_code = str(row.get("商品管理番号") or "").strip().lower()
+        if not item_code:
+            continue
+        rows.append({
+            "itemCode": item_code,
+            "ctr": _number(row.get("CTR(%)")),
+            "clicks": round(_number(row.get("クリック数(合計)"))),
+            "spend": round(_number(row.get("実績額(合計)"))),
+            "sales12h": round(_number(row.get("売上金額(合計12時間)"))),
+            "orders12h": round(_number(row.get("売上件数(合計12時間)"))),
+            "sales720h": round(_number(row.get("売上金額(合計720時間)"))),
+            "orders720h": round(_number(row.get("売上件数(合計720時間)"))),
+        })
+    return {
+        "source": path.name,
+        "sourceMtime": dt.datetime.fromtimestamp(path.stat().st_mtime, dt.timezone.utc).isoformat().replace("+00:00", "Z"),
+        "date": date,
+        "attribution": {"sales12h": True, "sales720h": True},
+        "rows": rows,
+    }
+
+
 def budget_metrics() -> dict | None:
     path = PROJECT / "rpp_item_reports_7d.csv"
     if not path.exists():
@@ -151,16 +191,20 @@ def request(method: str, auth: str, payload: dict | None = None) -> tuple[int, d
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--performance-file", default="")
     args = parser.parse_args()
     source, recommendations = latest_recommendation()
     recommendations.setdefault("summary", {})["budgetMetrics"] = budget_metrics()
+    performance_path = Path(args.performance_file).expanduser() if args.performance_file else None
     payload = {
+        "schemaVersion": 2,
         "syncedAt": dt.datetime.now(dt.timezone.utc).isoformat().replace("+00:00", "Z"),
         "recommendations": recommendations,
         "latestFiles": file_rows(),
         "cronStatus": cron_status(),
+        "performanceDaily": performance_daily(performance_path),
     }
-    summary = {"source": source.name, "recommendations": len(recommendations["recommendations"]), "files": len(payload["latestFiles"]), "dryRun": args.dry_run}
+    summary = {"source": source.name, "recommendations": len(recommendations["recommendations"]), "files": len(payload["latestFiles"]), "performanceDate": payload["performanceDaily"]["date"] if payload["performanceDaily"] else None, "performanceRows": len(payload["performanceDaily"]["rows"]) if payload["performanceDaily"] else 0, "dryRun": args.dry_run}
     if args.dry_run:
         print(json.dumps(summary, ensure_ascii=False))
         return 0

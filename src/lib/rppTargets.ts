@@ -4,6 +4,7 @@ import configuredTargetsSnapshot from "@/data/rpp_configured_targets.json";
 import { pool } from "@/lib/db";
 import { readRppExclusionOverrides } from "@/lib/rppExclusionJobs";
 import type { RppOptimizationMode } from "@/lib/rppOptimization";
+import { readRppStrategySettings, resolveRppRoas } from "@/lib/rppStrategySettings";
 
 export type RppPositionGoal = "FIRST_PAGE" | "TOP_7" | "TOP_5" | "TOP_3";
 export type RppOperationPolicy = "攻め" | "維持" | "テスト" | "停止候補";
@@ -25,6 +26,10 @@ export type RppAlertTarget = {
   ctrGoal: number;
   cvrGoal: number;
   roasFloor: number;
+  baseRoasFloor?: number;
+  effectiveRoasFloor?: number;
+  effectiveRoasSource?: string;
+  activeScheduleId?: string | null;
   positionGoal: RppPositionGoal;
   pcPositionGoal: RppPositionGoal;
   spPositionGoal: RppPositionGoal;
@@ -579,7 +584,11 @@ export async function readRppExclusionProducts(): Promise<RppExclusionProduct[]>
 }
 
 export async function readRppAlertTargets() {
-  const [targets, configuredTargets, exclusionProducts] = await Promise.all([readRawTargets(), readRppConfiguredTargets(), readRppExclusionProducts()]);
+  const [rawTargets, configuredTargets, exclusionProducts, strategy] = await Promise.all([readRawTargets(), readRppConfiguredTargets(), readRppExclusionProducts(), readRppStrategySettings()]);
+  const targets = rawTargets.map((row) => {
+    const resolution = resolveRppRoas(row.roasFloor, row.itemCode, row.adGroup, strategy.settings);
+    return { ...row, roasFloor: resolution.effectiveRoasFloor, baseRoasFloor: resolution.baseRoasFloor, effectiveRoasFloor: resolution.effectiveRoasFloor, effectiveRoasSource: resolution.effectiveRoasSource, activeScheduleId: resolution.activeScheduleId };
+  });
   const savedIds = new Set(targets.map((row) => row.id));
   return {
     filePath: TARGETS_PATH,
