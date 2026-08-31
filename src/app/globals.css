@@ -273,6 +273,8 @@ small { color: var(--muted); line-height: 1.45; }
 .rpp-console-hero .eyebrow { font-size: 10px; }
 .rpp-console-live { display: inline-flex; align-items: center; gap: 7px; border: 1px solid #dbe3ef; border-radius: 999px; background: #fff; padding: 7px 10px; color: #475569; font-size: 11px; font-weight: 800; }
 .rpp-console-live span { width: 7px; height: 7px; border-radius: 50%; background: #22c55e; box-shadow: 0 0 0 3px #dcfce7; }
+.rpp-console-live.is-stale { border-color: #fed7aa; background: #fff7ed; color: #c2410c; }
+.rpp-console-live.is-stale span { background: #f97316; box-shadow: 0 0 0 3px #ffedd5; }
 .rpp-kpi-strip { gap: 8px; }
 .rpp-kpi-strip .card { border-radius: 9px; padding: 11px 12px; box-shadow: none; }
 .rpp-kpi-strip .card span { margin-bottom: 2px; font-size: 10px; text-transform: uppercase; letter-spacing: .04em; }
