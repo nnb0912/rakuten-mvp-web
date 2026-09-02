@@ -674,6 +674,18 @@ small { color: var(--muted); line-height: 1.45; }
 .strategy-grid ul { color: #344256; font-size: 12px; }
 .assignment-preview { margin-top: 8px; padding: 8px; border: 1px solid #93c5fd; border-radius: 7px; background: #eff6ff; color: #1e3a8a; }
 .assignment-preview small { display: block; color: #334e75; }
+.rpp-view-guide { padding: 0; overflow: hidden; }
+.rpp-view-guide > summary { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 11px 14px; cursor: pointer; background: #f8fafc; list-style: none; }
+.rpp-view-guide > summary::-webkit-details-marker { display: none; }
+.rpp-view-guide > summary span:first-child { display: flex; align-items: baseline; gap: 8px; }
+.rpp-view-guide > summary b { font-size: 15px; }
+.rpp-view-guide > summary small { color: #64748b; font-size: 11px; }
+.rpp-guide-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border-top: 1px solid #dbe3ec; }
+.rpp-guide-grid > div { min-width: 0; padding: 10px 12px; border-right: 1px solid #e2e8f0; border-bottom: 1px solid #e2e8f0; background: #fff; }
+.rpp-guide-grid > div:nth-child(3n) { border-right: 0; }
+.rpp-guide-grid b { color: #172033; font-size: 12px; }
+.rpp-guide-grid p { margin: 4px 0 0; color: #475569; font-size: 11px; line-height: 1.55; }
+.rpp-guide-grid .status-pill { margin: 0 2px 0 0; vertical-align: baseline; }
 
 @media (max-width: 760px) {
   .rpp-console-shell { font-size: 14px; }
@@ -689,6 +701,8 @@ small { color: var(--muted); line-height: 1.45; }
   .adant-ops-table .actions-col button { min-height: 32px; font-size: 11px; }
   .budget-metric-grid small { font-size: 10px; }
   .budget-metric-grid strong { font-size: 15px; }
+  .rpp-guide-grid { grid-template-columns: 1fr; }
+  .rpp-guide-grid > div, .rpp-guide-grid > div:nth-child(3n) { border-right: 0; }
 }
 
 .rpp-alert-panel { margin-bottom: 16px; }
