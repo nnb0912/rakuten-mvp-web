@@ -1,5 +1,5 @@
 import NextAuth from "next-auth";
-import Google from "next-auth/providers/google";
+import { buildGoogleOAuthProvider } from "@/lib/googleOAuthProvider";
 
 const allowedEmails = new Set(
   (process.env.AUTH_ALLOWED_EMAILS ?? "n.nb0912@gmail.com")
@@ -11,10 +11,7 @@ const allowedEmails = new Set(
 export const { handlers, auth, signIn, signOut } = NextAuth({
   trustHost: true,
   providers: [
-    Google({
-      clientId: process.env.AUTH_GOOGLE_ID,
-      clientSecret: process.env.AUTH_GOOGLE_SECRET,
-    }),
+    buildGoogleOAuthProvider(process.env.AUTH_GOOGLE_ID, process.env.AUTH_GOOGLE_SECRET),
   ],
   pages: {
     signIn: "/login",

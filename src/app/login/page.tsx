@@ -15,7 +15,7 @@ export default function LoginPage() {
         >
           <button className="primary-button" type="submit">Googleでログイン</button>
         </form>
-        <small>許可中: n.nb0912@gmail.com</small>
+        <small>許可されたGoogleアカウントでログインしてください。</small>
       </section>
     </main>
   );
