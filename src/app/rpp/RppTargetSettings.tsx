@@ -5,6 +5,7 @@ import configuredTargetsSnapshot from "@/data/rpp_configured_targets.json";
 import seoKeywords from "@/data/seo_keywords.json";
 import { buildRppOptimizationPreview, type RppOptimizationMode } from "@/lib/rppOptimization";
 import type { RppRecommendationWithApproval } from "@/lib/rppRecommendations";
+import { canOperateProductExclusion, deliveryLabel } from "@/lib/rppTargetUiRules";
 import type { RppAlertTarget, RppConfiguredTarget, RppExclusionProduct, RppOperationPolicy, RppPositionGoal, RppProtectionType } from "@/lib/rppTargets";
 import type { RppExperimentRecord } from "@/lib/rppExperiments";
 
@@ -712,6 +713,7 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
                 const positionKeyword = representativeKeyword(cfg, snapshot);
                 const exclusionState = exclusionStateMap.get(cfg.itemCode);
                 const currentExcluded = exclusionState?.currentExcluded ?? false;
+                const productExclusionOperable = canOperateProductExclusion(cfg.source);
                 const exclusionChangedForItem = exclusionState ? currentExcluded !== exclusionState.excluded : false;
                 const canUndoAccidentalExclusion = Boolean(exclusionState && exclusionState.excluded === false && currentExcluded === true);
                 const itemTargetCompletion = itemTargetCompletionMap.get(cfg.itemCode) ?? { total: 1, saved: row ? 1 : 0, missing: row ? 0 : 1 };
@@ -746,11 +748,11 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
                     <td className="rank-cell" title={positionKeyword || undefined}>{positions.map((part) => <span key={`${part.device}-${part.status}`}><b>{part.device}</b><em>{part.status}</em></span>)}</td>
                     <td><span className={`optimization-mode-pill mode-${(row?.optimizationMode || "ROAS").toLowerCase()}`}>{optimizationModeLabel(row?.optimizationMode || "ROAS")}</span><small>{row?.experimentEndDate ? `〜${row.experimentEndDate}` : `目標 ${row?.roasFloor ?? 500}%`}</small></td>
                     <td><span className={`protection-pill protection-${(row?.protectionType || "NORMAL").toLowerCase()}`}>{protectionLabel}</span><small>{row?.lockReason || ""}</small></td>
-                    <td><span className={`delivery-dot ${currentExcluded ? "off" : "on"}`}><i />{currentExcluded ? "除外ON" : "配信中"}</span>{exclusionChangedForItem ? <small className="pending-change">変更予定</small> : null}</td>
+                    <td><span className={`delivery-dot ${currentExcluded ? "off" : "on"}`}><i />{deliveryLabel(cfg.source, currentExcluded)}</span>{exclusionChangedForItem ? <small className="pending-change">変更予定</small> : null}</td>
                     <td className="actions-col">
                       <button disabled={busy} type="button" onClick={() => openTargetForm(row ? toForm(row) : configuredToForm(cfg))}>設定</button>
                       <button disabled={busy || row?.changeLocked === true || row?.protectionType === "BLOCK"} type="button" onClick={() => downloadCpcCsv(cfg)} title={row?.changeLocked || row?.protectionType === "BLOCK" ? "変更対象外です" : undefined}>CPC</button>
-                      <button className={currentExcluded ? "restore-button" : "danger-ghost"} disabled={busy || (currentExcluded && !canReleaseExclusion && !canUndoAccidentalExclusion)} type="button" onClick={() => toggleExcluded(cfg.itemCode, canReleaseExclusion)} title={currentExcluded && !canReleaseExclusion && !canUndoAccidentalExclusion ? "この商品に目標が1つ以上入るまで除外解除できません" : undefined}>{exclusionChangedForItem ? "戻す" : currentExcluded ? "再開" : "除外"}</button>
+                      {productExclusionOperable ? <button className={currentExcluded ? "restore-button" : "danger-ghost"} disabled={busy || (currentExcluded && !canReleaseExclusion && !canUndoAccidentalExclusion)} type="button" onClick={() => toggleExcluded(cfg.itemCode, canReleaseExclusion)} title={currentExcluded && !canReleaseExclusion && !canUndoAccidentalExclusion ? "この商品に目標が1つ以上入るまで除外解除できません" : undefined}>{exclusionChangedForItem ? "戻す" : currentExcluded ? "再開" : "除外"}</button> : <span className="keyword-exclusion-na" title="広告除外は商品CPC行から操作します">商品単位</span>}
                     </td>
                   </tr>
                 );
