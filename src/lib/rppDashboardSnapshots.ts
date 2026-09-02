@@ -76,8 +76,13 @@ export async function saveRppDashboardSnapshot(value: unknown) {
   finally { client.release(); }
 }
 
+export async function readRecentRppDashboardSnapshots(limit = 2) {
+  if (!(await ensureTables()) || !pool) return [];
+  const safeLimit = Math.max(1, Math.min(10, Math.round(limit)));
+  const result = await pool.query<{ payload: RppDashboardSnapshot }>(`select payload from ${TABLE} order by synced_at desc,id desc limit $1`, [safeLimit]);
+  return result.rows.flatMap((row) => row.payload ? [normalizeRppDashboardSnapshot(row.payload)] : []);
+}
+
 export async function readLatestRppDashboardSnapshot() {
-  if (!(await ensureTables()) || !pool) return null;
-  const result = await pool.query<{ payload: RppDashboardSnapshot }>(`select payload from ${TABLE} order by synced_at desc,id desc limit 1`);
-  return result.rows[0]?.payload ? normalizeRppDashboardSnapshot(result.rows[0].payload) : null;
+  return (await readRecentRppDashboardSnapshots(1))[0] ?? null;
 }

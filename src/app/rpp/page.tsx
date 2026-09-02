@@ -8,7 +8,9 @@ import { readRppExperimentHistory } from "@/lib/rppExperiments";
 import { readRppBudgetSettings, type RppBudgetMetrics } from "@/lib/rppBudgetSettings";
 import { readRppDailySpendActuals } from "@/lib/rppComparisons";
 import { readRppStrategySettings } from "@/lib/rppStrategySettings";
+import { readRppAnomalyComparison } from "@/lib/rppAnomalyData";
 import RppAutoAdjustmentSettingsPanel from "./RppAutoAdjustmentSettingsPanel";
+import RppAnomalyAlertPanel from "./RppAnomalyAlertPanel";
 import RppBudgetPanel from "./RppBudgetPanel";
 import RppPeriodComparison from "./RppPeriodComparison";
 import RppRemoveSettingCandidateExportButton from "./RppRemoveSettingCandidateExportButton";
@@ -16,6 +18,21 @@ import RppStrategyPanel from "./RppStrategyPanel";
 import RppTargetSettings from "./RppTargetSettings";
 
 export const dynamic = "force-dynamic";
+
+const RPP_VIEWS = {
+  dashboard: { label: "ダッシュボード", description: "候補件数とデータ状態を確認します。" },
+  budget: { label: "予算管理", description: "予算進捗・期間比較・運用戦略を確認します。" },
+  products: { label: "商品・KW・実験", description: "商品/KWの目標設定・除外・実験を操作します。" },
+  alerts: { label: "異常アラート", description: "CPC・ROAS・広告費・データ異常を確認します。" },
+  optimization: { label: "CPC最適化", description: "自動調整ルールと安全設定を確認します。" },
+  data: { label: "データ・実行履歴", description: "データ鮮度・保留理由・監査ログを確認します。" },
+} as const;
+
+type RppView = keyof typeof RPP_VIEWS;
+
+function isRppView(value: string | string[] | undefined): value is RppView {
+  return typeof value === "string" && value in RPP_VIEWS;
+}
 
 function fmtDate(value: unknown) {
   if (!value || typeof value !== "string") return "-";
@@ -103,10 +120,12 @@ function outOfScopeOperation(row: { blocks: string[]; reasons: string[]; rppPosi
   return { label: "確認候補", className: "status-hold", note: "人が確認。" };
 }
 
-export default async function RppPage() {
-  const [data, meta, targetData, autoSettingsData, experimentHistory, exclusionJobs, budgetData, strategyData, dailyActuals, auditEvents] = await Promise.all([
+export default async function RppPage({ searchParams }: { searchParams: Promise<{ view?: string | string[] }> }) {
+  const requestedView = (await searchParams).view;
+  const view: RppView = isRppView(requestedView) ? requestedView : "dashboard";
+  const [data, meta, targetData, autoSettingsData, experimentHistory, exclusionJobs, budgetData, strategyData, dailyActuals, auditEvents, anomalyData] = await Promise.all([
     readRppRecommendations(), readRppDashboardMeta(), readRppAlertTargets(), readRppAutoAdjustmentSettings(),
-    readRppExperimentHistory(), listRecentRppExclusionJobs(8), readRppBudgetSettings(), readRppStrategySettings(), readRppDailySpendActuals(), listRppAuditEvents(30),
+    readRppExperimentHistory(), listRecentRppExclusionJobs(8), readRppBudgetSettings(), readRppStrategySettings(), readRppDailySpendActuals(), listRppAuditEvents(30), readRppAnomalyComparison(),
   ]);
   const summary = data.summary as { generatedAt?: string; counts?: { raise?: number; lower?: number; hold?: number; ok?: number }; safety?: { productionChange?: boolean }; budgetMetrics?: RppBudgetMetrics } | null;
   const candidateTotal = (summary?.counts?.raise ?? 0) + (summary?.counts?.lower ?? 0);
@@ -122,14 +141,11 @@ export default async function RppPage() {
       <aside className="rpp-console-nav" aria-label="RPPメニュー">
         <div className="rpp-console-brand"><span>R</span><div><b>RPP CONTROL</b><small>atRise operations</small></div></div>
         <nav>
-          <a className="active" href="#rpp-dashboard">ダッシュボード</a>
-          <a href="#rpp-budget">予算管理</a>
-          <a href="#rpp-products">商品・キーワード</a>
-          <a href="#rpp-optimization">CPC最適化</a>
-          <a href="#rpp-experiments">実験トラッキング</a>
-          <a href="#rpp-target-form">運用モード設定</a>
-          <a href="#rpp-excluded">除外・保護リスト</a>
-          <a href="#rpp-data">データ・実行履歴</a>
+          {Object.entries(RPP_VIEWS).map(([key, item]) => (
+            <Link className={view === key ? "active" : ""} href={`/rpp?view=${key}`} aria-current={view === key ? "page" : undefined} key={key}>
+              {item.label}
+            </Link>
+          ))}
         </nav>
         <div className="rpp-console-safe"><b>提案のみ</b><small>RMSへ自動反映しません</small></div>
         <Link className="rpp-console-back" href="/">← 管理トップへ</Link>
@@ -137,9 +153,9 @@ export default async function RppPage() {
       <main className="page-shell rpp-console-main">
       <section className="hero section-heading rpp-console-hero" id="rpp-dashboard">
         <div>
-          <p className="eyebrow">Rakuten RPP / operations</p>
-          <h1>RPP広告運用候補</h1>
-          <p>担当別の商品/KW一覧から、目標設定・広告除外ON/OFF・RMS反映を確認します。</p>
+          <p className="eyebrow">Rakuten RPP / {view}</p>
+          <h1>{RPP_VIEWS[view].label}</h1>
+          <p>{RPP_VIEWS[view].description}</p>
         </div>
         <div className={`rpp-console-live ${meta.dataReady ? "" : "is-stale"}`}>
           <span />
@@ -147,26 +163,30 @@ export default async function RppPage() {
         </div>
       </section>
 
-      <section className="grid cards rpp-kpi-strip">
+      {view === "dashboard" ? <section className="grid cards rpp-kpi-strip" aria-label="RPP概要">
         <div className="card"><span>上げ候補</span><strong>{summary?.counts?.raise ?? 0}</strong></div>
         <div className="card"><span>下げ候補</span><strong>{summary?.counts?.lower ?? 0}</strong></div>
         <div className="card"><span>保留</span><strong>{decisionHoldRows.length}</strong></div>
         <div className="card"><span>対象外</span><strong>{outOfScopeRows.length}</strong></div>
         <div className="card"><span>RPP設定中</span><strong>{targetData.configuredTargets.length}</strong></div>
         <div className="card"><span>データ状態</span><strong className={meta.dataReady ? "ok-text" : "warn-text"}>{meta.dataReady ? "OK" : "要更新"}</strong></div>
-      </section>
+      </section> : null}
 
-      <RppBudgetPanel initialSettings={budgetData.settings} source={budgetData.source} metrics={{ ...(summary?.budgetMetrics ?? {}), dailyActuals }} />
-      <RppPeriodComparison />
-      <RppStrategyPanel initialSettings={strategyData.settings} source={strategyData.source} />
+      {view === "budget" ? <>
+        <RppBudgetPanel initialSettings={budgetData.settings} source={budgetData.source} metrics={{ ...(summary?.budgetMetrics ?? {}), dailyActuals }} />
+        <RppPeriodComparison />
+        <RppStrategyPanel initialSettings={strategyData.settings} source={strategyData.source} />
+      </> : null}
 
-      <section className="panel target-panel" id="rpp-products">
+      {view === "products" ? <section className="panel target-panel" id="rpp-products">
         <RppTargetSettings initialTargets={targetData.targets} configuredTargets={targetData.configuredTargets} exclusionProducts={targetData.exclusionProducts} recommendations={data.recommendations} initialExperiments={experimentHistory} />
-      </section>
+      </section> : null}
 
-      <div id="rpp-optimization"><RppAutoAdjustmentSettingsPanel initialSettings={autoSettingsData.settings} source={autoSettingsData.source} /></div>
+      {view === "alerts" ? <RppAnomalyAlertPanel {...anomalyData} /> : null}
 
-      <section className="panel history-panel compact-status-panel">
+      {view === "optimization" ? <div id="rpp-optimization"><RppAutoAdjustmentSettingsPanel initialSettings={autoSettingsData.settings} source={autoSettingsData.source} /></div> : null}
+
+      {view === "dashboard" ? <section className="panel history-panel compact-status-panel">
         <div className="section-heading compact-heading">
           <div>
             <h2>RMS除外アップロード状況</h2>
@@ -175,8 +195,9 @@ export default async function RppPage() {
           <span className={`status-pill ${latestExclusionJob ? jobStatusClass(latestExclusionJob.status) : "status-hold"}`}>{latestExclusionJob ? jobStatusLabel(latestExclusionJob.status) : "履歴なし"}</span>
         </div>
         {latestExclusionJob?.error ? <small className="warn-text">{latestExclusionJob.error}</small> : null}
-      </section>
+      </section> : null}
 
+      {view === "data" ? <>
       <details className="panel cron-panel admin-details">
         <summary>管理者用：朝cron実行結果</summary>
         <div className="section-heading compact-heading">
@@ -354,6 +375,7 @@ export default async function RppPage() {
           </table>
         ) : <p>CSV履歴はまだありません。</p>}
       </section>
+      </> : null}
       </main>
     </div>
   );
