@@ -105,6 +105,7 @@ const TARGETS_PATH = path.join(DATA_DIR, "rpp_alert_targets.json");
 const TARGETS_TABLE = "rpp_alert_targets";
 const ITEM_SETTINGS_PATH = path.join(RPP_PROJECT_DIR, "rpp_item_settings.csv");
 const KEYWORD_SETTINGS_PATH = path.join(RPP_PROJECT_DIR, "rpp_keyword_settings.csv");
+const EXCLUDE_ITEMS_PATH = path.join(RPP_PROJECT_DIR, "rpp_exclude_items.csv");
 const SNAPSHOT_TARGETS_PATH = path.join(process.cwd(), "src", "data", "rpp_configured_targets.json");
 const SNAPSHOT_EXCLUSION_PRODUCTS_PATH = path.join(process.cwd(), "src", "data", "rpp_exclusion_products.json");
 const SNAPSHOT_OWNER_MAP_PATH = path.join(process.cwd(), "src", "data", "rpp_owner_map.json");
@@ -485,9 +486,16 @@ async function deleteRawTarget(id: string) {
 }
 
 export async function readRppConfiguredTargets() {
-  const [itemRows, ownerMap, positionMap, exclusionOverrides] = await Promise.all([readCsv(ITEM_SETTINGS_PATH), readOwnerMap(), readConfiguredPositionMap(), readRppExclusionOverrides()]);
+  const [itemRows, keywordRows, excludeRows, ownerMap, positionMap, exclusionOverrides] = await Promise.all([
+    readCsv(ITEM_SETTINGS_PATH),
+    readCsv(KEYWORD_SETTINGS_PATH),
+    readCsv(EXCLUDE_ITEMS_PATH),
+    readOwnerMap(),
+    readConfiguredPositionMap(),
+    readRppExclusionOverrides(),
+  ]);
   const activeItems = new Map<string, { itemName: string; itemCpc: number | null; owner: string }>();
-  const excludedItems = new Set<string>();
+  const excludedItems = new Set(excludeRows.map((row) => cleanText(row["商品管理番号"]).toLowerCase()).filter(Boolean));
   for (const row of itemRows) {
     const itemCode = cleanText(row["商品管理番号"]).toLowerCase();
     const itemCpc = optionalNumber(row["商品CPC"]);
@@ -517,7 +525,6 @@ export async function readRppConfiguredTargets() {
     });
   }
 
-  const keywordRows = await readCsv(KEYWORD_SETTINGS_PATH);
   for (const row of keywordRows) {
     const itemCode = cleanText(row["商品管理番号"]).toLowerCase();
     const item = activeItems.get(itemCode);
