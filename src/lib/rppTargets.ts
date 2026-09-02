@@ -2,6 +2,7 @@ import { promises as fs } from "fs";
 import path from "path";
 import configuredTargetsSnapshot from "@/data/rpp_configured_targets.json";
 import { pool } from "@/lib/db";
+import { resolveKeywordTargetContext } from "@/lib/rppConfiguredTargetRules";
 import { readRppExclusionOverrides } from "@/lib/rppExclusionJobs";
 import type { RppOptimizationMode } from "@/lib/rppOptimization";
 import { readRppStrategySettings, resolveRppRoas } from "@/lib/rppStrategySettings";
@@ -486,11 +487,16 @@ async function deleteRawTarget(id: string) {
 export async function readRppConfiguredTargets() {
   const [itemRows, ownerMap, positionMap, exclusionOverrides] = await Promise.all([readCsv(ITEM_SETTINGS_PATH), readOwnerMap(), readConfiguredPositionMap(), readRppExclusionOverrides()]);
   const activeItems = new Map<string, { itemName: string; itemCpc: number | null; owner: string }>();
+  const excludedItems = new Set<string>();
   for (const row of itemRows) {
     const itemCode = cleanText(row["商品管理番号"]).toLowerCase();
     const itemCpc = optionalNumber(row["商品CPC"]);
     const excluded = exclusionOverrides[itemCode] ?? (cleanText(row["除外登録済み商品"]).toLowerCase() === "yes");
-    if (!itemCode || !itemCpc || excluded) continue;
+    if (!itemCode || !itemCpc) continue;
+    if (excluded) {
+      excludedItems.add(itemCode);
+      continue;
+    }
     activeItems.set(itemCode, { itemName: cleanText(row["商品名"]), itemCpc, owner: ownerMap[itemCode] || "担当未設定" });
   }
 
@@ -517,17 +523,25 @@ export async function readRppConfiguredTargets() {
     const item = activeItems.get(itemCode);
     const keyword = cleanText(row["キーワード"]);
     const keywordCpc = optionalNumber(row["キーワードCPC"]);
-    if (!item || !keyword || !keywordCpc) continue;
+    const context = resolveKeywordTargetContext({
+      itemCode,
+      rowItemName: cleanText(row["商品名"]),
+      rowItemCpc: optionalNumber(row["商品CPC"]),
+      activeItem: item,
+      ownerMap,
+      excluded: excludedItems.has(itemCode) || exclusionOverrides[itemCode] === true,
+    });
+    if (!context || !keyword || !keywordCpc) continue;
     const id = targetId(itemCode, keyword);
     configured.set(id, {
       id,
       itemCode,
-      itemName: item.itemName || cleanText(row["商品名"]),
+      itemName: context.itemName,
       keyword,
-      itemCpc: item.itemCpc,
+      itemCpc: context.itemCpc,
       keywordCpc,
       source: "キーワードCPC",
-      owner: item.owner,
+      owner: context.owner,
       ...positionMap[id],
     });
   }
