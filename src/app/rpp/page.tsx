@@ -174,20 +174,31 @@ export default async function RppPage({ searchParams }: { searchParams: Promise<
       </section> : null}
 
       {view === "guide" ?
-      <details className="panel rpp-view-guide" id="rpp-guide" open>
-        <summary>
-          <span><b>画面の見方</b><small>最初にここを確認</small></span>
-          <span className="status-pill status-approved">閲覧ガイド</span>
-        </summary>
-        <div className="rpp-guide-grid">
-          <div><b>1. 上部KPI</b><p>上げ・下げ・保留・対象外の件数と、データ状態を確認します。「要更新」の日は候補を反映しません。</p></div>
-          <div><b>2. 予算管理</b><p>月予算、消化率、月末着地を確認します。ここは監視専用で、RMS予算を自動変更しません。</p></div>
-          <div><b>3. 担当者別に見る</b><p>「商品・KW・実験」の担当者タブを選ぶと、その担当の商品・KWだけに絞れます。広告グループとの併用も可能です。</p></div>
-          <div><b>4. 商品・KW一覧</b><p>現CPC→提案CPC、ROAS、PC/SP順位、モード、保護状態を横1行で確認します。「設定」で右側の編集画面が開きます。</p></div>
-          <div><b>5. 状態の意味</b><p><span className="status-pill status-approved">上げ</span> 露出拡大候補　<span className="status-pill status-hold">保留</span> データ・条件待ち　<span className="status-pill approval-rejected">下げ/異常</span> 採算や鮮度を要確認</p></div>
-          <div><b>6. 反映前の確認</b><p>対象行、変更前後CPC、予測効果、rollbackを確認してから反映します。「提案のみ」の間はRMSへ自動反映されません。</p></div>
+      <section className="panel rpp-view-guide" id="rpp-guide">
+        <div className="rpp-guide-head">
+          <div><p className="eyebrow">RPP CONTROL / OPERATOR GUIDE</p><h2>このツールの使い方</h2><p>左メニューを上から順に確認し、担当商品を絞ってから設定・提案内容を判断します。</p></div>
+          <span className="status-pill status-approved">提案のみが基本</span>
         </div>
-      </details> : null}
+        <ol className="rpp-guide-flow" aria-label="基本操作フロー">
+          <li><b>1. 状態確認</b><span>ダッシュボードでデータ状態が「OK」か確認</span></li>
+          <li><b>2. 担当で絞る</b><span>商品・KW画面で担当タブと検索を使う</span></li>
+          <li><b>3. 判断する</b><span>CPC・ROAS・順位・保護状態を横1行で比較</span></li>
+          <li><b>4. 反映前確認</b><span>変更前後・対象行・戻し手段を確認</span></li>
+        </ol>
+        <div className="rpp-guide-grid">
+          <article><div><span>01</span><b>ダッシュボード</b></div><p>上げ・下げ・保留・対象外の件数とデータ状態を確認します。「要更新」の日は設定変更せず、データ更新を待ちます。</p><Link href="/rpp?view=dashboard">この画面を開く →</Link></article>
+          <article><div><span>02</span><b>予算管理</b></div><p>月予算、消化率、月末着地、期間比較を確認します。現段階は監視専用で、ここからRMS予算を自動変更しません。</p><Link href="/rpp?view=budget">この画面を開く →</Link></article>
+          <article className="rpp-guide-wide"><div><span>03</span><b>商品・KW・実験</b></div><p>①担当タブを選ぶ → ②商品番号・商品名・KWで検索 → ③現CPC、提案CPC、ROAS、PC/SP順位、運用モード、保護、配信状態を確認します。「設定」で右側の編集画面を開きます。</p><ul><li><b>商品CPC行：</b>CPC設定と商品単位の広告除外／再開を操作できます。</li><li><b>KWCPC行：</b>キーワードCPCを設定します。広告除外は商品単位のため、KWCPC行には除外操作がありません。</li><li><b>変更予定：</b>RMS反映前のローカル状態です。誤操作は同じ行の「戻す」で取り消します。</li></ul><Link href="/rpp?view=products">この画面を開く →</Link></article>
+          <article><div><span>04</span><b>異常アラート</b></div><p>CPC急騰、ROAS急落、広告費急増、データ欠損・鮮度・件数差を確認します。Chatworkは画面上ではDry Run固定です。</p><Link href="/rpp?view=alerts">この画面を開く →</Link></article>
+          <article><div><span>05</span><b>CPC最適化</b></div><p>最低CPC、上限、ROAS基準、1日変更幅などの提案ルールを確認します。設定は提案生成条件であり、RMSへ即時反映するものではありません。</p><Link href="/rpp?view=optimization">この画面を開く →</Link></article>
+          <article><div><span>06</span><b>実験の使い方</b></div><p>商品・KW画面の「設定」から順位目標または固定CPCと終了日を保存します。開始値と終了値を同じ指標で比較し、期限切れ後は提案を停止します。</p><Link href="/rpp?view=products">商品・KW・実験を開く →</Link></article>
+          <article><div><span>07</span><b>データ・実行履歴</b></div><p>同期ファイルの時刻、保留理由、対象外、監査ログ、RMS反映履歴を確認します。反映後は結果と読み戻しが一致しているか確認します。</p><Link href="/rpp?view=data">この画面を開く →</Link></article>
+        </div>
+        <div className="rpp-guide-safety">
+          <div><b>ステータスの見方</b><p><span className="status-pill status-approved">上げ／正常</span> 条件を満たす候補　<span className="status-pill status-hold">保留</span> データ・条件待ち　<span className="status-pill approval-rejected">下げ／異常</span> 採算・鮮度を要確認</p></div>
+          <div><b>本番反映前の必須確認</b><p>対象SKU/KW、変更前→変更後CPC、選択件数、予測効果、戻しCSVを確認します。RMS反映後は実行履歴と設定値の読み戻しが一致して初めて完了です。</p></div>
+        </div>
+      </section> : null}
 
       {view === "budget" ? <>
         <RppBudgetPanel initialSettings={budgetData.settings} source={budgetData.source} metrics={{ ...(summary?.budgetMetrics ?? {}), dailyActuals }} />
