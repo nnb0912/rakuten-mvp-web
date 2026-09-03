@@ -1,5 +1,6 @@
 import { spawn } from "child_process";
 import path from "path";
+import { requireRppRole } from "@/lib/rppRouteAuth";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -23,6 +24,8 @@ function runDryRun() {
 }
 
 export async function POST() {
+  const access = await requireRppRole("operator");
+  if (!access.ok) return access.response;
   const result = await runDryRun();
   if (result.code !== 0) {
     try {

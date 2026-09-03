@@ -1,4 +1,4 @@
-import { auth } from "@/auth";
+import { requireRppRole } from "@/lib/rppRouteAuth";
 import { appendRppAuditEvent } from "@/lib/rppAuditLog";
 import { evaluateChatworkDelivery, formatRppAnomalyMessage, type RppAnomaly } from "@/lib/rppAnomalyAlerts";
 
@@ -41,9 +41,12 @@ async function sendAndReadBack(message: string, token: string, room: string) {
 }
 
 export async function POST(request: Request) {
-  const session = await auth();
-  if (!session?.user?.email) return Response.json({ error: "unauthorized" }, { status: 401 });
+  const access = await requireRppRole("operator");
+  if (!access.ok) return access.response;
   const body = await request.json() as { anomalies?: unknown; send?: boolean };
+  if (body.send === true && access.role !== "admin") {
+    return Response.json({ error: "forbidden", requiredRole: "admin" }, { status: 403 });
+  }
   const anomalies = normalizeAnomalies(body.anomalies);
   const message = formatRppAnomalyMessage(anomalies);
   const token = process.env.CHATWORK_API_TOKEN ?? "";
@@ -51,16 +54,16 @@ export async function POST(request: Request) {
   const decision = evaluateChatworkDelivery({ requestedSend: body.send === true, sendEnabled: process.env.RPP_CHATWORK_SEND_ENABLED === "true", tokenPresent: Boolean(token), roomPresent: Boolean(room) });
   const operationId = crypto.randomUUID();
   if (!decision.canSend) {
-    await appendRppAuditEvent("ANOMALY_CHATWORK_PREVIEW", "Chatwork異常通知", { anomalyCount: anomalies.length, mode: decision.mode, reason: decision.reason, productionChange: false }, session.user.email, { operationId, status: decision.mode === "BLOCKED" ? "blocked" : "verified", productionChange: false, entityType: "notification" });
+    await appendRppAuditEvent("ANOMALY_CHATWORK_PREVIEW", "Chatwork異常通知", { anomalyCount: anomalies.length, mode: decision.mode, reason: decision.reason, productionChange: false }, access.email, { operationId, status: decision.mode === "BLOCKED" ? "blocked" : "verified", productionChange: false, entityType: "notification" });
     return Response.json({ ok: decision.mode === "DRY_RUN", sent: false, productionChange: false, ...decision, anomalyCount: anomalies.length, preview: message }, { status: decision.mode === "BLOCKED" ? 400 : 200 });
   }
   try {
     const result = await sendAndReadBack(message, token, room);
-    await appendRppAuditEvent("ANOMALY_CHATWORK_SENT", "Chatwork異常通知", { anomalyCount: anomalies.length, ...result, productionChange: false }, session.user.email, { operationId, status: "verified", productionChange: false, entityType: "notification" });
+    await appendRppAuditEvent("ANOMALY_CHATWORK_SENT", "Chatwork異常通知", { anomalyCount: anomalies.length, ...result, productionChange: false }, access.email, { operationId, status: "verified", productionChange: false, entityType: "notification" });
     return Response.json({ ok: true, sent: true, productionChange: false, mode: decision.mode, anomalyCount: anomalies.length, ...result });
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
-    await appendRppAuditEvent("ANOMALY_CHATWORK_FAILED", "Chatwork異常通知", { anomalyCount: anomalies.length, error: detail, productionChange: false }, session.user.email, { operationId, status: "failed", productionChange: false, entityType: "notification" });
+    await appendRppAuditEvent("ANOMALY_CHATWORK_FAILED", "Chatwork異常通知", { anomalyCount: anomalies.length, error: detail, productionChange: false }, access.email, { operationId, status: "failed", productionChange: false, entityType: "notification" });
     return Response.json({ ok: false, sent: false, productionChange: false, error: detail }, { status: 502 });
   }
 }

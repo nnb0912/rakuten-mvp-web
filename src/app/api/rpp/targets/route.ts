@@ -1,14 +1,19 @@
 import { deleteRppAlertTarget, readRppAlertTargets, seedMissingRppAlertTargets, upsertRppAlertTarget, type RppAlertTargetInput } from "@/lib/rppTargets";
+import { requireRppRole } from "@/lib/rppRouteAuth";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 export async function GET() {
+  const access = await requireRppRole("viewer");
+  if (!access.ok) return access.response;
   const data = await readRppAlertTargets();
   return Response.json(data);
 }
 
 export async function POST(request: Request) {
+  const access = await requireRppRole("operator");
+  if (!access.ok) return access.response;
   try {
     const body = (await request.json()) as (RppAlertTargetInput & { action?: string });
     if (body.action === "seedMissing") {
@@ -23,6 +28,8 @@ export async function POST(request: Request) {
 }
 
 export async function DELETE(request: Request) {
+  const access = await requireRppRole("operator");
+  if (!access.ok) return access.response;
   const { searchParams } = new URL(request.url);
   const id = searchParams.get("id");
   if (!id) return Response.json({ error: "id is required" }, { status: 400 });

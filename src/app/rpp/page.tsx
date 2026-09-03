@@ -17,6 +17,7 @@ import RppRemoveSettingCandidateExportButton from "./RppRemoveSettingCandidateEx
 import RppStrategyPanel from "./RppStrategyPanel";
 import RppTargetSettings from "./RppTargetSettings";
 
+import { RppInfoTip } from "./RppInfoTip";
 export const dynamic = "force-dynamic";
 
 const RPP_VIEWS = {
@@ -165,12 +166,12 @@ export default async function RppPage({ searchParams }: { searchParams: Promise<
       </section>
 
       {view === "dashboard" ? <section className="grid cards rpp-kpi-strip" aria-label="RPP概要">
-        <div className="card"><span>上げ候補</span><strong>{summary?.counts?.raise ?? 0}</strong></div>
-        <div className="card"><span>下げ候補</span><strong>{summary?.counts?.lower ?? 0}</strong></div>
-        <div className="card"><span>保留</span><strong>{decisionHoldRows.length}</strong></div>
-        <div className="card"><span>対象外</span><strong>{outOfScopeRows.length}</strong></div>
-        <div className="card"><span>RPP設定中</span><strong>{targetData.configuredTargets.length}</strong></div>
-        <div className="card"><span>データ状態</span><strong className={meta.dataReady ? "ok-text" : "warn-text"}>{meta.dataReady ? "OK" : "要更新"}</strong></div>
+        <div className="card"><span><RppInfoTip label="上げ候補" /></span><strong>{summary?.counts?.raise ?? 0}</strong></div>
+        <div className="card"><span><RppInfoTip label="下げ候補" /></span><strong>{summary?.counts?.lower ?? 0}</strong></div>
+        <div className="card"><span><RppInfoTip label="保留" /></span><strong>{decisionHoldRows.length}</strong></div>
+        <div className="card"><span><RppInfoTip label="対象外" /></span><strong>{outOfScopeRows.length}</strong></div>
+        <div className="card"><span><RppInfoTip label="RPP設定中" /></span><strong>{targetData.configuredTargets.length}</strong></div>
+        <div className="card"><span><RppInfoTip label="データ状態" /></span><strong className={meta.dataReady ? "ok-text" : "warn-text"}>{meta.dataReady ? "OK" : "要更新"}</strong></div>
       </section> : null}
 
       {view === "guide" ?
@@ -286,7 +287,7 @@ export default async function RppPage({ searchParams }: { searchParams: Promise<
         </div>
         {outOfScopeRows.length ? (
           <table className="wide-table hold-detail-table">
-            <thead><tr><th>商品/KW</th><th>運用候補</th><th>対象外理由</th><th>CPC/順位</th><th>実績</th></tr></thead>
+            <thead><tr><th><RppInfoTip label="商品/KW" /></th><th><RppInfoTip label="運用候補" /></th><th><RppInfoTip label="対象外理由" /></th><th><RppInfoTip label="CPC/順位" /></th><th><RppInfoTip label="実績" /></th></tr></thead>
             <tbody>
               {outOfScopeRows.map((row) => {
                 const operation = outOfScopeOperation(row);
@@ -329,7 +330,7 @@ export default async function RppPage({ searchParams }: { searchParams: Promise<
         </div>
         {decisionHoldRows.length ? (
           <table className="wide-table hold-detail-table">
-            <thead><tr><th>商品/KW</th><th>原因</th><th>CPC/順位</th><th>実績</th><th>次アクション</th></tr></thead>
+            <thead><tr><th><RppInfoTip label="商品/KW" /></th><th><RppInfoTip label="原因" /></th><th><RppInfoTip label="CPC/順位" /></th><th><RppInfoTip label="実績" /></th><th><RppInfoTip label="次アクション" /></th></tr></thead>
             <tbody>
               {decisionHoldRows.map((row) => {
                 const category = holdReasonCategory(row);
@@ -361,7 +362,7 @@ export default async function RppPage({ searchParams }: { searchParams: Promise<
 
       <section className="panel history-panel" id="rpp-audit">
         <h2>統合監査ログ</h2>
-        {auditEvents.length ? <table className="wide-table"><thead><tr><th>日時</th><th>イベント</th><th>対象</th><th>実行者</th><th>状態</th></tr></thead><tbody>{auditEvents.map((row) => <tr key={row.id}><td>{fmtDate(row.occurredAt)}</td><td><b>{row.eventType}</b></td><td>{row.entityId}</td><td><small>{row.actorId}</small></td><td><span className={`status-pill ${row.status === "failed" || row.status === "blocked" ? "approval-rejected" : "status-approved"}`}>{row.status}{row.productionChange ? " / 本番変更" : ""}</span></td></tr>)}</tbody></table> : <p>監査イベントはまだありません。</p>}
+        {auditEvents.length ? <table className="wide-table"><thead><tr><th><RppInfoTip label="日時" /></th><th><RppInfoTip label="イベント" /></th><th><RppInfoTip label="対象" /></th><th><RppInfoTip label="実行者" /></th><th><RppInfoTip label="状態" /></th></tr></thead><tbody>{auditEvents.map((row) => <tr key={row.id}><td>{fmtDate(row.occurredAt)}</td><td><b>{row.eventType}</b></td><td>{row.entityId}</td><td><small>{row.actorId}</small></td><td><span className={`status-pill ${row.status === "failed" || row.status === "blocked" ? "approval-rejected" : "status-approved"}`}>{row.status}{row.productionChange ? " / 本番変更" : ""}</span></td></tr>)}</tbody></table> : <p>監査イベントはまだありません。</p>}
         <small>追記専用。更新・削除はDBトリガーで拒否します。</small>
       </section>
 
@@ -369,7 +370,7 @@ export default async function RppPage({ searchParams }: { searchParams: Promise<
         <h2>RMS反映ログ</h2>
         {meta.applyHistory.length ? (
           <table className="wide-table">
-            <thead><tr><th>日時</th><th>結果</th><th>読戻し</th><th>件数</th><th>CSV/理由</th></tr></thead>
+            <thead><tr><th><RppInfoTip label="日時" /></th><th><RppInfoTip label="結果" /></th><th><RppInfoTip label="読戻し" /></th><th><RppInfoTip label="件数" /></th><th><RppInfoTip label="CSV/理由" /></th></tr></thead>
             <tbody>
               {meta.applyHistory.map((row, idx) => (
                 <tr key={`${asText(row.loggedAt)}-${idx}`}>
@@ -389,7 +390,7 @@ export default async function RppPage({ searchParams }: { searchParams: Promise<
         <h2>RMS反映/CSV履歴</h2>
         {meta.uploadHistory.length ? (
           <table className="wide-table">
-            <thead><tr><th>日時</th><th>種別</th><th>ファイル</th><th>サイズ</th></tr></thead>
+            <thead><tr><th><RppInfoTip label="日時" /></th><th><RppInfoTip label="種別" /></th><th><RppInfoTip label="ファイル" /></th><th><RppInfoTip label="サイズ" /></th></tr></thead>
             <tbody>
               {meta.uploadHistory.map((row) => (
                 <tr key={row.filePath}>
