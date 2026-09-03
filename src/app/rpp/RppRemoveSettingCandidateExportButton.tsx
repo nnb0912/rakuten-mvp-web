@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 
+import { RppInfoTip } from "./RppInfoTip";
 type ExportRow = {
   itemCode: string;
   keyword: string;
@@ -211,7 +212,7 @@ export default function RppRemoveSettingCandidateExportButton({ disabled = false
           <small>監査CSV: {result.auditCsv}</small>
           {result.rows?.length ? (
             <table className="mini-preview-table">
-              <thead><tr><th>操作</th><th>商品</th><th>KW</th><th>CPC/実績</th><th>順位</th></tr></thead>
+              <thead><tr><th><RppInfoTip label="操作" /></th><th><RppInfoTip label="商品" /></th><th><RppInfoTip label="KW" /></th><th><RppInfoTip label="CPC/実績" /></th><th><RppInfoTip label="順位" /></th></tr></thead>
               <tbody>
                 {result.rows.map((row) => (
                   <tr key={`${row.itemCode}-${row.keyword}`}>

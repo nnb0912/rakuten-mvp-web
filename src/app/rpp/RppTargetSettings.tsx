@@ -9,6 +9,7 @@ import { canOperateProductExclusion, deliveryLabel } from "@/lib/rppTargetUiRule
 import type { RppAlertTarget, RppConfiguredTarget, RppExclusionProduct, RppOperationPolicy, RppPositionGoal, RppProtectionType } from "@/lib/rppTargets";
 import type { RppExperimentRecord } from "@/lib/rppExperiments";
 
+import { RppInfoTip } from "./RppInfoTip";
 type Props = {
   initialTargets: RppAlertTarget[];
   configuredTargets: RppConfiguredTarget[];
@@ -663,8 +664,8 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
               <button className={tableStatusFilter === value ? "active" : ""} key={value} type="button" onClick={() => setTableStatusFilter(value)}>{label}</button>
             ))}
           </div>
-          <label className="compact-select">モード<select value={modeFilter} onChange={(event) => setModeFilter(event.target.value as "ALL" | RppOptimizationMode)}><option value="ALL">すべて</option><option value="ROAS">ROAS逆算</option><option value="POSITION">順位目標</option><option value="FIXED">CPC固定</option></select></label>
-          <label className="compact-select">保護<select value={protectionFilter} onChange={(event) => setProtectionFilter(event.target.value as "ALL" | RppProtectionType)}><option value="ALL">すべて</option><option value="NORMAL">通常</option><option value="BLOCK">ブロック</option><option value="WHITELIST">ホワイト</option><option value="LOCKED">変更不可</option><option value="FOCUS">注力</option></select></label>
+          <label className="compact-select"><RppInfoTip label="モード" /><select value={modeFilter} onChange={(event) => setModeFilter(event.target.value as "ALL" | RppOptimizationMode)}><option value="ALL">すべて</option><option value="ROAS">ROAS逆算</option><option value="POSITION">順位目標</option><option value="FIXED">CPC固定</option></select></label>
+          <label className="compact-select"><RppInfoTip label="保護" /><select value={protectionFilter} onChange={(event) => setProtectionFilter(event.target.value as "ALL" | RppProtectionType)}><option value="ALL">すべて</option><option value="NORMAL">通常</option><option value="BLOCK">ブロック</option><option value="WHITELIST">ホワイト</option><option value="LOCKED">変更不可</option><option value="FOCUS">注力</option></select></label>
           <button className="filter-clear" type="button" onClick={() => { setTableSearch(""); setTableStatusFilter("ALL"); setModeFilter("ALL"); setProtectionFilter("ALL"); setOwnerFilter("全て"); setGroupFilter("全て"); }}>条件クリア</button>
           <small>表示 {filteredConfiguredTargets.length} / {configuredTargets.length}件</small>
         </div>
@@ -675,10 +676,10 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
               <div className="optimization-flow" aria-label="最適化フロー"><span>分析</span><i>→</i><span>判断</span><i>→</i><span>提案</span></div>
             </div>
             <div className="optimization-summary-grid">
-              <span><small>候補</small><strong>{actionableOptimizationPreviews.length}件</strong></span>
-              <span><small>選択</small><strong>{selectedOptimizationPreviews.length}件</strong></span>
-              <span><small>予測広告費</small><strong>{yenNumber(selectedProjectedSpend)}</strong></span>
-              <span className={selectedSavings >= 0 ? "saving-positive" : "saving-negative"}><small>削減見込み</small><strong>{yenNumber(selectedSavings)}</strong></span>
+              <span><small><RppInfoTip label="候補" /></small><strong>{actionableOptimizationPreviews.length}件</strong></span>
+              <span><small><RppInfoTip label="選択" /></small><strong>{selectedOptimizationPreviews.length}件</strong></span>
+              <span><small><RppInfoTip label="予測広告費" /></small><strong>{yenNumber(selectedProjectedSpend)}</strong></span>
+              <span className={selectedSavings >= 0 ? "saving-positive" : "saving-negative"}><small><RppInfoTip label="削減見込み" /></small><strong>{yenNumber(selectedSavings)}</strong></span>
             </div>
           </div>
           <div className="product-list-actions">
@@ -691,17 +692,17 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
           <table className="adant-ops-table">
             <thead>
               <tr>
-                <th className="select-col">選択</th>
-                <th className="product-col">商品 / キーワード</th>
-                <th>担当 / G</th>
-                <th>実績</th>
-                <th>CPC</th>
-                <th>ROAS</th>
-                <th>検索順位</th>
-                <th>運用モード</th>
-                <th>保護</th>
-                <th>配信</th>
-                <th className="actions-col">操作</th>
+                <th className="select-col"><RppInfoTip label="選択" /></th>
+                <th className="product-col"><RppInfoTip label="商品 / キーワード" /></th>
+                <th><RppInfoTip label="担当 / G" /></th>
+                <th><RppInfoTip label="実績" /></th>
+                <th><RppInfoTip label="CPC" /></th>
+                <th><RppInfoTip label="ROAS" /></th>
+                <th><RppInfoTip label="検索順位" /></th>
+                <th><RppInfoTip label="運用モード" /></th>
+                <th><RppInfoTip label="保護" /></th>
+                <th><RppInfoTip label="配信" /></th>
+                <th className="actions-col"><RppInfoTip label="操作" /></th>
               </tr>
             </thead>
             <tbody>
@@ -813,7 +814,7 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
         {experiments.length ? (
           <div className="experiment-table-wrap">
             <table className="experiment-table">
-              <thead><tr><th>商品 / KW</th><th>モード・期間</th><th>開始値</th><th>終了値</th><th>状態</th><th>操作</th></tr></thead>
+              <thead><tr><th><RppInfoTip label="商品 / KW" /></th><th><RppInfoTip label="モード・期間" /></th><th><RppInfoTip label="開始値" /></th><th><RppInfoTip label="終了値" /></th><th><RppInfoTip label="状態" /></th><th><RppInfoTip label="操作" /></th></tr></thead>
               <tbody>{experiments.slice(0, 30).map((experiment) => (
                 <tr key={experiment.id}>
                   <td><b>{experiment.itemCode}</b><small>{experiment.keyword}</small></td>
@@ -835,11 +836,11 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
         <div className="rpp-drawer-body">
         <form className="target-form" onSubmit={saveTarget}>
           <div className="form-row two-cols">
-            <label>商品管理番号<input value={form.itemCode} onChange={(e) => patchForm("itemCode", e.target.value)} placeholder="r0606" required /></label>
-            <label>RPP設定KW<input value={form.keyword} onChange={(e) => patchForm("keyword", e.target.value)} placeholder="まな板 / 商品CPC" required /></label>
+            <label><RppInfoTip label="商品管理番号" /><input value={form.itemCode} onChange={(e) => patchForm("itemCode", e.target.value)} placeholder="r0606" required /></label>
+            <label><RppInfoTip label="RPP設定KW" /><input value={form.keyword} onChange={(e) => patchForm("keyword", e.target.value)} placeholder="まな板 / 商品CPC" required /></label>
           </div>
           <div className="target-form-field">
-            <span>検索調査キーワード</span>
+            <span><RppInfoTip label="検索調査キーワード" /></span>
             <div className="keyword-candidate-box">
               <b>KW候補</b>
               <div className="search-word-chips">
@@ -850,12 +851,12 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
             <small>候補はSEO検索対策KW・RPP設定KW・代表KWから表示します。複数KWは改行/カンマ区切りで保存できます。</small>
           </div>
           <div className="form-row two-cols">
-            <label>担当<input value={form.owner} onChange={(e) => patchForm("owner", e.target.value)} placeholder="森下" /></label>
-            <label>広告グループ<input list="rpp-ad-groups" value={form.adGroup} onChange={(e) => patchForm("adGroup", e.target.value)} placeholder="通常 / 注力 / 季節 / 利益重視" /></label>
+            <label><RppInfoTip label="担当" /><input value={form.owner} onChange={(e) => patchForm("owner", e.target.value)} placeholder="森下" /></label>
+            <label><RppInfoTip label="広告グループ" /><input list="rpp-ad-groups" value={form.adGroup} onChange={(e) => patchForm("adGroup", e.target.value)} placeholder="通常 / 注力 / 季節 / 利益重視" /></label>
             <datalist id="rpp-ad-groups">{adGroups.filter((g) => g !== "全て").map((g) => <option key={g} value={g} />)}</datalist>
           </div>
           <div className="form-row two-cols">
-            <label>保護区分
+            <label><RppInfoTip label="保護区分" />
               <select value={form.protectionType} onChange={(e) => patchForm("protectionType", e.target.value as RppProtectionType)}>
                 <option value="NORMAL">通常</option>
                 <option value="BLOCK">ブロック（完全対象外）</option>
@@ -864,10 +865,10 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
                 <option value="FOCUS">注力（上限内で積極運用）</option>
               </select>
             </label>
-            <label>保護理由<input value={form.lockReason} onChange={(e) => patchForm("lockReason", e.target.value)} placeholder="セール中 / 戦略商品 / 要確認" disabled={form.protectionType === "NORMAL"} /></label>
+            <label><RppInfoTip label="保護理由" /><input value={form.lockReason} onChange={(e) => patchForm("lockReason", e.target.value)} placeholder="セール中 / 戦略商品 / 要確認" disabled={form.protectionType === "NORMAL"} /></label>
           </div>
           <div className="form-row two-cols">
-            <label>運用方針
+            <label><RppInfoTip label="運用方針" />
               <select value={form.policy} onChange={(e) => patchForm("policy", e.target.value as RppOperationPolicy)}>
                 <option value="攻め">攻め</option>
                 <option value="維持">維持</option>
@@ -877,7 +878,7 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
             </label>
           </div>
           <div className="optimization-mode-selector">
-            <span>最適化モード</span>
+            <span><RppInfoTip label="最適化モード" /></span>
             <div className="optimization-mode-options">
               <button className={form.optimizationMode === "ROAS" ? "active mode-roas" : "mode-roas"} type="button" onClick={() => patchForm("optimizationMode", "ROAS")}><b>ROAS逆算</b><small>通常運用・利益重視</small></button>
               <button className={form.optimizationMode === "POSITION" ? "active mode-position" : "mode-position"} type="button" onClick={() => patchForm("optimizationMode", "POSITION")}><b>順位目標</b><small>PC/SP露出実験</small></button>
@@ -885,26 +886,26 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
             </div>
           </div>
           <div className="form-row three-cols optimization-mode-fields">
-            <label>固定CPC<input type="number" min="1" step="1" value={form.fixedCpc} onChange={(e) => patchForm("fixedCpc", e.target.value)} disabled={form.optimizationMode !== "FIXED"} placeholder="例 50" /></label>
-            <label>CPC上限<input type="number" min="1" step="1" value={form.maxCpc} onChange={(e) => patchForm("maxCpc", e.target.value)} placeholder="未設定なら安全幅のみ" /></label>
-            <label>実験終了日<input type="date" value={form.experimentEndDate} onChange={(e) => patchForm("experimentEndDate", e.target.value)} disabled={form.optimizationMode === "ROAS"} /></label>
+            <label><RppInfoTip label="固定CPC" /><input type="number" min="1" step="1" value={form.fixedCpc} onChange={(e) => patchForm("fixedCpc", e.target.value)} disabled={form.optimizationMode !== "FIXED"} placeholder="例 50" /></label>
+            <label><RppInfoTip label="CPC上限" /><input type="number" min="1" step="1" value={form.maxCpc} onChange={(e) => patchForm("maxCpc", e.target.value)} placeholder="未設定なら安全幅のみ" /></label>
+            <label><RppInfoTip label="実験終了日" /><input type="date" value={form.experimentEndDate} onChange={(e) => patchForm("experimentEndDate", e.target.value)} disabled={form.optimizationMode === "ROAS"} /></label>
           </div>
           <div className="form-row five-cols">
-            <label>CTR目標<input type="number" min="0" step="0.1" value={form.ctrGoal} onChange={(e) => patchForm("ctrGoal", e.target.value)} /></label>
-            <label>CVR目標<input type="number" min="0" step="0.1" value={form.cvrGoal} onChange={(e) => patchForm("cvrGoal", e.target.value)} /></label>
-            <label>目標ROAS<input type="number" min="0" step="10" value={form.roasFloor} onChange={(e) => patchForm("roasFloor", e.target.value)} /></label>
-            <label>PC検索位置目標
+            <label><RppInfoTip label="CTR目標" /><input type="number" min="0" step="0.1" value={form.ctrGoal} onChange={(e) => patchForm("ctrGoal", e.target.value)} /></label>
+            <label><RppInfoTip label="CVR目標" /><input type="number" min="0" step="0.1" value={form.cvrGoal} onChange={(e) => patchForm("cvrGoal", e.target.value)} /></label>
+            <label><RppInfoTip label="目標ROAS" /><input type="number" min="0" step="10" value={form.roasFloor} onChange={(e) => patchForm("roasFloor", e.target.value)} /></label>
+            <label><RppInfoTip label="PC検索位置目標" />
               <select value={form.pcPositionGoal} onChange={(e) => patchForm("pcPositionGoal", e.target.value as RppPositionGoal)}>
                 {PC_POSITION_GOAL_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
               </select>
             </label>
-            <label>SP検索位置目標
+            <label><RppInfoTip label="SP検索位置目標" />
               <select value={form.spPositionGoal} onChange={(e) => patchForm("spPositionGoal", e.target.value as RppPositionGoal)}>
                 {POSITION_GOAL_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
               </select>
             </label>
           </div>
-          <label>メモ<textarea value={form.note} onChange={(e) => patchForm("note", e.target.value)} placeholder="通常検索が強い場合はRPPは1ページ目内でOK、など" /></label>
+          <label><RppInfoTip label="メモ" /><textarea value={form.note} onChange={(e) => patchForm("note", e.target.value)} placeholder="通常検索が強い場合はRPPは1ページ目内でOK、など" /></label>
           <div className="inline-links form-actions">
             <button className="primary-button" disabled={busy} type="submit">目標を保存</button>
             <button className="secondary-button" disabled={busy} type="button" onClick={() => { setForm(blank); setFormDrawerOpen(false); }}>閉じる</button>

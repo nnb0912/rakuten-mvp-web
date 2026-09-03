@@ -3,6 +3,7 @@
 import { useState } from "react";
 import type { RppApprovalStatus, RppRecommendationWithApproval } from "@/lib/rppRecommendations";
 
+import { RppInfoTip } from "./RppInfoTip";
 type Props = {
   initialRows: RppRecommendationWithApproval[];
 };
@@ -56,13 +57,13 @@ export default function RppApprovalTable({ initialRows }: Props) {
       <table className="wide-table rpp-table">
         <thead>
           <tr>
-            <th>商品/KW</th>
-            <th>判定</th>
-            <th>CPC</th>
-            <th>実績</th>
-            <th>順位</th>
-            <th>ブロック理由</th>
-            <th>承認</th>
+            <th><RppInfoTip label="商品/KW" /></th>
+            <th><RppInfoTip label="判定" /></th>
+            <th><RppInfoTip label="CPC" /></th>
+            <th><RppInfoTip label="実績" /></th>
+            <th><RppInfoTip label="順位" /></th>
+            <th><RppInfoTip label="ブロック理由" /></th>
+            <th><RppInfoTip label="承認" /></th>
           </tr>
         </thead>
         <tbody>
