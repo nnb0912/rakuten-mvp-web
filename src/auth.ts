@@ -1,13 +1,6 @@
 import NextAuth from "next-auth";
 import { buildGoogleOAuthProvider } from "@/lib/googleOAuthProvider";
-import { decideAuthorization } from "@/lib/authAccess";
-
-const allowedEmails = new Set(
-  (process.env.AUTH_ALLOWED_EMAILS ?? "n.nb0912@gmail.com")
-    .split(",")
-    .map((email) => email.trim().toLowerCase())
-    .filter(Boolean),
-);
+import { decideAuthorization, getRppRoleForEmail } from "@/lib/authAccess";
 
 export const { handlers, auth, signIn, signOut } = NextAuth({
   trustHost: true,
@@ -27,8 +20,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       return false;
     },
     async signIn({ profile }) {
-      const email = profile?.email?.toLowerCase();
-      return Boolean(email && allowedEmails.has(email));
+      return getRppRoleForEmail(profile?.email) !== null;
     },
     async session({ session }) {
       return session;

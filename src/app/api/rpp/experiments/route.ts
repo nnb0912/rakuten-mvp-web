@@ -5,11 +5,14 @@ import {
   type FinishRppExperimentInput,
   type StartRppExperimentInput,
 } from "@/lib/rppExperiments";
+import { requireRppRole } from "@/lib/rppRouteAuth";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 export async function GET(request: Request) {
+  const access = await requireRppRole("viewer");
+  if (!access.ok) return access.response;
   try {
     const targetId = new URL(request.url).searchParams.get("targetId")?.trim() || undefined;
     const experiments = await readRppExperimentHistory({ targetId });
@@ -20,6 +23,8 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
+  const access = await requireRppRole("operator");
+  if (!access.ok) return access.response;
   try {
     const body = await request.json() as StartRppExperimentInput;
     const experiment = await startRppExperiment(body);
@@ -30,6 +35,8 @@ export async function POST(request: Request) {
 }
 
 export async function PATCH(request: Request) {
+  const access = await requireRppRole("operator");
+  if (!access.ok) return access.response;
   try {
     const body = await request.json() as FinishRppExperimentInput & { id?: string };
     const experiment = await finishRppExperiment(body.id || "", body);

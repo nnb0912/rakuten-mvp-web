@@ -1,4 +1,5 @@
 import { createRppExclusionJob } from "@/lib/rppExclusionJobs";
+import { requireRppRole } from "@/lib/rppRouteAuth";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -6,6 +7,8 @@ export const runtime = "nodejs";
 type ExclusionChange = { itemCode: string; currentExcluded: boolean; originalExcluded?: boolean };
 
 export async function POST(request: Request) {
+  const access = await requireRppRole("admin");
+  if (!access.ok) return access.response;
   try {
     const body = (await request.json()) as { changes?: ExclusionChange[]; execute?: boolean };
     const changes = (body.changes ?? []).filter((row) => row.itemCode && row.currentExcluded !== row.originalExcluded);

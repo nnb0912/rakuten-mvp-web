@@ -1,9 +1,12 @@
 import { readRppRecommendations, updateRppApproval, type RppApprovalStatus } from "@/lib/rppRecommendations";
+import { requireRppRole } from "@/lib/rppRouteAuth";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 
 export async function GET() {
+  const access = await requireRppRole("viewer");
+  if (!access.ok) return access.response;
   const data = await readRppRecommendations();
   return Response.json({
     source: data.filePath,
@@ -13,6 +16,8 @@ export async function GET() {
 }
 
 export async function PATCH(request: Request) {
+  const access = await requireRppRole("operator");
+  if (!access.ok) return access.response;
   const body = (await request.json()) as { id?: string; status?: RppApprovalStatus; note?: string };
   if (!body.id || !body.status) {
     return Response.json({ error: "id and status are required" }, { status: 400 });
