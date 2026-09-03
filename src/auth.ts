@@ -1,5 +1,6 @@
 import NextAuth from "next-auth";
 import { buildGoogleOAuthProvider } from "@/lib/googleOAuthProvider";
+import { decideAuthorization } from "@/lib/authAccess";
 
 const allowedEmails = new Set(
   (process.env.AUTH_ALLOWED_EMAILS ?? "n.nb0912@gmail.com")
@@ -18,9 +19,12 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
   },
   callbacks: {
     async authorized({ auth, request }) {
-      const pathname = request.nextUrl.pathname;
-      if (pathname.startsWith("/login")) return true;
-      return Boolean(auth?.user?.email);
+      const decision = decideAuthorization(request.nextUrl.pathname, auth?.user?.email);
+      if (decision === "allow") return true;
+      if (decision === "api-unauthorized") {
+        return Response.json({ error: "unauthorized" }, { status: 401 });
+      }
+      return false;
     },
     async signIn({ profile }) {
       const email = profile?.email?.toLowerCase();
