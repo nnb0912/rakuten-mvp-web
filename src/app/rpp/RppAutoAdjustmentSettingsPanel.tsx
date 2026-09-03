@@ -3,6 +3,7 @@
 import { useState, type FormEvent } from "react";
 import type { RppAutoAdjustmentSettings } from "@/lib/rppAutoAdjustmentSettings";
 
+import { RppInfoTip } from "./RppInfoTip";
 type Props = {
   initialSettings: RppAutoAdjustmentSettings;
   source: string;
@@ -100,22 +101,22 @@ export default function RppAutoAdjustmentSettingsPanel({ initialSettings, source
       {message ? <p className="success-box">{message}</p> : null}
       <form className="auto-adjust-form" onSubmit={save}>
         <div className="auto-switch-row">
-          <label className="checkbox-field"><input type="checkbox" checked={form.enabled} onChange={(e) => patch("enabled", e.target.checked)} /> 自動調整候補を有効化</label>
-          <label className="checkbox-field"><input type="checkbox" checked={form.itemEnabledDefault} onChange={(e) => patch("itemEnabledDefault", e.target.checked)} /> 商品CPCも候補化</label>
-          <label className="checkbox-field"><input type="checkbox" checked={form.keywordEnabledDefault} onChange={(e) => patch("keywordEnabledDefault", e.target.checked)} /> キーワードCPCを候補化</label>
+          <label className="checkbox-field"><input type="checkbox" checked={form.enabled} onChange={(e) => patch("enabled", e.target.checked)} /> <RppInfoTip label="自動調整候補を有効化" /></label>
+          <label className="checkbox-field"><input type="checkbox" checked={form.itemEnabledDefault} onChange={(e) => patch("itemEnabledDefault", e.target.checked)} /> <RppInfoTip label="商品CPCも候補化" /></label>
+          <label className="checkbox-field"><input type="checkbox" checked={form.keywordEnabledDefault} onChange={(e) => patch("keywordEnabledDefault", e.target.checked)} /> <RppInfoTip label="キーワードCPCを候補化" /></label>
         </div>
         <div className="form-row six-cols auto-number-grid">
-          <label>最低CPC<input type="number" min="1" value={form.floorCpc} onChange={(e) => patch("floorCpc", Number(e.target.value))} /></label>
-          <label>商品CPC上限<input type="number" min="1" value={form.itemCpcMax} onChange={(e) => patch("itemCpcMax", Number(e.target.value))} /></label>
-          <label>KW CPC上限<input type="number" min="1" value={form.keywordCpcMax} onChange={(e) => patch("keywordCpcMax", Number(e.target.value))} /></label>
-          <label>1日最大上げ<input type="number" min="0" value={form.maxRaisePerDay} onChange={(e) => patch("maxRaisePerDay", Number(e.target.value))} /></label>
-          <label>1日最大下げ<input type="number" min="0" value={form.maxLowerPerDay} onChange={(e) => patch("maxLowerPerDay", Number(e.target.value))} /></label>
-          <label>ROAS最低<input type="number" min="0" step="10" value={form.roasFloor} onChange={(e) => patch("roasFloor", Number(e.target.value))} /></label>
+          <label><RppInfoTip label="最低CPC" /><input type="number" min="1" value={form.floorCpc} onChange={(e) => patch("floorCpc", Number(e.target.value))} /></label>
+          <label><RppInfoTip label="商品CPC上限" /><input type="number" min="1" value={form.itemCpcMax} onChange={(e) => patch("itemCpcMax", Number(e.target.value))} /></label>
+          <label><RppInfoTip label="KW CPC上限" /><input type="number" min="1" value={form.keywordCpcMax} onChange={(e) => patch("keywordCpcMax", Number(e.target.value))} /></label>
+          <label><RppInfoTip label="1日最大上げ" /><input type="number" min="0" value={form.maxRaisePerDay} onChange={(e) => patch("maxRaisePerDay", Number(e.target.value))} /></label>
+          <label><RppInfoTip label="1日最大下げ" /><input type="number" min="0" value={form.maxLowerPerDay} onChange={(e) => patch("maxLowerPerDay", Number(e.target.value))} /></label>
+          <label><RppInfoTip label="ROAS最低" /><input type="number" min="0" step="10" value={form.roasFloor} onChange={(e) => patch("roasFloor", Number(e.target.value))} /></label>
         </div>
         <div className="auto-switch-row guard-row">
-          <label className="checkbox-field"><input type="checkbox" checked={form.onlyRaiseWhenPageOut} onChange={(e) => patch("onlyRaiseWhenPageOut", e.target.checked)} /> 上げは検索位置が悪い時だけ</label>
-          <label className="checkbox-field"><input type="checkbox" checked={form.excludeChangeLocked} onChange={(e) => patch("excludeChangeLocked", e.target.checked)} /> 変更不可リストは除外</label>
-          <label className="checkbox-field"><input type="checkbox" checked={form.excludeRmsExcluded} onChange={(e) => patch("excludeRmsExcluded", e.target.checked)} /> RMS除外中商品は除外</label>
+          <label className="checkbox-field"><input type="checkbox" checked={form.onlyRaiseWhenPageOut} onChange={(e) => patch("onlyRaiseWhenPageOut", e.target.checked)} /> <RppInfoTip label="上げは検索位置が悪い時だけ" /></label>
+          <label className="checkbox-field"><input type="checkbox" checked={form.excludeChangeLocked} onChange={(e) => patch("excludeChangeLocked", e.target.checked)} /> <RppInfoTip label="変更不可リストは除外" /></label>
+          <label className="checkbox-field"><input type="checkbox" checked={form.excludeRmsExcluded} onChange={(e) => patch("excludeRmsExcluded", e.target.checked)} /> <RppInfoTip label="RMS除外中商品は除外" /></label>
         </div>
         <div className="inline-links form-actions">
           <button className="primary-button" disabled={busy} type="submit">ルール保存</button>

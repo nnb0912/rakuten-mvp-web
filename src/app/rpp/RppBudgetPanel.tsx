@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import { calculateRppDailyBudgetPlan } from "@/lib/rppBudgetPlan";
 import type { RppBudgetMetrics, RppBudgetSettings } from "@/lib/rppBudgetSettings";
 
+import { RppInfoTip } from "./RppInfoTip";
 type Props = { initialSettings: RppBudgetSettings; metrics: RppBudgetMetrics | null; source: string };
 const yen = (value: number) => `${Math.round(value).toLocaleString("ja-JP")}円`;
 const stateLabel = { future: "予定", ok: "計画内", over: "超過", under: "未消化", unmeasured: "実績未同期" } as const;
@@ -50,11 +51,11 @@ export default function RppBudgetPanel({ initialSettings, metrics, source }: Pro
     </div>
     {editing ? <div className="budget-editor-wrap">
       <div className="budget-editor">
-        <label>当月予算<input type="number" min="0" value={draft.monthlyBudget} onChange={(event) => setDraft({ ...draft, monthlyBudget: Number(event.target.value) })} /></label>
-        <label>翌月予算<input type="number" min="0" value={draft.nextMonthBudget} onChange={(event) => setDraft({ ...draft, nextMonthBudget: Number(event.target.value) })} /></label>
-        <label>警告ライン<input type="number" min="1" max="200" value={draft.warningPercent} onChange={(event) => setDraft({ ...draft, warningPercent: Number(event.target.value) })} /><small>%</small></label>
-        <label>目標ROAS<input type="number" min="0" value={draft.targetRoas} onChange={(event) => setDraft({ ...draft, targetRoas: Number(event.target.value) })} /><small>%</small></label>
-        <label>日別配分<select value={draft.allocationMode} onChange={(event) => setDraft({ ...draft, allocationMode: event.target.value === "MANUAL" ? "MANUAL" : "FLAT" })}><option value="FLAT">均等配分</option><option value="MANUAL">手動比率</option></select></label>
+        <label><RppInfoTip label="当月予算" /><input type="number" min="0" value={draft.monthlyBudget} onChange={(event) => setDraft({ ...draft, monthlyBudget: Number(event.target.value) })} /></label>
+        <label><RppInfoTip label="翌月予算" /><input type="number" min="0" value={draft.nextMonthBudget} onChange={(event) => setDraft({ ...draft, nextMonthBudget: Number(event.target.value) })} /></label>
+        <label><RppInfoTip label="警告ライン" /><input type="number" min="1" max="200" value={draft.warningPercent} onChange={(event) => setDraft({ ...draft, warningPercent: Number(event.target.value) })} /><small>%</small></label>
+        <label><RppInfoTip label="目標ROAS" /><input type="number" min="0" value={draft.targetRoas} onChange={(event) => setDraft({ ...draft, targetRoas: Number(event.target.value) })} /><small>%</small></label>
+        <label><RppInfoTip label="日別配分" /><select value={draft.allocationMode} onChange={(event) => setDraft({ ...draft, allocationMode: event.target.value === "MANUAL" ? "MANUAL" : "FLAT" })}><option value="FLAT">均等配分</option><option value="MANUAL">手動比率</option></select></label>
         <label className="budget-check"><input type="checkbox" checked={draft.redistributeRemaining} onChange={(event) => setDraft({ ...draft, redistributeRemaining: event.target.checked })} />実績同期後、残予算を残日へ再配分</label>
         <button className="primary-button compact-button" disabled={busy} type="button" onClick={save}>保存</button>
         <small>RMS反映 OFF（サーバー固定）</small>
@@ -65,17 +66,17 @@ export default function RppBudgetPanel({ initialSettings, metrics, source }: Pro
     </div> : null}
     {message ? <p className="budget-message">{message}</p> : null}
     <div className="budget-metric-grid">
-      <span><small>月予算</small><strong>{settings.monthlyBudget ? yen(settings.monthlyBudget) : "未設定"}</strong></span>
-      <span><small>7日広告費</small><strong>{yen(spend)}</strong></span>
-      <span><small>日平均</small><strong>{yen(metrics?.dailyAverage ?? 0)}</strong></span>
-      <span className={status.tone === "danger" ? "metric-danger" : ""}><small>月末着地予測</small><strong>{yen(projection)}</strong></span>
-      <span><small>予算消化予測</small><strong>{usage == null ? "-" : `${Math.round(usage * 10) / 10}%`}</strong></span>
-      <span><small>実績ROAS</small><strong>{metrics?.roas == null ? "-" : `${Math.round(metrics.roas)}%`}</strong></span>
+      <span><small><RppInfoTip label="月予算" /></small><strong>{settings.monthlyBudget ? yen(settings.monthlyBudget) : "未設定"}</strong></span>
+      <span><small><RppInfoTip label="7日広告費" /></small><strong>{yen(spend)}</strong></span>
+      <span><small><RppInfoTip label="日平均" /></small><strong>{yen(metrics?.dailyAverage ?? 0)}</strong></span>
+      <span className={status.tone === "danger" ? "metric-danger" : ""}><small><RppInfoTip label="月末着地予測" /></small><strong>{yen(projection)}</strong></span>
+      <span><small><RppInfoTip label="予算消化予測" /></small><strong>{usage == null ? "-" : `${Math.round(usage * 10) / 10}%`}</strong></span>
+      <span><small><RppInfoTip label="実績ROAS" /></small><strong>{metrics?.roas == null ? "-" : `${Math.round(metrics.roas)}%`}</strong></span>
     </div>
     <div className="budget-progress"><i style={{ width: `${Math.min(100, usage ?? 0)}%` }} className={status.tone} /></div>
     <details className="budget-daily-details">
       <summary>日別計画・実績 <small>{settings.allocationMode === "FLAT" ? "均等配分" : "手動配分"} / 翌月 {settings.nextMonthBudget ? yen(settings.nextMonthBudget) : "未設定"}</small></summary>
-      <div className="budget-daily-scroll"><table className="budget-daily-table"><thead><tr><th>日</th><th>配分</th><th>日予算</th><th>実績</th><th>差額</th><th>累計計画</th><th>状態</th></tr></thead><tbody>
+      <div className="budget-daily-scroll"><table className="budget-daily-table"><thead><tr><th><RppInfoTip label="日" /></th><th><RppInfoTip label="配分" /></th><th><RppInfoTip label="日予算" /></th><th><RppInfoTip label="実績" /></th><th><RppInfoTip label="差額" /></th><th><RppInfoTip label="累計計画" /></th><th><RppInfoTip label="状態" /></th></tr></thead><tbody>
         {visiblePlan.map((row) => <tr key={row.date}><td>{row.day}日</td><td>{row.weightPercent}%</td><td>{yen(row.plannedBudget)}</td><td>{row.actualSpend == null ? "-" : yen(row.actualSpend)}</td><td>{row.variance == null ? "-" : `${row.variance > 0 ? "+" : ""}${yen(row.variance)}`}</td><td>{yen(row.cumulativePlan)}</td><td><span className={`budget-day-state ${row.state}`}>{stateLabel[row.state]}</span></td></tr>)}
       </tbody></table></div>
       {!metrics?.dailyActuals?.length ? <p className="budget-source-warning">日別実績CSVは未接続です。現在は計画のみ表示し、実績・差額を推測しません。</p> : null}
