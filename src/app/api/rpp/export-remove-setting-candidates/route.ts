@@ -1,6 +1,7 @@
 import { spawn } from "child_process";
 import fs from "fs";
 import path from "path";
+import { requireRppRole } from "@/lib/rppRouteAuth";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -36,6 +37,8 @@ function writeHistory(history: unknown[]) {
 }
 
 export async function GET() {
+  const access = await requireRppRole("viewer");
+  if (!access.ok) return access.response;
   try {
     return Response.json({ ok: true, productionChange: false, history: readHistory() });
   } catch (e) {
@@ -44,6 +47,8 @@ export async function GET() {
 }
 
 export async function POST() {
+  const access = await requireRppRole("operator");
+  if (!access.ok) return access.response;
   const result = await runExport();
   if (result.code !== 0) {
     return Response.json({ ok: false, error: result.stderr || result.stdout, code: result.code }, { status: 500 });
@@ -57,6 +62,8 @@ export async function POST() {
 }
 
 export async function DELETE() {
+  const access = await requireRppRole("operator");
+  if (!access.ok) return access.response;
   try {
     const history = readHistory();
     if (!history.length) return Response.json({ ok: true, productionChange: false, history: [] });
