@@ -1,5 +1,6 @@
 import { timingSafeEqual } from "crypto";
 import { readLatestRppDashboardSnapshot, saveRppDashboardSnapshot } from "@/lib/rppDashboardSnapshots";
+import { readRppAlertTargets } from "@/lib/rppTargets";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -16,6 +17,11 @@ function authorized(request: Request) {
 export async function GET(request: Request) {
   if (!authorized(request)) return Response.json({ error: "unauthorized" }, { status: 401 });
   try {
+    const { searchParams } = new URL(request.url);
+    if (searchParams.get("resource") === "targets") {
+      const data = await readRppAlertTargets();
+      return Response.json({ ok: true, targets: data.targets, updatedAt: new Date().toISOString() });
+    }
     const snapshot = await readLatestRppDashboardSnapshot();
     return Response.json({ ok: true, snapshot });
   } catch (error) {
