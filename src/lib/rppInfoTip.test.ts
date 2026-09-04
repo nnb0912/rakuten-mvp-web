@@ -40,11 +40,28 @@ test("RPPの主要KPIと設定項目にも説明アイコンがある", () => {
 
 test("説明アイコンはhover・キーボード・タッチ確認に対応する", () => {
   const component = readFileSync(join(rppDir, "RppInfoTip.tsx"), "utf8");
-  const css = readFileSync(join(process.cwd(), "src", "app", "globals.css"), "utf8");
   assert.match(component, /tabIndex=\{0\}/);
   assert.match(component, /aria-label=/);
   assert.match(component, /title=\{description\}/);
   assert.match(component, /role="tooltip"/);
-  assert.match(css, /\.rpp-info-tip:hover \.rpp-info-popover/);
-  assert.match(css, /\.rpp-info-tip:focus \.rpp-info-popover/);
+  assert.match(component, /onMouseEnter=/);
+  assert.match(component, /onFocus=/);
+  assert.match(component, /onClick=/);
+});
+
+test("説明はbody直下の固定レイヤーに出し、表や画面端で切れない", () => {
+  const component = readFileSync(join(rppDir, "RppInfoTip.tsx"), "utf8");
+  const css = readFileSync(join(process.cwd(), "src", "app", "globals.css"), "utf8");
+  assert.match(component, /createPortal/);
+  assert.match(component, /document\.body/);
+  assert.match(component, /Math\.min/);
+  assert.match(component, /Math\.max/);
+  assert.match(css, /\.rpp-info-popover\s*\{[^}]*position:\s*fixed/s);
+});
+
+test("狭幅でもADant型一覧の判断列を隠さず、表内横スクロールにする", () => {
+  const css = readFileSync(join(process.cwd(), "src", "app", "globals.css"), "utf8");
+  assert.doesNotMatch(css, /\.adant-ops-table th:nth-child\(3\)[^{]*\{\s*display:\s*none/s);
+  assert.match(css, /@media \(max-width: 760px\)[\s\S]*\.optimization-summary-grid\s*\{[^}]*display:\s*flex[^}]*overflow-x:\s*auto/s);
+  assert.match(css, /@media \(max-width: 760px\)[\s\S]*\.adant-ops-table \.product-col\s*\{[^}]*position:\s*static/s);
 });

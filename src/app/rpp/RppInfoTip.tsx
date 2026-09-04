@@ -1,3 +1,8 @@
+"use client";
+
+import { useEffect, useId, useRef, useState, type CSSProperties } from "react";
+import { createPortal } from "react-dom";
+
 const HELP = {
   "選択": "CPC提案CSVに含める行を選びます。選択しただけではRMSへ反映されません。",
   "商品 / キーワード": "商品管理番号、RPP設定キーワード、商品名を表示します。商品CPCは商品単位、キーワードCPCはキーワード単位の設定です。",
@@ -111,13 +116,78 @@ export type RppHelpLabel = keyof typeof HELP;
 
 export function RppInfoTip({ label }: { label: RppHelpLabel }) {
   const description = HELP[label];
+  const triggerRef = useRef<HTMLSpanElement>(null);
+  const tooltipId = useId();
+  const [open, setOpen] = useState(false);
+  const [position, setPosition] = useState<{ left: number; top: number; placement: "above" | "below" } | null>(null);
+
+  function updatePosition() {
+    const trigger = triggerRef.current;
+    if (!trigger) return;
+    const rect = trigger.getBoundingClientRect();
+    const viewportMargin = 12;
+    const tooltipWidth = Math.min(320, window.innerWidth - viewportMargin * 2);
+    const centeredLeft = rect.left + rect.width / 2;
+    const left = Math.min(
+      Math.max(centeredLeft, viewportMargin + tooltipWidth / 2),
+      window.innerWidth - viewportMargin - tooltipWidth / 2,
+    );
+    const estimatedHeight = 104;
+    const placement = rect.bottom + estimatedHeight > window.innerHeight && rect.top > estimatedHeight ? "above" : "below";
+    const top = placement === "above" ? rect.top - 8 : rect.bottom + 8;
+    setPosition({ left, top, placement });
+  }
+
+  function show() {
+    updatePosition();
+    setOpen(true);
+  }
+
+  useEffect(() => {
+    if (!open) return;
+    const reposition = () => updatePosition();
+    const closeOutside = (event: PointerEvent) => {
+      if (!triggerRef.current?.contains(event.target as Node)) setOpen(false);
+    };
+    window.addEventListener("resize", reposition);
+    window.addEventListener("scroll", reposition, true);
+    document.addEventListener("pointerdown", closeOutside);
+    return () => {
+      window.removeEventListener("resize", reposition);
+      window.removeEventListener("scroll", reposition, true);
+      document.removeEventListener("pointerdown", closeOutside);
+    };
+  }, [open]);
+
+  const tooltipStyle = position ? ({
+    left: position.left,
+    top: position.top,
+    "--rpp-tooltip-shift": position.placement === "above" ? "-100%" : "0%",
+  } as CSSProperties) : undefined;
+
   return (
     <span className="rpp-help-label">
       <span>{label}</span>
-      <span className="rpp-info-tip" tabIndex={0} aria-label={`${label}の説明: ${description}`} title={description}>
+      <span
+        ref={triggerRef}
+        className="rpp-info-tip"
+        tabIndex={0}
+        aria-label={`${label}の説明: ${description}`}
+        aria-describedby={open ? tooltipId : undefined}
+        title={description}
+        onMouseEnter={show}
+        onMouseLeave={() => setOpen(false)}
+        onFocus={show}
+        onBlur={() => setOpen(false)}
+        onClick={show}
+        onKeyDown={(event) => { if (event.key === "Escape") setOpen(false); }}
+      >
         <span aria-hidden="true">i</span>
-        <span className="rpp-info-popover" role="tooltip">{description}</span>
       </span>
+      {open && position ? createPortal(
+        <span id={tooltipId} className="rpp-info-popover" role="tooltip" style={tooltipStyle}>{description}</span>,
+        document.body,
+      ) : null}
     </span>
   );
 }
