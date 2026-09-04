@@ -22,12 +22,12 @@ export const dynamic = "force-dynamic";
 
 const RPP_VIEWS = {
   dashboard: { label: "ダッシュボード", description: "候補件数とデータ状態を確認します。" },
-  guide: { label: "画面の見方", description: "担当別の確認手順と安全な操作方法を説明します。" },
   budget: { label: "予算管理", description: "予算進捗・期間比較・運用戦略を確認します。" },
   products: { label: "商品・KW・実験", description: "商品/KWの目標設定・除外・実験を操作します。" },
   alerts: { label: "異常アラート", description: "CPC・ROAS・広告費・データ異常を確認します。" },
   optimization: { label: "CPC最適化", description: "自動調整ルールと安全設定を確認します。" },
   data: { label: "データ・実行履歴", description: "データ鮮度・保留理由・監査ログを確認します。" },
+  guide: { label: "画面の見方", description: "担当別の確認手順と安全な操作方法を説明します。" },
 } as const;
 
 type RppView = keyof typeof RPP_VIEWS;

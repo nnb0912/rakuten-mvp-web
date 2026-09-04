@@ -573,7 +573,7 @@ small { color: var(--muted); line-height: 1.45; }
 .optimization-preview-title { display: none; }
 .optimization-preview-main { display: block; }
 .optimization-summary-grid { margin-top: 0; }
-.optimization-summary-grid span { padding: 4px 8px; }
+.optimization-summary-grid > span { padding: 4px 8px; }
 .adant-ops-table thead th { position: sticky; top: 0; z-index: 4; }
 .adant-ops-table .select-col { position: sticky; left: 0; z-index: 5; width: 46px; min-width: 46px; background: #f8fafc; }
 .adant-ops-table .product-col { position: sticky; left: 46px; z-index: 5; width: 245px; min-width: 245px; background: #fff; box-shadow: 8px 0 12px -12px #334155; }

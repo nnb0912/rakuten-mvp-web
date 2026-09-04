@@ -65,3 +65,15 @@ test("狭幅でもADant型一覧の判断列を隠さず、表内横スクロー
   assert.match(css, /@media \(max-width: 760px\)[\s\S]*\.optimization-summary-grid\s*\{[^}]*display:\s*flex[^}]*overflow-x:\s*auto/s);
   assert.match(css, /@media \(max-width: 760px\)[\s\S]*\.adant-ops-table \.product-col\s*\{[^}]*position:\s*static/s);
 });
+
+test("最適化サマリーのカード装飾を説明アイコン内部へ波及させない", () => {
+  const css = readFileSync(join(process.cwd(), "src", "app", "globals.css"), "utf8");
+  assert.doesNotMatch(css, /\.optimization-summary-grid span\s*\{[^}]*padding:/s);
+  assert.match(css, /\.optimization-summary-grid > span\s*\{[^}]*padding:/s);
+});
+
+test("画面の見方はRPPメニューの一番下に置く", () => {
+  const page = readFileSync(join(rppDir, "page.tsx"), "utf8");
+  const views = page.slice(page.indexOf("const RPP_VIEWS"), page.indexOf("} as const;"));
+  assert.ok(views.indexOf("data:") < views.indexOf("guide:"), "画面の見方がメニュー末尾ではありません");
+});
