@@ -4,13 +4,17 @@ import { pool } from "./db.ts";
 export type RppSnapshotFile = { name: string; exists: boolean; mtime: string | null; size: number };
 export type RppPerformanceDailyRow = { itemCode: string; ctr: number | null; clicks: number; spend: number; sales12h: number; orders12h: number; sales720h: number; orders720h: number };
 export type RppPerformanceDaily = { source: string; sourceMtime: string; date: string; attribution: { sales12h: true; sales720h: true }; rows: RppPerformanceDailyRow[] };
+export type RppSnapshotConfiguredTarget = { id: string; itemCode: string; itemName: string; keyword: string; itemCpc: number | null; keywordCpc: number | null; source: "商品CPC" | "キーワードCPC"; owner?: string; rppPosition?: string; rppPositionKeyword?: string; rppPositions?: { keyword: string; position: string }[] };
+export type RppSnapshotExclusionProduct = { itemCode: string; itemName: string; itemCpc: number | null; excluded: boolean; owner?: string };
+export type RppSnapshotOperationalData = { configuredTargets: RppSnapshotConfiguredTarget[]; exclusionProducts: RppSnapshotExclusionProduct[]; owners: string[] };
 export type RppDashboardSnapshot = {
-  schemaVersion: 1 | 2;
+  schemaVersion: 1 | 2 | 3;
   syncedAt: string;
   recommendations: { summary: Record<string, unknown>; recommendations: Record<string, unknown>[] };
   latestFiles: RppSnapshotFile[];
   cronStatus?: Record<string, unknown> | null;
   performanceDaily?: RppPerformanceDaily | null;
+  rppData?: RppSnapshotOperationalData | null;
 };
 const TABLE = "rpp_dashboard_snapshots";
 const PERFORMANCE_TABLE = "rpp_performance_daily";
@@ -33,6 +37,32 @@ function normalizePerformanceDaily(value: unknown): RppPerformanceDaily | null {
   return { source: input.source, sourceMtime: new Date(input.sourceMtime).toISOString(), date, attribution: { sales12h: true, sales720h: true }, rows };
 }
 
+function nullablePositiveNumber(value: unknown) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
+function normalizeOperationalData(value: unknown): RppSnapshotOperationalData | null {
+  if (value == null) return null;
+  if (!value || typeof value !== "object") throw new Error("rppData must be an object");
+  const input = value as Partial<RppSnapshotOperationalData>;
+  if (!Array.isArray(input.configuredTargets) || !Array.isArray(input.exclusionProducts) || !Array.isArray(input.owners)) throw new Error("rppData arrays are required");
+  const configuredTargets = input.configuredTargets.map((raw) => {
+    const itemCode = String(raw?.itemCode ?? "").trim().toLowerCase();
+    const keyword = String(raw?.keyword ?? "").trim();
+    const source: RppSnapshotConfiguredTarget["source"] | null = raw?.source === "キーワードCPC" ? "キーワードCPC" : raw?.source === "商品CPC" ? "商品CPC" : null;
+    if (!itemCode || !keyword || !source) throw new Error("rppData configured target is invalid");
+    return { id: String(raw.id ?? "").trim(), itemCode, itemName: String(raw.itemName ?? "").trim(), keyword, itemCpc: nullablePositiveNumber(raw.itemCpc), keywordCpc: nullablePositiveNumber(raw.keywordCpc), source, owner: String(raw.owner ?? "").trim() || "担当未設定" };
+  });
+  const exclusionProducts = input.exclusionProducts.map((raw) => {
+    const itemCode = String(raw?.itemCode ?? "").trim().toLowerCase();
+    if (!itemCode) throw new Error("rppData exclusion product itemCode is required");
+    return { itemCode, itemName: String(raw.itemName ?? "").trim(), itemCpc: nullablePositiveNumber(raw.itemCpc), excluded: raw.excluded === true, owner: String(raw.owner ?? "").trim() || "担当未設定" };
+  });
+  const owners = [...new Set(input.owners.map((owner) => String(owner ?? "").trim()).filter((owner) => owner && owner !== "なし"))];
+  return { configuredTargets, exclusionProducts, owners };
+}
+
 export function normalizeRppDashboardSnapshot(value: unknown): RppDashboardSnapshot {
   if (!value || typeof value !== "object") throw new Error("snapshot payload is required");
   const input = value as Partial<RppDashboardSnapshot>;
@@ -45,7 +75,8 @@ export function normalizeRppDashboardSnapshot(value: unknown): RppDashboardSnaps
     return { name: file.name, exists: file.exists === true, mtime: typeof file.mtime === "string" ? file.mtime : null, size: Number.isFinite(Number(file.size)) ? Number(file.size) : 0 };
   });
   const performanceDaily = normalizePerformanceDaily(input.performanceDaily);
-  return { schemaVersion: performanceDaily ? 2 : 1, syncedAt, recommendations: { summary: input.recommendations.summary && typeof input.recommendations.summary === "object" ? input.recommendations.summary : {}, recommendations: input.recommendations.recommendations }, latestFiles, cronStatus: input.cronStatus && typeof input.cronStatus === "object" ? input.cronStatus : null, performanceDaily };
+  const rppData = normalizeOperationalData(input.rppData);
+  return { schemaVersion: rppData ? 3 : performanceDaily ? 2 : 1, syncedAt, recommendations: { summary: input.recommendations.summary && typeof input.recommendations.summary === "object" ? input.recommendations.summary : {}, recommendations: input.recommendations.recommendations }, latestFiles, cronStatus: input.cronStatus && typeof input.cronStatus === "object" ? input.cronStatus : null, performanceDaily, rppData };
 }
 
 async function ensureTables(client: Pool | PoolClient | null = pool) {

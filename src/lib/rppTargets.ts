@@ -6,6 +6,7 @@ import { resolveKeywordTargetContext } from "@/lib/rppConfiguredTargetRules";
 import { readRppExclusionOverrides } from "@/lib/rppExclusionJobs";
 import type { RppOptimizationMode } from "@/lib/rppOptimization";
 import { readRppStrategySettings, resolveRppRoas } from "@/lib/rppStrategySettings";
+import { readLatestRppDashboardSnapshot } from "@/lib/rppDashboardSnapshots";
 
 export type RppPositionGoal = "FIRST_PAGE" | "TOP_7" | "TOP_5" | "TOP_3";
 export type RppOperationPolicy = "攻め" | "維持" | "テスト" | "停止候補";
@@ -259,6 +260,11 @@ async function readOwnerMap(): Promise<Record<string, string>> {
   } catch {
     return {};
   }
+}
+
+async function readRppOwnerNames() {
+  const ownerMap = await readOwnerMap();
+  return [...new Set(Object.values(ownerMap).map(cleanText).filter((owner) => owner && owner !== "なし"))].sort((a, b) => a.localeCompare(b, "ja"));
 }
 
 async function readConfiguredPositionMap(): Promise<Record<string, { rppPosition?: string; rppPositionKeyword?: string; rppPositions?: { keyword: string; position: string }[] }>> {
@@ -556,6 +562,10 @@ export async function readRppConfiguredTargets() {
   const liveRows = [...configured.values()].sort((a, b) => a.itemCode.localeCompare(b.itemCode, "ja") || a.keyword.localeCompare(b.keyword, "ja"));
   if (liveRows.length) return liveRows;
   try {
+    const syncedRows = (await readLatestRppDashboardSnapshot())?.rppData?.configuredTargets ?? [];
+    if (syncedRows.length) return syncedRows
+      .filter((row) => !exclusionOverrides[row.itemCode.trim().toLowerCase()])
+      .sort((a, b) => a.itemCode.localeCompare(b.itemCode, "ja") || a.keyword.localeCompare(b.keyword, "ja"));
     const envTargets = process.env.RPP_CONFIGURED_TARGETS_JSON;
     if (envTargets) {
       const snapshot = JSON.parse(envTargets) as { targets?: RppConfiguredTarget[] } | RppConfiguredTarget[];
@@ -574,23 +584,34 @@ export async function readRppConfiguredTargets() {
 }
 
 export async function readRppExclusionProducts(): Promise<RppExclusionProduct[]> {
-  const [itemRows, ownerMap, exclusionOverrides] = await Promise.all([readCsv(ITEM_SETTINGS_PATH), readOwnerMap(), readRppExclusionOverrides()]);
-  const liveRows: RppExclusionProduct[] = [];
+  const [itemRows, keywordRows, excludeRows, ownerMap, exclusionOverrides] = await Promise.all([readCsv(ITEM_SETTINGS_PATH), readCsv(KEYWORD_SETTINGS_PATH), readCsv(EXCLUDE_ITEMS_PATH), readOwnerMap(), readRppExclusionOverrides()]);
+  const excludedItems = new Set(excludeRows.map((row) => cleanText(row["商品管理番号"]).toLowerCase()).filter(Boolean));
+  const liveProducts = new Map<string, RppExclusionProduct>();
   for (const row of itemRows) {
     const itemCode = cleanText(row["商品管理番号"]).toLowerCase();
-    const itemCpc = optionalNumber(row["商品CPC"]);
-    if (!itemCode || !itemCpc) continue;
-    liveRows.push({
+    if (!itemCode) continue;
+    liveProducts.set(itemCode, {
       itemCode,
       itemName: cleanText(row["商品名"]),
-      itemCpc,
-      excluded: exclusionOverrides[itemCode] ?? (cleanText(row["除外登録済み商品"]).toLowerCase() === "yes"),
+      itemCpc: optionalNumber(row["商品CPC"]),
+      excluded: exclusionOverrides[itemCode] ?? (excludedItems.has(itemCode) || cleanText(row["除外登録済み商品"]).toLowerCase() === "yes"),
       owner: ownerMap[itemCode] || "担当未設定",
     });
   }
-  liveRows.sort((a, b) => a.itemCode.localeCompare(b.itemCode, "ja"));
+  for (const row of keywordRows) {
+    const itemCode = cleanText(row["商品管理番号"]).toLowerCase();
+    if (!itemCode || liveProducts.has(itemCode)) continue;
+    liveProducts.set(itemCode, { itemCode, itemName: cleanText(row["商品名"]), itemCpc: optionalNumber(row["商品CPC"]), excluded: exclusionOverrides[itemCode] ?? excludedItems.has(itemCode), owner: ownerMap[itemCode] || "担当未設定" });
+  }
+  for (const itemCode of excludedItems) {
+    if (liveProducts.has(itemCode)) continue;
+    liveProducts.set(itemCode, { itemCode, itemName: "", itemCpc: null, excluded: exclusionOverrides[itemCode] ?? true, owner: ownerMap[itemCode] || "担当未設定" });
+  }
+  const liveRows = [...liveProducts.values()].sort((a, b) => a.itemCode.localeCompare(b.itemCode, "ja"));
   if (liveRows.length) return liveRows;
   try {
+    const syncedRows = (await readLatestRppDashboardSnapshot())?.rppData?.exclusionProducts ?? [];
+    if (syncedRows.length) return syncedRows.map((row) => ({ ...row, excluded: exclusionOverrides[row.itemCode.toLowerCase()] ?? row.excluded })).sort((a, b) => a.itemCode.localeCompare(b.itemCode, "ja"));
     const envProducts = process.env.RPP_EXCLUSION_PRODUCTS_JSON;
     if (envProducts) {
       const snapshot = JSON.parse(envProducts) as { products?: RppExclusionProduct[] } | RppExclusionProduct[];
@@ -605,7 +626,7 @@ export async function readRppExclusionProducts(): Promise<RppExclusionProduct[]>
 }
 
 export async function readRppAlertTargets() {
-  const [rawTargets, configuredTargets, exclusionProducts, strategy] = await Promise.all([readRawTargets(), readRppConfiguredTargets(), readRppExclusionProducts(), readRppStrategySettings()]);
+  const [rawTargets, configuredTargets, exclusionProducts, strategy, ownerNames] = await Promise.all([readRawTargets(), readRppConfiguredTargets(), readRppExclusionProducts(), readRppStrategySettings(), readRppOwnerNames()]);
   const targets = rawTargets.map((row) => {
     const resolution = resolveRppRoas(row.roasFloor, row.itemCode, row.adGroup, strategy.settings);
     return { ...row, roasFloor: resolution.effectiveRoasFloor, baseRoasFloor: resolution.baseRoasFloor, effectiveRoasFloor: resolution.effectiveRoasFloor, effectiveRoasSource: resolution.effectiveRoasSource, activeScheduleId: resolution.activeScheduleId };
@@ -619,6 +640,7 @@ export async function readRppAlertTargets() {
     configuredCount: configuredTargets.length,
     missingTargetCount: configuredTargets.filter((row) => !savedIds.has(row.id)).length,
     exclusionProducts,
+    ownerNames,
     exclusionCounts: {
       total: exclusionProducts.length,
       active: exclusionProducts.filter((row) => !row.excluded).length,
