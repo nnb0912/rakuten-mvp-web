@@ -14,6 +14,7 @@ type Props = {
   initialTargets: RppAlertTarget[];
   configuredTargets: RppConfiguredTarget[];
   exclusionProducts: RppExclusionProduct[];
+  ownerNames: string[];
   recommendations: RppRecommendationWithApproval[];
   initialExperiments: RppExperimentRecord[];
 };
@@ -167,7 +168,7 @@ function seoWordsForItem(itemCode: string) {
   return SEO_KEYWORDS[code] || SEO_KEYWORDS[code.toLowerCase()] || SEO_KEYWORDS[code.toUpperCase()] || [];
 }
 
-export default function RppTargetSettings({ initialTargets, configuredTargets, exclusionProducts, recommendations, initialExperiments }: Props) {
+export default function RppTargetSettings({ initialTargets, configuredTargets, exclusionProducts, ownerNames, recommendations, initialExperiments }: Props) {
   const [targets, setTargets] = useState(initialTargets);
   const [form, setForm] = useState<FormState>(blank);
   const [busy, setBusy] = useState(false);
@@ -281,8 +282,9 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
       }
     }
     for (const row of targets) ensure(row.owner || "担当未設定");
+    for (const owner of ownerNames) ensure(owner);
     return [...stats.values()].sort((a, b) => (a.owner === "担当未設定" ? -1 : b.owner === "担当未設定" ? 1 : a.owner.localeCompare(b.owner, "ja")));
-  }, [configuredTargets, recommendationMap, targetMap, targets, positionSnapshotMap]);
+  }, [configuredTargets, recommendationMap, targetMap, targets, positionSnapshotMap, ownerNames]);
   const exclusionRows = useMemo(() => baseExclusionProducts.map((row) => ({
     ...row,
     currentExcluded: exclusionOverrides[row.itemCode] ?? row.excluded,

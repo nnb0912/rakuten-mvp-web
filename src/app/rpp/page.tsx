@@ -219,7 +219,7 @@ export default async function RppPage({ searchParams }: { searchParams: Promise<
       </> : null}
 
       {view === "products" ? <section className="panel target-panel" id="rpp-products">
-        <RppTargetSettings initialTargets={targetData.targets} configuredTargets={targetData.configuredTargets} exclusionProducts={targetData.exclusionProducts} recommendations={data.recommendations} initialExperiments={experimentHistory} />
+        <RppTargetSettings initialTargets={targetData.targets} configuredTargets={targetData.configuredTargets} exclusionProducts={targetData.exclusionProducts} ownerNames={targetData.ownerNames} recommendations={data.recommendations} initialExperiments={experimentHistory} />
       </section> : null}
 
       {view === "alerts" ? <RppAnomalyAlertPanel {...anomalyData} /> : null}
