@@ -717,6 +717,15 @@ small { color: var(--muted); line-height: 1.45; }
 .rpp-guide-head h2, .rpp-guide-head p { margin: 2px 0; }
 .rpp-guide-head h2 { color: #172033; font-size: 20px; }
 .rpp-guide-head p { color: #526174; font-size: 12px; }
+.rpp-guide-video { display: grid; grid-template-columns: minmax(200px, 0.8fr) minmax(420px, 1.6fr) auto; align-items: center; gap: 18px; padding: 16px 18px; border-bottom: 1px solid #dbe3ec; background: #fff; }
+.rpp-guide-video-copy { display: grid; gap: 7px; min-width: 0; }
+.rpp-guide-video-copy > div { display: flex; align-items: center; gap: 9px; }
+.rpp-guide-video-copy b { color: #172033; font-size: 14px; }
+.rpp-guide-video-copy p { margin: 0; color: #526174; font-size: 12px; line-height: 1.6; }
+.rpp-guide-video-badge { padding: 4px 7px; border-radius: 999px; background: #172033; color: #fff; font-size: 10px; font-weight: 900; white-space: nowrap; }
+.rpp-guide-video video { display: block; width: 100%; max-height: 430px; border: 1px solid #cbd5e1; border-radius: 10px; background: #0f172a; }
+.rpp-guide-video > a { color: #1d4ed8; font-size: 11px; font-weight: 900; white-space: nowrap; }
+.rpp-guide-video > a:hover { text-decoration: underline; }
 .rpp-guide-flow { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 0; margin: 0; padding: 0; list-style: none; border-bottom: 1px solid #dbe3ec; background: #172033; }
 .rpp-guide-flow li { display: grid; gap: 3px; min-width: 0; padding: 12px 14px; border-right: 1px solid #334155; }
 .rpp-guide-flow li:last-child { border-right: 0; }
@@ -755,6 +764,8 @@ small { color: var(--muted); line-height: 1.45; }
   .budget-metric-grid strong { font-size: 15px; }
   .rpp-guide-head { align-items: flex-start; padding: 13px 12px; }
   .rpp-guide-head .status-pill { flex: 0 0 auto; }
+  .rpp-guide-video { grid-template-columns: 1fr; gap: 10px; padding: 12px; }
+  .rpp-guide-video > a { justify-self: start; }
   .rpp-guide-flow { grid-template-columns: 1fr 1fr; }
   .rpp-guide-flow li:nth-child(2) { border-right: 0; }
   .rpp-guide-flow li:nth-child(-n+2) { border-bottom: 1px solid #334155; }

@@ -77,3 +77,14 @@ test("画面の見方はRPPメニューの一番下に置く", () => {
   const views = page.slice(page.indexOf("const RPP_VIEWS"), page.indexOf("} as const;"));
   assert.ok(views.indexOf("data:") < views.indexOf("guide:"), "画面の見方がメニュー末尾ではありません");
 });
+
+test("画面の見方から使い方マニュアル動画を再生できる", () => {
+  const page = readFileSync(join(rppDir, "page.tsx"), "utf8");
+  const css = readFileSync(join(process.cwd(), "src", "app", "globals.css"), "utf8");
+  const video = join(process.cwd(), "public", "rpp", "manuals", "rpp-control-guide-v3.mp4");
+  assert.match(page, /<video[^>]*controls[^>]*playsInline/s);
+  assert.match(page, /src="\/rpp\/manuals\/rpp-control-guide-v3\.mp4"/);
+  assert.match(page, /使い方マニュアル動画/);
+  assert.match(css, /\.rpp-guide-video\s+video\s*\{[^}]*width:\s*100%/s);
+  assert.ok(readFileSync(video).length > 1_000_000, "動画ファイルが存在しないか小さすぎます");
+});
