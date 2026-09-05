@@ -56,20 +56,20 @@ test("説明はbody直下の固定レイヤーに出し、表や画面端で切�
   assert.match(component, /document\.body/);
   assert.match(component, /Math\.min/);
   assert.match(component, /Math\.max/);
-  assert.match(css, /\.rpp-info-popover\s*\{[^}]*position:\s*fixed/s);
+  assert.match(css, /\.rpp-info-popover\s*\{[^}]*position:\s*fixed/);
 });
 
 test("狭幅でもADant型一覧の判断列を隠さず、表内横スクロールにする", () => {
   const css = readFileSync(join(process.cwd(), "src", "app", "globals.css"), "utf8");
-  assert.doesNotMatch(css, /\.adant-ops-table th:nth-child\(3\)[^{]*\{\s*display:\s*none/s);
-  assert.match(css, /@media \(max-width: 760px\)[\s\S]*\.optimization-summary-grid\s*\{[^}]*display:\s*flex[^}]*overflow-x:\s*auto/s);
-  assert.match(css, /@media \(max-width: 760px\)[\s\S]*\.adant-ops-table \.product-col\s*\{[^}]*position:\s*static/s);
+  assert.doesNotMatch(css, /\.adant-ops-table th:nth-child\(3\)[^{]*\{\s*display:\s*none/);
+  assert.match(css, /@media \(max-width: 760px\)[\s\S]*\.optimization-summary-grid\s*\{[^}]*display:\s*flex[^}]*overflow-x:\s*auto/);
+  assert.match(css, /@media \(max-width: 760px\)[\s\S]*\.adant-ops-table \.product-col\s*\{[^}]*position:\s*static/);
 });
 
 test("最適化サマリーのカード装飾を説明アイコン内部へ波及させない", () => {
   const css = readFileSync(join(process.cwd(), "src", "app", "globals.css"), "utf8");
-  assert.doesNotMatch(css, /\.optimization-summary-grid span\s*\{[^}]*padding:/s);
-  assert.match(css, /\.optimization-summary-grid > span\s*\{[^}]*padding:/s);
+  assert.doesNotMatch(css, /\.optimization-summary-grid span\s*\{[^}]*padding:/);
+  assert.match(css, /\.optimization-summary-grid > span\s*\{[^}]*padding:/);
 });
 
 test("画面の見方はRPPメニューの一番下に置く", () => {
@@ -82,9 +82,9 @@ test("画面の見方から使い方マニュアル動画を再生できる", ()
   const page = readFileSync(join(rppDir, "page.tsx"), "utf8");
   const css = readFileSync(join(process.cwd(), "src", "app", "globals.css"), "utf8");
   const video = join(process.cwd(), "public", "rpp", "manuals", "rpp-control-guide-v4.mp4");
-  assert.match(page, /<video[^>]*controls[^>]*playsInline/s);
+  assert.match(page, /<video[^>]*controls[^>]*playsInline/);
   assert.match(page, /src="\/rpp\/manuals\/rpp-control-guide-v4\.mp4"/);
   assert.match(page, /全利用者向け 使い方マニュアル動画/);
-  assert.match(css, /\.rpp-guide-video\s+video\s*\{[^}]*width:\s*100%/s);
+  assert.match(css, /\.rpp-guide-video\s+video\s*\{[^}]*width:\s*100%/);
   assert.ok(readFileSync(video).length > 1_000_000, "動画ファイルが存在しないか小さすぎます");
 });

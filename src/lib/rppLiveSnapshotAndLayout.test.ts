@@ -27,6 +27,6 @@ test("products view receives the full owner directory and contains wide controls
   assert.match(component, /ownerNames: string\[\]/);
   assert.match(component, /for \(const owner of ownerNames\)/);
   assert.match(page, /ownerNames=\{targetData\.ownerNames\}/);
-  assert.match(css, /\.owner-filter-strip > \.owner-tabs:first-child\s*\{[^}]*min-width:\s*0[^}]*overflow-x:\s*auto/s);
-  assert.match(css, /\.adant-list-toolbar\s*\{[^}]*min-width:\s*0[^}]*overflow-x:\s*auto/s);
+  assert.match(css, /\.owner-filter-strip > \.owner-tabs:first-child\s*\{[^}]*min-width:\s*0[^}]*overflow-x:\s*auto/);
+  assert.match(css, /\.adant-list-toolbar\s*\{[^}]*min-width:\s*0[^}]*overflow-x:\s*auto/);
 });
