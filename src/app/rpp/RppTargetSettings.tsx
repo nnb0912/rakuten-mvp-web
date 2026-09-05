@@ -3,7 +3,14 @@
 import { useMemo, useState, type FormEvent } from "react";
 import configuredTargetsSnapshot from "@/data/rpp_configured_targets.json";
 import seoKeywords from "@/data/seo_keywords.json";
-import { buildRppOptimizationPreview, type RppOptimizationMode } from "@/lib/rppOptimization";
+import {
+  ROUTINE_OPTIMIZATION_MODES,
+  buildRppOptimizationPreview,
+  optimizationModeLabel,
+  requiresExperimentEndDate,
+  shouldCreateExperimentHistory,
+  type RppOptimizationMode,
+} from "@/lib/rppOptimization";
 import type { RppRecommendationWithApproval } from "@/lib/rppRecommendations";
 import { canOperateProductExclusion, deliveryLabel } from "@/lib/rppTargetUiRules";
 import type { RppAlertTarget, RppConfiguredTarget, RppExclusionProduct, RppOperationPolicy, RppPositionGoal, RppProtectionType } from "@/lib/rppTargets";
@@ -38,6 +45,12 @@ type FormState = {
   optimizationMode: RppOptimizationMode;
   fixedCpc: string;
   maxCpc: string;
+  roasMinCpc: string;
+  roasMaxCpc: string;
+  positionMinCpc: string;
+  positionMaxCpc: string;
+  balancedMinCpc: string;
+  balancedMaxCpc: string;
   experimentEndDate: string;
   note: string;
 };
@@ -61,6 +74,12 @@ const blank: FormState = {
   optimizationMode: "ROAS",
   fixedCpc: "",
   maxCpc: "",
+  roasMinCpc: "",
+  roasMaxCpc: "",
+  positionMinCpc: "",
+  positionMaxCpc: "",
+  balancedMinCpc: "",
+  balancedMaxCpc: "",
   experimentEndDate: "",
   note: "",
 };
@@ -85,6 +104,12 @@ function toForm(row: RppAlertTarget): FormState {
     optimizationMode: row.optimizationMode || "ROAS",
     fixedCpc: row.fixedCpc == null ? "" : String(row.fixedCpc),
     maxCpc: row.maxCpc == null ? "" : String(row.maxCpc),
+    roasMinCpc: row.roasMinCpc == null ? "" : String(row.roasMinCpc),
+    roasMaxCpc: row.roasMaxCpc == null ? "" : String(row.roasMaxCpc),
+    positionMinCpc: row.positionMinCpc == null ? "" : String(row.positionMinCpc),
+    positionMaxCpc: row.positionMaxCpc == null ? "" : String(row.positionMaxCpc),
+    balancedMinCpc: row.balancedMinCpc == null ? "" : String(row.balancedMinCpc),
+    balancedMaxCpc: row.balancedMaxCpc == null ? "" : String(row.balancedMaxCpc),
     experimentEndDate: row.experimentEndDate || "",
     note: row.note,
   };
@@ -101,11 +126,6 @@ function configuredToForm(row: RppConfiguredTarget): FormState {
   return { ...blank, itemCode: row.itemCode, keyword: row.keyword, searchKeywords: defaultSearchKeyword, owner: row.owner ?? "", adGroup: "通常" };
 }
 
-function optimizationModeLabel(mode: RppOptimizationMode) {
-  if (mode === "POSITION") return "順位目標";
-  if (mode === "FIXED") return "CPC固定";
-  return "ROAS逆算";
-}
 
 function experimentStatusLabel(status: RppExperimentRecord["status"]) {
   if (status === "COMPLETED") return "終了";
@@ -124,6 +144,15 @@ const POSITION_GOAL_OPTIONS: { value: RppPositionGoal; label: string }[] = [
   { value: "TOP_3", label: "RPP広告3位以内" },
 ];
 const PC_POSITION_GOAL_OPTIONS = POSITION_GOAL_OPTIONS.filter((option) => option.value !== "TOP_7");
+
+type ModeBoundField = "roasMinCpc" | "roasMaxCpc" | "positionMinCpc" | "positionMaxCpc" | "balancedMinCpc" | "balancedMaxCpc";
+
+function modeBoundFields(mode: RppOptimizationMode): { minimum: ModeBoundField; maximum: ModeBoundField } | null {
+  if (mode === "ROAS") return { minimum: "roasMinCpc", maximum: "roasMaxCpc" };
+  if (mode === "POSITION") return { minimum: "positionMinCpc", maximum: "positionMaxCpc" };
+  if (mode === "BALANCED") return { minimum: "balancedMinCpc", maximum: "balancedMaxCpc" };
+  return null;
+}
 
 function yen(value: number | null) {
   return value == null ? "-" : `${value.toLocaleString("ja-JP")}円`;
@@ -187,6 +216,8 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
   const [exclusionOverrides, setExclusionOverrides] = useState<Record<string, boolean>>({});
   const [selectedOptimizationIds, setSelectedOptimizationIds] = useState<Set<string>>(() => new Set());
   const [experiments, setExperiments] = useState<RppExperimentRecord[]>(initialExperiments);
+  const selectedModeBoundFields = modeBoundFields(form.optimizationMode);
+  const selectedRoutineMode = ROUTINE_OPTIMIZATION_MODES.find((option) => option.value === form.optimizationMode);
 
 
   async function refreshExperiments() {
@@ -244,6 +275,12 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
       positionSuggestedCpc: rec?.proposedCpc ?? null,
       fixedCpc: target?.fixedCpc ?? null,
       maxCpc: target?.maxCpc ?? null,
+      roasMinCpc: target?.roasMinCpc ?? null,
+      roasMaxCpc: target?.roasMaxCpc ?? null,
+      positionMinCpc: target?.positionMinCpc ?? null,
+      positionMaxCpc: target?.positionMaxCpc ?? null,
+      balancedMinCpc: target?.balancedMinCpc ?? null,
+      balancedMaxCpc: target?.balancedMaxCpc ?? null,
       changeLocked: target?.changeLocked,
       protectionType: target?.protectionType,
       experimentEndDate: target?.experimentEndDate,
@@ -482,8 +519,8 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
     setError(null);
     setMessage(null);
     try {
-      if (form.optimizationMode !== "ROAS" && !form.experimentEndDate) {
-        throw new Error("順位目標・CPC固定モードでは実験終了日が必須です");
+      if (requiresExperimentEndDate(form.optimizationMode) && !form.experimentEndDate) {
+        throw new Error("固定CPC実験では実験終了日が必須です");
       }
       const payload = {
         ...form,
@@ -495,11 +532,17 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
         roasFloor: Number(form.roasFloor),
         fixedCpc: form.fixedCpc.trim() ? Number(form.fixedCpc) : null,
         maxCpc: form.maxCpc.trim() ? Number(form.maxCpc) : null,
-        experimentStartedAt: form.optimizationMode === "ROAS" ? "" : (targetMap.get(`${encodeURIComponent(form.itemCode.toLowerCase())}__${encodeURIComponent(form.keyword)}`)?.experimentStartedAt || new Date().toISOString()),
+        roasMinCpc: form.roasMinCpc.trim() ? Number(form.roasMinCpc) : null,
+        roasMaxCpc: form.roasMaxCpc.trim() ? Number(form.roasMaxCpc) : null,
+        positionMinCpc: form.positionMinCpc.trim() ? Number(form.positionMinCpc) : null,
+        positionMaxCpc: form.positionMaxCpc.trim() ? Number(form.positionMaxCpc) : null,
+        balancedMinCpc: form.balancedMinCpc.trim() ? Number(form.balancedMinCpc) : null,
+        balancedMaxCpc: form.balancedMaxCpc.trim() ? Number(form.balancedMaxCpc) : null,
+        experimentStartedAt: shouldCreateExperimentHistory(form.optimizationMode) ? (targetMap.get(`${encodeURIComponent(form.itemCode.toLowerCase())}__${encodeURIComponent(form.keyword)}`)?.experimentStartedAt || new Date().toISOString()) : "",
         experimentBaseline: (() => {
           const id = `${encodeURIComponent(form.itemCode.toLowerCase())}__${encodeURIComponent(form.keyword)}`;
           const existing = targetMap.get(id)?.experimentBaseline;
-          if (form.optimizationMode === "ROAS") return null;
+          if (!shouldCreateExperimentHistory(form.optimizationMode)) return null;
           if (existing) return existing;
           const rec = recommendationMap.get(metricKey(form.itemCode, form.keyword));
           const position = rec?.rppPosition || "";
@@ -518,7 +561,7 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
         return [...next, data.target].sort((a, b) => a.itemCode.localeCompare(b.itemCode, "ja") || a.keyword.localeCompare(b.keyword, "ja"));
       });
       let historySaved = false;
-      if (payload.optimizationMode !== "ROAS" && payload.experimentBaseline) {
+      if (shouldCreateExperimentHistory(payload.optimizationMode) && payload.experimentBaseline) {
         const historyResponse = await fetch("/api/rpp/experiments", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -666,7 +709,7 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
               <button className={tableStatusFilter === value ? "active" : ""} key={value} type="button" onClick={() => setTableStatusFilter(value)}>{label}</button>
             ))}
           </div>
-          <label className="compact-select"><RppInfoTip label="モード" /><select value={modeFilter} onChange={(event) => setModeFilter(event.target.value as "ALL" | RppOptimizationMode)}><option value="ALL">すべて</option><option value="ROAS">ROAS逆算</option><option value="POSITION">順位目標</option><option value="FIXED">CPC固定</option></select></label>
+          <label className="compact-select"><RppInfoTip label="モード" /><select value={modeFilter} onChange={(event) => setModeFilter(event.target.value as "ALL" | RppOptimizationMode)}><option value="ALL">すべて</option>{ROUTINE_OPTIMIZATION_MODES.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}<option value="FIXED">固定CPC実験（旧設定）</option></select></label>
           <label className="compact-select"><RppInfoTip label="保護" /><select value={protectionFilter} onChange={(event) => setProtectionFilter(event.target.value as "ALL" | RppProtectionType)}><option value="ALL">すべて</option><option value="NORMAL">通常</option><option value="BLOCK">ブロック</option><option value="WHITELIST">ホワイト</option><option value="LOCKED">変更不可</option><option value="FOCUS">注力</option></select></label>
           <button className="filter-clear" type="button" onClick={() => { setTableSearch(""); setTableStatusFilter("ALL"); setModeFilter("ALL"); setProtectionFilter("ALL"); setOwnerFilter("全て"); setGroupFilter("全て"); }}>条件クリア</button>
           <small>表示 {filteredConfiguredTargets.length} / {configuredTargets.length}件</small>
@@ -806,7 +849,7 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
 
       <section className="panel experiment-history-panel" id="rpp-experiments">
         <div className="section-heading compact-heading">
-          <div><h2>実験トラッキング</h2><p>順位目標・CPC固定の開始値を保存し、終了時に同じ指標で比較します。</p></div>
+          <div><h2>実験トラッキング</h2><p>既存の検索順位実験・固定CPC実験履歴を、終了時の同じ指標と比較します。</p></div>
           <div className="experiment-summary">
             <span>実験中 <b>{experiments.filter((row) => row.status === "ACTIVE").length}</b></span>
             <span>終了実績待ち <b>{experiments.filter((row) => row.status === "EXPIRED").length}</b></span>
@@ -829,7 +872,7 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
               ))}</tbody>
             </table>
           </div>
-        ) : <p className="experiment-empty">順位目標またはCPC固定モードを保存すると、ここに開始スナップショットが追加されます。</p>}
+        ) : <p className="experiment-empty">保存済みの実験履歴はありません。通常運用の3モードでは実験履歴を作成しません。</p>}
       </section>
 
       {formDrawerOpen ? <button className="rpp-drawer-backdrop" aria-label="設定を閉じる" type="button" onClick={() => setFormDrawerOpen(false)} /> : null}
@@ -881,17 +924,19 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
           </div>
           <div className="optimization-mode-selector">
             <span><RppInfoTip label="最適化モード" /></span>
-            <div className="optimization-mode-options">
-              <button className={form.optimizationMode === "ROAS" ? "active mode-roas" : "mode-roas"} type="button" onClick={() => patchForm("optimizationMode", "ROAS")}><b>ROAS逆算</b><small>通常運用・利益重視</small></button>
-              <button className={form.optimizationMode === "POSITION" ? "active mode-position" : "mode-position"} type="button" onClick={() => patchForm("optimizationMode", "POSITION")}><b>順位目標</b><small>PC/SP露出実験</small></button>
-              <button className={form.optimizationMode === "FIXED" ? "active mode-fixed" : "mode-fixed"} type="button" onClick={() => patchForm("optimizationMode", "FIXED")}><b>CPC固定</b><small>サムネ等の効果検証</small></button>
+            <div className="optimization-mode-options" aria-label="通常運用モード">
+              {ROUTINE_OPTIMIZATION_MODES.map((option) => <button className={form.optimizationMode === option.value ? `active mode-${option.value.toLowerCase()}` : `mode-${option.value.toLowerCase()}`} key={option.value} type="button" onClick={() => patchForm("optimizationMode", option.value)}><b>{option.label}</b><small>{option.description}</small></button>)}
             </div>
+            {form.optimizationMode === "FIXED" ? <p className="legacy-mode-note">この対象は旧「固定CPC実験」設定です。履歴と設定値は保持されています。通常運用へ戻す場合は上の3モードから選んでください。</p> : null}
           </div>
-          <div className="form-row three-cols optimization-mode-fields">
-            <label><RppInfoTip label="固定CPC" /><input type="number" min="1" step="1" value={form.fixedCpc} onChange={(e) => patchForm("fixedCpc", e.target.value)} disabled={form.optimizationMode !== "FIXED"} placeholder="例 50" /></label>
-            <label><RppInfoTip label="CPC上限" /><input type="number" min="1" step="1" value={form.maxCpc} onChange={(e) => patchForm("maxCpc", e.target.value)} placeholder="未設定なら安全幅のみ" /></label>
-            <label><RppInfoTip label="実験終了日" /><input type="date" value={form.experimentEndDate} onChange={(e) => patchForm("experimentEndDate", e.target.value)} disabled={form.optimizationMode === "ROAS"} /></label>
-          </div>
+          {selectedModeBoundFields && selectedRoutineMode ? <div className="form-row two-cols optimization-mode-fields">
+            <label><RppInfoTip label="モード別CPC下限" /><input type="number" min="1" step="1" value={form[selectedModeBoundFields.minimum]} onChange={(e) => patchForm(selectedModeBoundFields.minimum, e.target.value)} placeholder="未設定なら楽天下限" /><small>{selectedRoutineMode.label}専用。楽天下限（商品20円 / KW40円）が優先されます。</small></label>
+            <label><RppInfoTip label="モード別CPC上限" /><input type="number" min="1" step="1" value={form[selectedModeBoundFields.maximum]} onChange={(e) => patchForm(selectedModeBoundFields.maximum, e.target.value)} placeholder={form.maxCpc ? `旧上限 ${form.maxCpc}円を適用中` : "未設定なら安全幅のみ"} /><small>{selectedRoutineMode.label}専用。未設定時は既存の旧上限を引き継ぎます。</small></label>
+          </div> : <div className="form-row three-cols optimization-mode-fields legacy-experiment-fields">
+            <label><RppInfoTip label="固定CPC" /><input type="number" value={form.fixedCpc} readOnly /></label>
+            <label><RppInfoTip label="旧CPC上限" /><input type="number" value={form.maxCpc} readOnly /></label>
+            <label><RppInfoTip label="実験終了日" /><input type="date" value={form.experimentEndDate} readOnly /></label>
+          </div>}
           <div className="form-row five-cols">
             <label><RppInfoTip label="CTR目標" /><input type="number" min="0" step="0.1" value={form.ctrGoal} onChange={(e) => patchForm("ctrGoal", e.target.value)} /></label>
             <label><RppInfoTip label="CVR目標" /><input type="number" min="0" step="0.1" value={form.cvrGoal} onChange={(e) => patchForm("cvrGoal", e.target.value)} /></label>
@@ -923,9 +968,11 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
             <li><b>担当別保存済み</b><small>{Object.entries(grouped).map(([owner, count]) => `${owner}:${count}`).join(" / ") || "未設定"}</small></li>
             <li><b>広告グループ</b><small>{adGroups.filter((g) => g !== "全て").join(" / ") || "通常"}</small></li>
             <li><b>4保護区分</b><small>ブロック=完全対象外 / ホワイト=除外保護 / 変更不可=CPC固定 / 注力=上限内で積極運用。</small></li>
-            <li><b>ROAS逆算</b><small>通常運用。目標ROASに近づくようCPCを逆算し、1回の変更を下限-50%・上限+20%に制限。</small></li>
-            <li><b>順位目標</b><small>既存のPC/SP検索順位提案を利用。CPC上限とROAS実績を併記して実験判断。</small></li>
-            <li><b>CPC固定</b><small>サムネ・商品名等の検証用。順位/CPC条件を固定し、CTR・CVR・ROASを比較。</small></li>
+            <li><b>ROASモード</b><small>目標ROASに近づくようCPCを逆算する通常運用です。</small></li>
+            <li><b>検索順位モード</b><small>既存のPC/SP検索順位提案を方向シグナルとして使う通常運用です。</small></li>
+            <li><b>バランスモード</b><small>ROASを採算ゲートにし、検索順位提案と組み合わせます。未達時は低い候補を選び、達成時の引き上げもROAS候補までに制限します。</small></li>
+            <li><b>モード別CPC範囲</b><small>3モードごとに下限・上限を保存します。商品20円・KW40円の楽天下限と1回の安全幅は常に優先されます。</small></li>
+            <li><b>固定CPC実験（旧設定）</b><small>既存レコードと履歴のみ表示・読込を継続します。通常運用モードの4つ目ではありません。</small></li>
           </ul>
         </div>
         </div>

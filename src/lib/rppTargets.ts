@@ -4,7 +4,7 @@ import configuredTargetsSnapshot from "@/data/rpp_configured_targets.json";
 import { pool } from "@/lib/db";
 import { resolveKeywordTargetContext } from "@/lib/rppConfiguredTargetRules";
 import { readRppExclusionOverrides } from "@/lib/rppExclusionJobs";
-import type { RppOptimizationMode } from "@/lib/rppOptimization";
+import { normalizeRppOptimizationMode, validateRppModeCpcBounds, type RppOptimizationMode } from "@/lib/rppOptimization";
 import { readRppStrategySettings, resolveRppRoas } from "@/lib/rppStrategySettings";
 import { readLatestRppDashboardSnapshot } from "@/lib/rppDashboardSnapshots";
 
@@ -45,6 +45,12 @@ export type RppAlertTarget = {
   optimizationMode: RppOptimizationMode;
   fixedCpc: number | null;
   maxCpc: number | null;
+  roasMinCpc: number | null;
+  roasMaxCpc: number | null;
+  positionMinCpc: number | null;
+  positionMaxCpc: number | null;
+  balancedMinCpc: number | null;
+  balancedMaxCpc: number | null;
   experimentEndDate: string;
   experimentStartedAt: string;
   experimentBaseline: RppExperimentBaseline | null;
@@ -94,6 +100,12 @@ export type RppAlertTargetInput = {
   optimizationMode?: RppOptimizationMode;
   fixedCpc?: number | null;
   maxCpc?: number | null;
+  roasMinCpc?: number | null;
+  roasMaxCpc?: number | null;
+  positionMinCpc?: number | null;
+  positionMaxCpc?: number | null;
+  balancedMinCpc?: number | null;
+  balancedMaxCpc?: number | null;
   experimentEndDate?: string;
   experimentStartedAt?: string;
   experimentBaseline?: RppExperimentBaseline | null;
@@ -113,7 +125,6 @@ const SNAPSHOT_OWNER_MAP_PATH = path.join(process.cwd(), "src", "data", "rpp_own
 
 const POSITION_GOALS: RppPositionGoal[] = ["FIRST_PAGE", "TOP_7", "TOP_5", "TOP_3"];
 const POLICIES: RppOperationPolicy[] = ["攻め", "維持", "テスト", "停止候補"];
-const OPTIMIZATION_MODES: RppOptimizationMode[] = ["ROAS", "POSITION", "FIXED"];
 const PROTECTION_TYPES: RppProtectionType[] = ["NORMAL", "BLOCK", "WHITELIST", "LOCKED", "FOCUS"];
 
 function cleanText(value: unknown) {
@@ -155,7 +166,16 @@ function normalizeInput(input: RppAlertTargetInput) {
   const pcPositionGoal = POSITION_GOALS.includes(input.pcPositionGoal as RppPositionGoal) ? input.pcPositionGoal as RppPositionGoal : positionGoal;
   const spPositionGoal = POSITION_GOALS.includes(input.spPositionGoal as RppPositionGoal) ? input.spPositionGoal as RppPositionGoal : positionGoal;
   const policy = POLICIES.includes(input.policy as RppOperationPolicy) ? input.policy as RppOperationPolicy : "維持";
-  const optimizationMode = OPTIMIZATION_MODES.includes(input.optimizationMode as RppOptimizationMode) ? input.optimizationMode as RppOptimizationMode : "ROAS";
+  const optimizationMode = normalizeRppOptimizationMode(input.optimizationMode);
+  const modeCpcBounds = {
+    roasMinCpc: optionalNumber(input.roasMinCpc),
+    roasMaxCpc: optionalNumber(input.roasMaxCpc),
+    positionMinCpc: optionalNumber(input.positionMinCpc),
+    positionMaxCpc: optionalNumber(input.positionMaxCpc),
+    balancedMinCpc: optionalNumber(input.balancedMinCpc),
+    balancedMaxCpc: optionalNumber(input.balancedMaxCpc),
+  };
+  validateRppModeCpcBounds(modeCpcBounds);
   const protectionType = PROTECTION_TYPES.includes(input.protectionType as RppProtectionType)
     ? input.protectionType as RppProtectionType
     : input.changeLocked ? "LOCKED" : "NORMAL";
@@ -179,6 +199,7 @@ function normalizeInput(input: RppAlertTargetInput) {
     optimizationMode,
     fixedCpc: optionalNumber(input.fixedCpc),
     maxCpc: optionalNumber(input.maxCpc),
+    ...modeCpcBounds,
     experimentEndDate: cleanText(input.experimentEndDate),
     experimentStartedAt: cleanText(input.experimentStartedAt),
     experimentBaseline: input.experimentBaseline && typeof input.experimentBaseline === "object" ? input.experimentBaseline : null,
@@ -192,9 +213,15 @@ function withOptimizationDefaults(row: RppAlertTarget): RppAlertTarget {
     changeLocked: row.changeLocked === true,
     lockReason: row.lockReason || "",
     protectionType: PROTECTION_TYPES.includes(row.protectionType) ? row.protectionType : row.changeLocked ? "LOCKED" : "NORMAL",
-    optimizationMode: row.optimizationMode || "ROAS",
+    optimizationMode: normalizeRppOptimizationMode(row.optimizationMode),
     fixedCpc: optionalNumber(row.fixedCpc),
     maxCpc: optionalNumber(row.maxCpc),
+    roasMinCpc: optionalNumber(row.roasMinCpc),
+    roasMaxCpc: optionalNumber(row.roasMaxCpc),
+    positionMinCpc: optionalNumber(row.positionMinCpc),
+    positionMaxCpc: optionalNumber(row.positionMaxCpc),
+    balancedMinCpc: optionalNumber(row.balancedMinCpc),
+    balancedMaxCpc: optionalNumber(row.balancedMaxCpc),
     experimentEndDate: row.experimentEndDate || "",
     experimentStartedAt: row.experimentStartedAt || "",
     experimentBaseline: row.experimentBaseline || null,
@@ -313,13 +340,19 @@ async function readRawTargets(): Promise<RppAlertTarget[]> {
       optimization_mode: RppOptimizationMode | null;
       fixed_cpc: string | number | null;
       max_cpc: string | number | null;
+      roas_min_cpc: string | number | null;
+      roas_max_cpc: string | number | null;
+      position_min_cpc: string | number | null;
+      position_max_cpc: string | number | null;
+      balanced_min_cpc: string | number | null;
+      balanced_max_cpc: string | number | null;
       experiment_end_date: string | null;
       experiment_started_at: string | null;
       experiment_baseline: RppExperimentBaseline | string | null;
       created_at: Date | string;
       updated_at: Date | string;
     }>(
-      `select id, item_code, keyword, owner, ctr_goal, cvr_goal, roas_floor, position_goal, pc_position_goal, sp_position_goal, policy, note, ad_group, change_locked, lock_reason, protection_type, search_keywords, optimization_mode, fixed_cpc, max_cpc, experiment_end_date, experiment_started_at, experiment_baseline, created_at, updated_at
+      `select id, item_code, keyword, owner, ctr_goal, cvr_goal, roas_floor, position_goal, pc_position_goal, sp_position_goal, policy, note, ad_group, change_locked, lock_reason, protection_type, search_keywords, optimization_mode, fixed_cpc, max_cpc, roas_min_cpc, roas_max_cpc, position_min_cpc, position_max_cpc, balanced_min_cpc, balanced_max_cpc, experiment_end_date, experiment_started_at, experiment_baseline, created_at, updated_at
        from ${TARGETS_TABLE}
        order by item_code asc, keyword asc`
     );
@@ -345,9 +378,15 @@ async function readRawTargets(): Promise<RppAlertTarget[]> {
         : typeof row.search_keywords === "string"
           ? JSON.parse(row.search_keywords)
           : [],
-      optimizationMode: OPTIMIZATION_MODES.includes(row.optimization_mode as RppOptimizationMode) ? row.optimization_mode as RppOptimizationMode : "ROAS",
+      optimizationMode: normalizeRppOptimizationMode(row.optimization_mode),
       fixedCpc: optionalNumber(row.fixed_cpc),
       maxCpc: optionalNumber(row.max_cpc),
+      roasMinCpc: optionalNumber(row.roas_min_cpc),
+      roasMaxCpc: optionalNumber(row.roas_max_cpc),
+      positionMinCpc: optionalNumber(row.position_min_cpc),
+      positionMaxCpc: optionalNumber(row.position_max_cpc),
+      balancedMinCpc: optionalNumber(row.balanced_min_cpc),
+      balancedMaxCpc: optionalNumber(row.balanced_max_cpc),
       experimentEndDate: row.experiment_end_date || "",
       experimentStartedAt: row.experiment_started_at || "",
       experimentBaseline: row.experiment_baseline
@@ -391,6 +430,12 @@ async function ensureRppAlertTargetsTable() {
       optimization_mode text not null default 'ROAS',
       fixed_cpc numeric,
       max_cpc numeric,
+      roas_min_cpc numeric,
+      roas_max_cpc numeric,
+      position_min_cpc numeric,
+      position_max_cpc numeric,
+      balanced_min_cpc numeric,
+      balanced_max_cpc numeric,
       experiment_end_date text not null default '',
       experiment_started_at text not null default '',
       experiment_baseline jsonb,
@@ -407,6 +452,12 @@ async function ensureRppAlertTargetsTable() {
   await pool.query(`alter table ${TARGETS_TABLE} add column if not exists optimization_mode text not null default 'ROAS'`);
   await pool.query(`alter table ${TARGETS_TABLE} add column if not exists fixed_cpc numeric`);
   await pool.query(`alter table ${TARGETS_TABLE} add column if not exists max_cpc numeric`);
+  await pool.query(`alter table ${TARGETS_TABLE} add column if not exists roas_min_cpc numeric`);
+  await pool.query(`alter table ${TARGETS_TABLE} add column if not exists roas_max_cpc numeric`);
+  await pool.query(`alter table ${TARGETS_TABLE} add column if not exists position_min_cpc numeric`);
+  await pool.query(`alter table ${TARGETS_TABLE} add column if not exists position_max_cpc numeric`);
+  await pool.query(`alter table ${TARGETS_TABLE} add column if not exists balanced_min_cpc numeric`);
+  await pool.query(`alter table ${TARGETS_TABLE} add column if not exists balanced_max_cpc numeric`);
   await pool.query(`alter table ${TARGETS_TABLE} add column if not exists experiment_end_date text not null default ''`);
   await pool.query(`alter table ${TARGETS_TABLE} add column if not exists experiment_started_at text not null default ''`);
   await pool.query(`alter table ${TARGETS_TABLE} add column if not exists experiment_baseline jsonb`);
@@ -446,8 +497,8 @@ async function upsertRawTarget(target: RppAlertTarget) {
   }
   await ensureRppAlertTargetsTable();
   await pool!.query(
-    `insert into ${TARGETS_TABLE} (id, item_code, keyword, owner, ctr_goal, cvr_goal, roas_floor, position_goal, pc_position_goal, sp_position_goal, policy, note, ad_group, change_locked, lock_reason, protection_type, search_keywords, optimization_mode, fixed_cpc, max_cpc, experiment_end_date, experiment_started_at, experiment_baseline, created_at, updated_at)
-     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17::jsonb, $18, $19, $20, $21, $22, $23::jsonb, $24, $25)
+    `insert into ${TARGETS_TABLE} (id, item_code, keyword, owner, ctr_goal, cvr_goal, roas_floor, position_goal, pc_position_goal, sp_position_goal, policy, note, ad_group, change_locked, lock_reason, protection_type, search_keywords, optimization_mode, fixed_cpc, max_cpc, roas_min_cpc, roas_max_cpc, position_min_cpc, position_max_cpc, balanced_min_cpc, balanced_max_cpc, experiment_end_date, experiment_started_at, experiment_baseline, created_at, updated_at)
+     values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17::jsonb, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29::jsonb, $30, $31)
      on conflict (id) do update set
        item_code = excluded.item_code,
        keyword = excluded.keyword,
@@ -468,11 +519,17 @@ async function upsertRawTarget(target: RppAlertTarget) {
        optimization_mode = excluded.optimization_mode,
        fixed_cpc = excluded.fixed_cpc,
        max_cpc = excluded.max_cpc,
+       roas_min_cpc = excluded.roas_min_cpc,
+       roas_max_cpc = excluded.roas_max_cpc,
+       position_min_cpc = excluded.position_min_cpc,
+       position_max_cpc = excluded.position_max_cpc,
+       balanced_min_cpc = excluded.balanced_min_cpc,
+       balanced_max_cpc = excluded.balanced_max_cpc,
        experiment_end_date = excluded.experiment_end_date,
        experiment_started_at = excluded.experiment_started_at,
        experiment_baseline = excluded.experiment_baseline,
        updated_at = excluded.updated_at`,
-    [target.id, target.itemCode, target.keyword, target.owner, target.ctrGoal, target.cvrGoal, target.roasFloor, target.positionGoal, target.pcPositionGoal ?? target.positionGoal, target.spPositionGoal ?? target.positionGoal, target.policy, target.note, target.adGroup || "通常", target.changeLocked === true, target.lockReason || "", target.protectionType || (target.changeLocked ? "LOCKED" : "NORMAL"), JSON.stringify(target.searchKeywords), target.optimizationMode || "ROAS", target.fixedCpc, target.maxCpc, target.experimentEndDate || "", target.experimentStartedAt || "", JSON.stringify(target.experimentBaseline), target.createdAt, target.updatedAt]
+    [target.id, target.itemCode, target.keyword, target.owner, target.ctrGoal, target.cvrGoal, target.roasFloor, target.positionGoal, target.pcPositionGoal ?? target.positionGoal, target.spPositionGoal ?? target.positionGoal, target.policy, target.note, target.adGroup || "通常", target.changeLocked === true, target.lockReason || "", target.protectionType || (target.changeLocked ? "LOCKED" : "NORMAL"), JSON.stringify(target.searchKeywords), target.optimizationMode || "ROAS", target.fixedCpc, target.maxCpc, target.roasMinCpc, target.roasMaxCpc, target.positionMinCpc, target.positionMaxCpc, target.balancedMinCpc, target.balancedMaxCpc, target.experimentEndDate || "", target.experimentStartedAt || "", JSON.stringify(target.experimentBaseline), target.createdAt, target.updatedAt]
   );
 }
 
