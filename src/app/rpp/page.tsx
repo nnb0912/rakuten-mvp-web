@@ -186,10 +186,10 @@ export default async function RppPage({ searchParams }: { searchParams: Promise<
             <p>自分の担当商品の絞り込みからRMS反映確認まで、実際の画面と音声・字幕で確認できます。</p>
           </div>
           <video controls playsInline preload="metadata" aria-label="RPP CONTROL 使い方マニュアル動画">
-            <source src="/rpp/manuals/rpp-control-guide-v4.mp4" type="video/mp4" />
+            <source src="/rpp/manuals/rpp-control-guide-v6.mp4" type="video/mp4" />
             お使いのブラウザでは動画を再生できません。
           </video>
-          <a href="/rpp/manuals/rpp-control-guide-v4.mp4" download>動画をダウンロード</a>
+          <a href="/rpp/manuals/rpp-control-guide-v6.mp4" download>動画をダウンロード</a>
         </div>
         <ol className="rpp-guide-flow" aria-label="基本操作フロー">
           <li><b>1. 状態確認</b><span>ダッシュボードでデータ状態が「OK」か確認</span></li>
@@ -200,10 +200,10 @@ export default async function RppPage({ searchParams }: { searchParams: Promise<
         <div className="rpp-guide-grid">
           <article><div><span>01</span><b>ダッシュボード</b></div><p>上げ・下げ・保留・対象外の件数とデータ状態を確認します。「要更新」の日は設定変更せず、データ更新を待ちます。</p><Link href="/rpp?view=dashboard">この画面を開く →</Link></article>
           <article><div><span>02</span><b>予算管理</b></div><p>月予算、消化率、月末着地、期間比較を確認します。現段階は監視専用で、ここからRMS予算を自動変更しません。</p><Link href="/rpp?view=budget">この画面を開く →</Link></article>
-          <article className="rpp-guide-wide"><div><span>03</span><b>商品・KW・実験</b></div><p>①担当タブを選ぶ → ②商品番号・商品名・KWで検索 → ③現CPC、提案CPC、ROAS、PC/SP順位、運用モード、保護、配信状態を確認します。「設定」で右側の編集画面を開きます。</p><ul><li><b>商品CPC行：</b>CPC設定と商品単位の広告除外／再開を操作できます。</li><li><b>KWCPC行：</b>キーワードCPCを設定します。広告除外は商品単位のため、KWCPC行には除外操作がありません。</li><li><b>変更予定：</b>RMS反映前のローカル状態です。誤操作は同じ行の「戻す」で取り消します。</li></ul><Link href="/rpp?view=products">この画面を開く →</Link></article>
+          <article className="rpp-guide-wide"><div><span>03</span><b>商品・KW・実験</b></div><p>①担当タブを選ぶ → ②商品番号・商品名・KWで検索 → ③現CPC、提案CPC、ROAS、PC/SP順位、運用モード、保護、配信状態を確認します。「設定」で右側の編集画面を開きます。</p><ul><li><b>通常運用：</b>ROASモード／検索順位モード／バランスモード／CPC固定モードの4つから選びます。固定以外の3モードは専用のCPC下限・上限を設定できます。</li><li><b>商品CPC行：</b>CPC設定と商品単位の広告除外／再開を操作できます。</li><li><b>KWCPC行：</b>キーワードCPCを設定します。広告除外は商品単位のため、KWCPC行には除外操作がありません。</li><li><b>変更予定：</b>RMS反映前のローカル状態です。誤操作は同じ行の「戻す」で取り消します。</li></ul><Link href="/rpp?view=products">この画面を開く →</Link></article>
           <article><div><span>04</span><b>異常アラート</b></div><p>CPC急騰、ROAS急落、広告費急増、データ欠損・鮮度・件数差を確認します。Chatworkは画面上ではDry Run固定です。</p><Link href="/rpp?view=alerts">この画面を開く →</Link></article>
           <article><div><span>05</span><b>CPC最適化</b></div><p>最低CPC、上限、ROAS基準、1日変更幅などの提案ルールを確認します。設定は提案生成条件であり、RMSへ即時反映するものではありません。</p><Link href="/rpp?view=optimization">この画面を開く →</Link></article>
-          <article><div><span>06</span><b>実験の使い方</b></div><p>商品・KW画面の「設定」から順位目標または固定CPCと終了日を保存します。開始値と終了値を同じ指標で比較し、期限切れ後は提案を停止します。</p><Link href="/rpp?view=products">商品・KW・実験を開く →</Link></article>
+          <article><div><span>06</span><b>実験履歴</b></div><p>既存の実験履歴は開始値と終了値を同じ指標で比較できます。現在の4つの通常運用モードは終了日不要で、実験履歴を新規作成しません。</p><Link href="/rpp?view=products">商品・KW・実験を開く →</Link></article>
           <article><div><span>07</span><b>データ・実行履歴</b></div><p>同期ファイルの時刻、保留理由、対象外、監査ログ、RMS反映履歴を確認します。反映後は結果と読み戻しが一致しているか確認します。</p><Link href="/rpp?view=data">この画面を開く →</Link></article>
         </div>
         <div className="rpp-guide-safety">

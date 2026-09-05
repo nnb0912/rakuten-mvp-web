@@ -81,9 +81,9 @@ test("画面の見方はRPPメニューの一番下に置く", () => {
 test("画面の見方から使い方マニュアル動画を再生できる", () => {
   const page = readFileSync(join(rppDir, "page.tsx"), "utf8");
   const css = readFileSync(join(process.cwd(), "src", "app", "globals.css"), "utf8");
-  const video = join(process.cwd(), "public", "rpp", "manuals", "rpp-control-guide-v4.mp4");
+  const video = join(process.cwd(), "public", "rpp", "manuals", "rpp-control-guide-v6.mp4");
   assert.match(page, /<video[^>]*controls[^>]*playsInline/s);
-  assert.match(page, /src="\/rpp\/manuals\/rpp-control-guide-v4\.mp4"/);
+  assert.match(page, /src="\/rpp\/manuals\/rpp-control-guide-v6\.mp4"/);
   assert.match(page, /全利用者向け 使い方マニュアル動画/);
   assert.match(css, /\.rpp-guide-video\s+video\s*\{[^}]*width:\s*100%/s);
   assert.ok(readFileSync(video).length > 1_000_000, "動画ファイルが存在しないか小さすぎます");
