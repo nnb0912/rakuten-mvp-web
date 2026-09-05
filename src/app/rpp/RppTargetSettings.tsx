@@ -7,8 +7,6 @@ import {
   ROUTINE_OPTIMIZATION_MODES,
   buildRppOptimizationPreview,
   optimizationModeLabel,
-  requiresExperimentEndDate,
-  shouldCreateExperimentHistory,
   type RppOptimizationMode,
 } from "@/lib/rppOptimization";
 import type { RppRecommendationWithApproval } from "@/lib/rppRecommendations";
@@ -519,8 +517,8 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
     setError(null);
     setMessage(null);
     try {
-      if (requiresExperimentEndDate(form.optimizationMode) && !form.experimentEndDate) {
-        throw new Error("固定CPC実験では実験終了日が必須です");
+      if (form.optimizationMode === "FIXED" && !form.fixedCpc.trim()) {
+        throw new Error("CPC固定モードでは固定CPCが必須です");
       }
       const payload = {
         ...form,
@@ -538,16 +536,9 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
         positionMaxCpc: form.positionMaxCpc.trim() ? Number(form.positionMaxCpc) : null,
         balancedMinCpc: form.balancedMinCpc.trim() ? Number(form.balancedMinCpc) : null,
         balancedMaxCpc: form.balancedMaxCpc.trim() ? Number(form.balancedMaxCpc) : null,
-        experimentStartedAt: shouldCreateExperimentHistory(form.optimizationMode) ? (targetMap.get(`${encodeURIComponent(form.itemCode.toLowerCase())}__${encodeURIComponent(form.keyword)}`)?.experimentStartedAt || new Date().toISOString()) : "",
-        experimentBaseline: (() => {
-          const id = `${encodeURIComponent(form.itemCode.toLowerCase())}__${encodeURIComponent(form.keyword)}`;
-          const existing = targetMap.get(id)?.experimentBaseline;
-          if (!shouldCreateExperimentHistory(form.optimizationMode)) return null;
-          if (existing) return existing;
-          const rec = recommendationMap.get(metricKey(form.itemCode, form.keyword));
-          const position = rec?.rppPosition || "";
-          return { capturedAt: new Date().toISOString(), ctr: null, cvr: rec?.cvr ?? null, roas: rec?.roas ?? null, pcPosition: position, spPosition: position };
-        })(),
+        experimentEndDate: "",
+        experimentStartedAt: "",
+        experimentBaseline: null,
       };
       const res = await fetch("/api/rpp/targets", {
         method: "POST",
@@ -560,38 +551,9 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
         const next = current.filter((row) => row.id !== data.target.id);
         return [...next, data.target].sort((a, b) => a.itemCode.localeCompare(b.itemCode, "ja") || a.keyword.localeCompare(b.keyword, "ja"));
       });
-      let historySaved = false;
-      if (shouldCreateExperimentHistory(payload.optimizationMode) && payload.experimentBaseline) {
-        const historyResponse = await fetch("/api/rpp/experiments", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            targetId: data.target.id,
-            itemCode: data.target.itemCode,
-            keyword: data.target.keyword,
-            optimizationMode: payload.optimizationMode,
-            endDate: payload.experimentEndDate,
-            startedAt: data.target.experimentStartedAt,
-            baseline: payload.experimentBaseline,
-            settings: {
-              fixedCpc: payload.fixedCpc,
-              maxCpc: payload.maxCpc,
-              pcPositionGoal: payload.pcPositionGoal,
-              spPositionGoal: payload.spPositionGoal,
-              ctrGoal: payload.ctrGoal,
-              cvrGoal: payload.cvrGoal,
-              roasFloor: payload.roasFloor,
-            },
-          }),
-        });
-        const historyData = await historyResponse.json();
-        if (!historyResponse.ok) throw new Error(`目標は保存しましたが実験履歴の作成に失敗しました: ${historyData.error ?? "不明"}`);
-        historySaved = true;
-        await refreshExperiments();
-      }
       setForm(blank);
       setFormDrawerOpen(false);
-      setMessage(historySaved ? "目標と実験開始スナップショットを保存しました" : "保存しました");
+      setMessage("保存しました");
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -709,7 +671,7 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
               <button className={tableStatusFilter === value ? "active" : ""} key={value} type="button" onClick={() => setTableStatusFilter(value)}>{label}</button>
             ))}
           </div>
-          <label className="compact-select"><RppInfoTip label="モード" /><select value={modeFilter} onChange={(event) => setModeFilter(event.target.value as "ALL" | RppOptimizationMode)}><option value="ALL">すべて</option>{ROUTINE_OPTIMIZATION_MODES.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}<option value="FIXED">固定CPC実験（旧設定）</option></select></label>
+          <label className="compact-select"><RppInfoTip label="モード" /><select value={modeFilter} onChange={(event) => setModeFilter(event.target.value as "ALL" | RppOptimizationMode)}><option value="ALL">すべて</option>{ROUTINE_OPTIMIZATION_MODES.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
           <label className="compact-select"><RppInfoTip label="保護" /><select value={protectionFilter} onChange={(event) => setProtectionFilter(event.target.value as "ALL" | RppProtectionType)}><option value="ALL">すべて</option><option value="NORMAL">通常</option><option value="BLOCK">ブロック</option><option value="WHITELIST">ホワイト</option><option value="LOCKED">変更不可</option><option value="FOCUS">注力</option></select></label>
           <button className="filter-clear" type="button" onClick={() => { setTableSearch(""); setTableStatusFilter("ALL"); setModeFilter("ALL"); setProtectionFilter("ALL"); setOwnerFilter("全て"); setGroupFilter("全て"); }}>条件クリア</button>
           <small>表示 {filteredConfiguredTargets.length} / {configuredTargets.length}件</small>
@@ -792,7 +754,7 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
                     </td>
                     <td className="number-cell"><b>{roas == null ? "-" : `${Math.round(roas)}%`}</b><small>→ {optimization?.projectedRoas == null ? "-" : `${Math.round(optimization.projectedRoas)}%`}</small></td>
                     <td className="rank-cell" title={positionKeyword || undefined}>{positions.map((part) => <span key={`${part.device}-${part.status}`}><b>{part.device}</b><em>{part.status}</em></span>)}</td>
-                    <td><span className={`optimization-mode-pill mode-${(row?.optimizationMode || "ROAS").toLowerCase()}`}>{optimizationModeLabel(row?.optimizationMode || "ROAS")}</span><small>{row?.experimentEndDate ? `〜${row.experimentEndDate}` : `目標 ${row?.roasFloor ?? 500}%`}</small></td>
+                    <td><span className={`optimization-mode-pill mode-${(row?.optimizationMode || "ROAS").toLowerCase()}`}>{optimizationModeLabel(row?.optimizationMode || "ROAS")}</span><small>{row?.optimizationMode === "FIXED" ? `固定 ${yen(row.fixedCpc)}` : `目標 ${row?.roasFloor ?? 500}%`}</small></td>
                     <td><span className={`protection-pill protection-${(row?.protectionType || "NORMAL").toLowerCase()}`}>{protectionLabel}</span><small>{row?.lockReason || ""}</small></td>
                     <td><span className={`delivery-dot ${currentExcluded ? "off" : "on"}`}><i />{deliveryLabel(cfg.source, currentExcluded)}</span>{exclusionChangedForItem ? <small className="pending-change">変更予定</small> : null}</td>
                     <td className="actions-col">
@@ -849,7 +811,7 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
 
       <section className="panel experiment-history-panel" id="rpp-experiments">
         <div className="section-heading compact-heading">
-          <div><h2>実験トラッキング</h2><p>既存の検索順位実験・固定CPC実験履歴を、終了時の同じ指標と比較します。</p></div>
+          <div><h2>実験トラッキング</h2><p>過去に保存された実験履歴を、終了時の同じ指標と比較します。</p></div>
           <div className="experiment-summary">
             <span>実験中 <b>{experiments.filter((row) => row.status === "ACTIVE").length}</b></span>
             <span>終了実績待ち <b>{experiments.filter((row) => row.status === "EXPIRED").length}</b></span>
@@ -872,7 +834,7 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
               ))}</tbody>
             </table>
           </div>
-        ) : <p className="experiment-empty">保存済みの実験履歴はありません。通常運用の3モードでは実験履歴を作成しません。</p>}
+        ) : <p className="experiment-empty">保存済みの実験履歴はありません。現在の4つの通常運用モードでは実験履歴を作成しません。</p>}
       </section>
 
       {formDrawerOpen ? <button className="rpp-drawer-backdrop" aria-label="設定を閉じる" type="button" onClick={() => setFormDrawerOpen(false)} /> : null}
@@ -927,15 +889,12 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
             <div className="optimization-mode-options" aria-label="通常運用モード">
               {ROUTINE_OPTIMIZATION_MODES.map((option) => <button className={form.optimizationMode === option.value ? `active mode-${option.value.toLowerCase()}` : `mode-${option.value.toLowerCase()}`} key={option.value} type="button" onClick={() => patchForm("optimizationMode", option.value)}><b>{option.label}</b><small>{option.description}</small></button>)}
             </div>
-            {form.optimizationMode === "FIXED" ? <p className="legacy-mode-note">この対象は旧「固定CPC実験」設定です。履歴と設定値は保持されています。通常運用へ戻す場合は上の3モードから選んでください。</p> : null}
           </div>
           {selectedModeBoundFields && selectedRoutineMode ? <div className="form-row two-cols optimization-mode-fields">
             <label><RppInfoTip label="モード別CPC下限" /><input type="number" min="1" step="1" value={form[selectedModeBoundFields.minimum]} onChange={(e) => patchForm(selectedModeBoundFields.minimum, e.target.value)} placeholder="未設定なら楽天下限" /><small>{selectedRoutineMode.label}専用。楽天下限（商品20円 / KW40円）が優先されます。</small></label>
             <label><RppInfoTip label="モード別CPC上限" /><input type="number" min="1" step="1" value={form[selectedModeBoundFields.maximum]} onChange={(e) => patchForm(selectedModeBoundFields.maximum, e.target.value)} placeholder={form.maxCpc ? `旧上限 ${form.maxCpc}円を適用中` : "未設定なら安全幅のみ"} /><small>{selectedRoutineMode.label}専用。未設定時は既存の旧上限を引き継ぎます。</small></label>
-          </div> : <div className="form-row three-cols optimization-mode-fields legacy-experiment-fields">
-            <label><RppInfoTip label="固定CPC" /><input type="number" value={form.fixedCpc} readOnly /></label>
-            <label><RppInfoTip label="旧CPC上限" /><input type="number" value={form.maxCpc} readOnly /></label>
-            <label><RppInfoTip label="実験終了日" /><input type="date" value={form.experimentEndDate} readOnly /></label>
+          </div> : <div className="form-row optimization-mode-fields">
+            <label><RppInfoTip label="固定CPC" /><input type="number" min="1" step="1" value={form.fixedCpc} onChange={(e) => patchForm("fixedCpc", e.target.value)} placeholder="例 50" /><small>CPC固定モード専用。RMSへ直接登録する場合と同じ指定額を維持します。</small></label>
           </div>}
           <div className="form-row five-cols">
             <label><RppInfoTip label="CTR目標" /><input type="number" min="0" step="0.1" value={form.ctrGoal} onChange={(e) => patchForm("ctrGoal", e.target.value)} /></label>
@@ -971,8 +930,8 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
             <li><b>ROASモード</b><small>目標ROASに近づくようCPCを逆算する通常運用です。</small></li>
             <li><b>検索順位モード</b><small>既存のPC/SP検索順位提案を方向シグナルとして使う通常運用です。</small></li>
             <li><b>バランスモード</b><small>ROASを採算ゲートにし、検索順位提案と組み合わせます。未達時は低い候補を選び、達成時の引き上げもROAS候補までに制限します。</small></li>
-            <li><b>モード別CPC範囲</b><small>3モードごとに下限・上限を保存します。商品20円・KW40円の楽天下限と1回の安全幅は常に優先されます。</small></li>
-            <li><b>固定CPC実験（旧設定）</b><small>既存レコードと履歴のみ表示・読込を継続します。通常運用モードの4つ目ではありません。</small></li>
+            <li><b>モード別CPC範囲</b><small>ROAS・検索順位・バランスは各モードの下限・上限を保存します。商品20円・KW40円の楽天下限と1回の安全幅は常に優先されます。</small></li>
+            <li><b>CPC固定モード</b><small>RMSへ直接登録する場合と同じ指定CPCを維持します。終了日や実験履歴は使いません。</small></li>
           </ul>
         </div>
         </div>

@@ -5,8 +5,7 @@ import {
   buildRppOptimizationPreview,
   calculateRoasCpc,
   normalizeRppOptimizationMode,
-  requiresExperimentEndDate,
-  shouldCreateExperimentHistory,
+
   validateRppModeCpcBounds,
 } from "./rppOptimization.ts";
 
@@ -94,11 +93,13 @@ test("バランスモードはROAS・順位候補の両方を必須にし既存�
   assert.equal(capped.proposedCpc, 115);
 });
 
-test("固定CPCモードも1回あたりの安全幅を超えない", () => {
+test("CPC固定モードはRMS直接登録と同様に指定額を維持し、楽天下限だけを守る", () => {
   const down = buildRppOptimizationPreview({ mode: "FIXED", cpcKind: "ITEM", currentCpc: 100, actualRoas: null, targetRoas: 500, spend: null, sales: null, fixedCpc: 20 });
   const up = buildRppOptimizationPreview({ mode: "FIXED", cpcKind: "ITEM", currentCpc: 100, actualRoas: null, targetRoas: 500, spend: null, sales: null, fixedCpc: 200 });
-  assert.equal(down.proposedCpc, 50);
-  assert.equal(up.proposedCpc, 120);
+  const keywordFloor = buildRppOptimizationPreview({ mode: "FIXED", cpcKind: "KEYWORD", currentCpc: 100, actualRoas: null, targetRoas: 500, spend: null, sales: null, fixedCpc: 10 });
+  assert.equal(down.proposedCpc, 20);
+  assert.equal(up.proposedCpc, 200);
+  assert.equal(keywordFloor.proposedCpc, 40);
 });
 
 test("変更不可とデータ不足は提案を生成しない", () => {
@@ -106,23 +107,20 @@ test("変更不可とデータ不足は提案を生成しない", () => {
   assert.equal(buildRppOptimizationPreview({ mode: "ROAS", cpcKind: "ITEM", currentCpc: 40, actualRoas: null, targetRoas: 500, spend: 100, sales: 0 }).blockedReason, "ROAS実績または目標不足");
 });
 
-test("実験終了日を過ぎた固定CPCモードは提案を停止する", () => {
+test("CPC固定モードは旧実験終了日が残っていても通常運用として動作する", () => {
   const preview = buildRppOptimizationPreview({ mode: "FIXED", cpcKind: "ITEM", currentCpc: 40, actualRoas: 900, targetRoas: 500, spend: 100, sales: 900, fixedCpc: 40, experimentEndDate: "2026-08-30", today: "2026-08-31" });
-  assert.equal(preview.blockedReason, "実験期間終了");
+  assert.equal(preview.blockedReason, null);
+  assert.equal(preview.proposedCpc, 40);
 });
 
-test("3つの通常運用モードは終了日なしで動作し、固定CPCだけを実験扱いする", () => {
+test("4つの通常運用モードは終了日なし・実験履歴なしで動作する", () => {
   assert.deepEqual(ROUTINE_OPTIMIZATION_MODES.map(({ value, label }) => ({ value, label })), [
     { value: "ROAS", label: "ROASモード" },
     { value: "POSITION", label: "検索順位モード" },
     { value: "BALANCED", label: "バランスモード" },
+    { value: "FIXED", label: "CPC固定モード" },
   ]);
-  for (const mode of ["ROAS", "POSITION", "BALANCED"] as const) {
-    assert.equal(requiresExperimentEndDate(mode), false);
-    assert.equal(shouldCreateExperimentHistory(mode), false);
-  }
-  assert.equal(requiresExperimentEndDate("FIXED"), true);
-  assert.equal(shouldCreateExperimentHistory("FIXED"), true);
+
 });
 
 test("最適化モード正規化はBALANCEDを受け入れ、既存FIXEDを読み続ける", () => {

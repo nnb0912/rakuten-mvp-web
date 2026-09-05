@@ -1,5 +1,5 @@
-export type RppRoutineOptimizationMode = "ROAS" | "POSITION" | "BALANCED";
-export type RppOptimizationMode = RppRoutineOptimizationMode | "FIXED";
+export type RppRoutineOptimizationMode = "ROAS" | "POSITION" | "BALANCED" | "FIXED";
+export type RppOptimizationMode = RppRoutineOptimizationMode;
 export type RppCpcKind = "ITEM" | "KEYWORD";
 export type RppProtectionType = "NORMAL" | "BLOCK" | "WHITELIST" | "LOCKED" | "FOCUS";
 
@@ -7,29 +7,19 @@ export const ROUTINE_OPTIMIZATION_MODES = [
   { value: "ROAS", label: "ROASモード", description: "利益効率を基準にCPCを調整" },
   { value: "POSITION", label: "検索順位モード", description: "PC/SPの検索順位提案を採用" },
   { value: "BALANCED", label: "バランスモード", description: "ROASを守りながら検索順位を調整" },
+  { value: "FIXED", label: "CPC固定モード", description: "RMSと同様に指定CPCを維持" },
 ] as const satisfies ReadonlyArray<{ value: RppRoutineOptimizationMode; label: string; description: string }>;
 
-const OPTIMIZATION_MODES: readonly RppOptimizationMode[] = [
-  ...ROUTINE_OPTIMIZATION_MODES.map(({ value }) => value),
-  "FIXED",
-];
+const OPTIMIZATION_MODES: readonly RppOptimizationMode[] = ROUTINE_OPTIMIZATION_MODES.map(({ value }) => value);
 
 export function normalizeRppOptimizationMode(value: unknown): RppOptimizationMode {
   return OPTIMIZATION_MODES.includes(value as RppOptimizationMode) ? value as RppOptimizationMode : "ROAS";
 }
 
 export function optimizationModeLabel(mode: RppOptimizationMode) {
-  if (mode === "FIXED") return "固定CPC実験";
   return ROUTINE_OPTIMIZATION_MODES.find((option) => option.value === mode)?.label ?? "ROASモード";
 }
 
-export function requiresExperimentEndDate(mode: RppOptimizationMode) {
-  return mode === "FIXED";
-}
-
-export function shouldCreateExperimentHistory(mode: RppOptimizationMode) {
-  return mode === "FIXED";
-}
 
 export type RppModeCpcBounds = {
   roasMinCpc?: number | null;
@@ -158,9 +148,6 @@ export function buildRppOptimizationPreview(input: RppOptimizationInput): RppOpt
   if (input.changeLocked || input.protectionType === "LOCKED") return blocked("変更不可リスト");
   if (input.protectionType === "BLOCK") return blocked("ブロック対象");
   if (!currentCpc) return blocked("現在CPCなし");
-  const today = input.today || new Date().toISOString().slice(0, 10);
-  if (requiresExperimentEndDate(input.mode) && input.experimentEndDate && input.experimentEndDate < today) return blocked("実験期間終了");
-
   const focus = input.protectionType === "FOCUS";
   const bounds = selectedModeBounds(input);
   validateRppModeCpcBounds(input);
@@ -180,7 +167,7 @@ export function buildRppOptimizationPreview(input: RppOptimizationInput): RppOpt
     proposedCpc = candidate == null ? null : clampProposalWithBounds(candidate, currentCpc, input.cpcKind, bounds.minCpc, bounds.maxCpc, focus);
   } else {
     if (!finitePositive(input.fixedCpc)) return blocked("固定CPC未設定");
-    proposedCpc = clampProposal(input.fixedCpc, currentCpc, input.cpcKind, input.maxCpc, focus);
+    proposedCpc = Math.max(floorFor(input.cpcKind), Math.round(input.fixedCpc));
   }
 
   if (!proposedCpc) return blocked("提案を計算できません");
