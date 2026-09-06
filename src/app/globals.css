@@ -111,6 +111,11 @@ small { color: var(--muted); line-height: 1.45; }
 .approval-actions button:disabled { opacity: .45; cursor: not-allowed; }
 .error-box { border: 1px solid #fecdca; background: #fef3f2; color: #b42318; border-radius: 12px; padding: 10px 12px; }
 .success-box { border: 1px solid #abefc6; background: #ecfdf3; color: #027a48; border-radius: 12px; padding: 10px 12px; }
+.rpp-collaboration-banner { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 0 0 10px; padding: 8px 12px; border: 1px solid #bfdbfe; border-radius: 10px; background: #eff6ff; color: #1e3a8a; font-size: 12px; }
+.rpp-collaboration-banner.operation { border-color: #fde68a; background: #fffbeb; color: #92400e; }
+.rpp-collaboration-banner b { font-size: 12px; }
+.rpp-collaboration-banner small { color: inherit; opacity: .8; }
+.draft-status { display: inline-flex; margin-top: 5px; border: 1px solid #475569; border-radius: 999px; padding: 3px 8px; color: #bfdbfe; font-size: 11px; font-weight: 800; }
 .export-box { display: grid; gap: 6px; justify-items: end; max-width: 520px; }
 .export-box .primary-button { margin: 0; }
 .export-result { background: #ecfdf3; border: 1px solid #abefc6; color: #027a48; border-radius: 12px; padding: 10px 12px; text-align: left; }

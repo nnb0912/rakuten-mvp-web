@@ -12,6 +12,7 @@ const routePolicies: Record<string, string[]> = {
   "budget-settings": ["viewer", "operator"],
   "comparisons": ["viewer"],
   "comparisons/export": ["viewer"],
+  "collaboration": ["viewer", "operator"],
   "experiments": ["viewer", "operator", "operator"],
   "export-approved": ["operator"],
   "export-remove-setting-candidates": ["viewer", "operator", "operator"],

@@ -52,7 +52,21 @@ function normalizeOperationalData(value: unknown): RppSnapshotOperationalData | 
     const keyword = String(raw?.keyword ?? "").trim();
     const source: RppSnapshotConfiguredTarget["source"] | null = raw?.source === "キーワードCPC" ? "キーワードCPC" : raw?.source === "商品CPC" ? "商品CPC" : null;
     if (!itemCode || !keyword || !source) throw new Error("rppData configured target is invalid");
-    return { id: String(raw.id ?? "").trim(), itemCode, itemName: String(raw.itemName ?? "").trim(), keyword, itemCpc: nullablePositiveNumber(raw.itemCpc), keywordCpc: nullablePositiveNumber(raw.keywordCpc), source, owner: String(raw.owner ?? "").trim() || "担当未設定" };
+    const rppPositions = Array.isArray(raw.rppPositions)
+      ? raw.rppPositions.flatMap((position) => {
+          const basisKeyword = String(position?.keyword ?? "").trim();
+          const value = String(position?.position ?? "").trim();
+          return basisKeyword && value ? [{ keyword: basisKeyword, position: value }] : [];
+        })
+      : undefined;
+    return {
+      id: String(raw.id ?? "").trim(), itemCode, itemName: String(raw.itemName ?? "").trim(), keyword,
+      itemCpc: nullablePositiveNumber(raw.itemCpc), keywordCpc: nullablePositiveNumber(raw.keywordCpc),
+      source, owner: String(raw.owner ?? "").trim() || "担当未設定",
+      rppPosition: String(raw.rppPosition ?? "").trim() || undefined,
+      rppPositionKeyword: String(raw.rppPositionKeyword ?? "").trim() || undefined,
+      rppPositions,
+    };
   });
   const exclusionProducts = input.exclusionProducts.map((raw) => {
     const itemCode = String(raw?.itemCode ?? "").trim().toLowerCase();
@@ -63,20 +77,37 @@ function normalizeOperationalData(value: unknown): RppSnapshotOperationalData | 
   return { configuredTargets, exclusionProducts, owners };
 }
 
+function normalizeRecommendationRows(value: unknown) {
+  if (!Array.isArray(value)) throw new Error("recommendations.recommendations must be an array");
+  return value.map((raw, index) => {
+    if (!raw || typeof raw !== "object") throw new Error(`recommendation row ${index} must be an object`);
+    const row = raw as Record<string, unknown>;
+    const action = row.action;
+    if (!String(row.itemCode ?? "").trim() || !String(row.keyword ?? "").trim()) throw new Error(`recommendation row ${index} identifiers are required`);
+    if (!["RAISE", "LOWER", "HOLD"].includes(String(action))) throw new Error(`recommendation row ${index} action is invalid`);
+    if (!Array.isArray(row.reasons) || !Array.isArray(row.blocks) || typeof row.uploadReady !== "boolean") throw new Error(`recommendation row ${index} safety fields are invalid`);
+    if (action === "RAISE" || action === "LOWER") {
+      if (!(Number.isFinite(Number(row.currentCpc)) && Number(row.currentCpc) > 0 && Number.isFinite(Number(row.proposedCpc)) && Number(row.proposedCpc) > 0 && String(row.source ?? "").trim())) throw new Error(`recommendation row ${index} actionable CPC fields are invalid`);
+    }
+    return row;
+  });
+}
+
 export function normalizeRppDashboardSnapshot(value: unknown): RppDashboardSnapshot {
   if (!value || typeof value !== "object") throw new Error("snapshot payload is required");
   const input = value as Partial<RppDashboardSnapshot>;
   if (!input.recommendations || typeof input.recommendations !== "object") throw new Error("recommendations is required");
-  if (!Array.isArray(input.recommendations.recommendations)) throw new Error("recommendations.recommendations must be an array");
+  const recommendationRows = normalizeRecommendationRows(input.recommendations.recommendations);
   if (!Array.isArray(input.latestFiles)) throw new Error("latestFiles must be an array");
-  const syncedAt = typeof input.syncedAt === "string" && !Number.isNaN(new Date(input.syncedAt).getTime()) ? new Date(input.syncedAt).toISOString() : new Date().toISOString();
+  if (typeof input.syncedAt !== "string" || Number.isNaN(new Date(input.syncedAt).getTime())) throw new Error("syncedAt must be a valid timestamp");
+  const syncedAt = new Date(input.syncedAt).toISOString();
   const latestFiles = input.latestFiles.map((file) => {
     if (!file || typeof file !== "object" || typeof file.name !== "string") throw new Error("latestFiles contains an invalid row");
     return { name: file.name, exists: file.exists === true, mtime: typeof file.mtime === "string" ? file.mtime : null, size: Number.isFinite(Number(file.size)) ? Number(file.size) : 0 };
   });
   const performanceDaily = normalizePerformanceDaily(input.performanceDaily);
   const rppData = normalizeOperationalData(input.rppData);
-  return { schemaVersion: rppData ? 3 : performanceDaily ? 2 : 1, syncedAt, recommendations: { summary: input.recommendations.summary && typeof input.recommendations.summary === "object" ? input.recommendations.summary : {}, recommendations: input.recommendations.recommendations }, latestFiles, cronStatus: input.cronStatus && typeof input.cronStatus === "object" ? input.cronStatus : null, performanceDaily, rppData };
+  return { schemaVersion: rppData ? 3 : performanceDaily ? 2 : 1, syncedAt, recommendations: { summary: input.recommendations.summary && typeof input.recommendations.summary === "object" ? input.recommendations.summary : {}, recommendations: recommendationRows }, latestFiles, cronStatus: input.cronStatus && typeof input.cronStatus === "object" ? input.cronStatus : null, performanceDaily, rppData };
 }
 
 async function ensureTables(client: Pool | PoolClient | null = pool) {
