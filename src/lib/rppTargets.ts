@@ -160,7 +160,7 @@ function normalizeInput(input: RppAlertTargetInput) {
   if (!keyword) throw new Error("キーワードは必須です");
   const searchKeywords = normalizeSearchKeywords(input.searchKeywords, keyword);
   if (keyword === "商品CPC" && searchKeywords.length === 0) {
-    throw new Error("商品CPCの場合は検索調査キーワードを1つ以上入力してください");
+    throw new Error("商品CPCの場合は基準ワードを1つ以上入力してください");
   }
   const positionGoal = POSITION_GOALS.includes(input.positionGoal as RppPositionGoal) ? input.positionGoal as RppPositionGoal : "FIRST_PAGE";
   const pcPositionGoal = POSITION_GOALS.includes(input.pcPositionGoal as RppPositionGoal) ? input.pcPositionGoal as RppPositionGoal : positionGoal;

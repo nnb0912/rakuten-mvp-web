@@ -270,6 +270,10 @@ small { color: var(--muted); line-height: 1.45; }
 .keyword-candidate-box b { color: var(--foreground); font-size: 13px; }
 .search-word-chips { display: flex; gap: 8px; flex-wrap: wrap; }
 .search-word-chips button { border: 1px solid #d0d5dd; border-radius: 999px; background: #fff; padding: 8px 10px; font-weight: 800; cursor: pointer; color: var(--foreground); }
+.basis-word-list { display: grid; gap: 8px; }
+.basis-word-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: center; }
+.basis-word-row button, .basis-word-add { border: 1px solid #d0d5dd; border-radius: 9px; background: #fff; padding: 9px 11px; color: var(--foreground); font-weight: 800; cursor: pointer; }
+.basis-word-add { justify-self: start; color: #175cd3; }
 .target-form textarea { min-height: 72px; resize: vertical; }
 .form-row { display: grid; gap: 10px; }
 .two-cols { grid-template-columns: 1fr 1fr; }
