@@ -93,7 +93,7 @@ export default function RppAutoAdjustmentSettingsPanel({ initialSettings, source
       <div className="section-heading compact-heading">
         <div>
           <h2>自動調整ルール</h2>
-          <p>まずは候補生成だけに使います。RMS本番反映は別フラグ・承認後のみです。</p>
+          <p>まずは候補生成だけに使います。RMS本番反映はこの画面では行いません。</p>
         </div>
         <span className={`status-pill ${form.enabled ? "status-approved" : "status-hold"}`}>{form.enabled ? "自動候補ON" : "自動候補OFF"}</span>
       </div>

@@ -7,6 +7,7 @@ import { readRppExclusionOverrides } from "@/lib/rppExclusionJobs";
 import { normalizeRppOptimizationMode, validateRppModeCpcBounds, type RppOptimizationMode } from "@/lib/rppOptimization";
 import { readRppStrategySettings, resolveRppRoas } from "@/lib/rppStrategySettings";
 import { readLatestRppDashboardSnapshot } from "@/lib/rppDashboardSnapshots";
+import { validateRppTargetInputValues } from "@/lib/rppTargetValidation";
 
 export type RppPositionGoal = "FIRST_PAGE" | "TOP_7" | "TOP_5" | "TOP_3";
 export type RppOperationPolicy = "攻め" | "維持" | "テスト" | "停止候補";
@@ -153,55 +154,50 @@ export function targetId(itemCode: string, keyword: string) {
   return [itemCode.trim().toLowerCase(), keyword.trim()].map((part) => encodeURIComponent(part)).join("__");
 }
 
-function normalizeInput(input: RppAlertTargetInput) {
+export function normalizeRppTargetInput(input: RppAlertTargetInput) {
+  validateRppTargetInputValues(input);
   const itemCode = cleanText(input.itemCode).toLowerCase();
   const keyword = cleanText(input.keyword);
   if (!itemCode) throw new Error("商品管理番号は必須です");
   if (!keyword) throw new Error("キーワードは必須です");
   const searchKeywords = normalizeSearchKeywords(input.searchKeywords, keyword);
-  if (keyword === "商品CPC" && searchKeywords.length === 0) {
-    throw new Error("商品CPCの場合は基準ワードを1つ以上入力してください");
-  }
-  const positionGoal = POSITION_GOALS.includes(input.positionGoal as RppPositionGoal) ? input.positionGoal as RppPositionGoal : "FIRST_PAGE";
-  const pcPositionGoal = POSITION_GOALS.includes(input.pcPositionGoal as RppPositionGoal) ? input.pcPositionGoal as RppPositionGoal : positionGoal;
-  const spPositionGoal = POSITION_GOALS.includes(input.spPositionGoal as RppPositionGoal) ? input.spPositionGoal as RppPositionGoal : positionGoal;
+  if (keyword === "商品CPC" && searchKeywords.length === 0) throw new Error("商品CPCの場合は基準ワードを1つ以上入力してください");
+  if (input.optimizationMode != null && !["ROAS", "POSITION", "BALANCED", "FIXED"].includes(String(input.optimizationMode))) throw new Error("運用モードが不正です");
+  if (input.positionGoal != null && !POSITION_GOALS.includes(input.positionGoal as RppPositionGoal)) throw new Error("順位目標が不正です");
+  if (input.pcPositionGoal != null && !POSITION_GOALS.includes(input.pcPositionGoal as RppPositionGoal)) throw new Error("PC順位目標が不正です");
+  if (input.spPositionGoal != null && !POSITION_GOALS.includes(input.spPositionGoal as RppPositionGoal)) throw new Error("SP順位目標が不正です");
+  const positionGoal = (input.positionGoal as RppPositionGoal | undefined) ?? "FIRST_PAGE";
+  const pcPositionGoal = (input.pcPositionGoal as RppPositionGoal | undefined) ?? positionGoal;
+  const spPositionGoal = (input.spPositionGoal as RppPositionGoal | undefined) ?? positionGoal;
+  if (pcPositionGoal === "TOP_7") throw new Error("PC順位目標に7位以内は指定できません");
   const policy = POLICIES.includes(input.policy as RppOperationPolicy) ? input.policy as RppOperationPolicy : "維持";
   const optimizationMode = normalizeRppOptimizationMode(input.optimizationMode);
+  for (const [label, raw] of Object.entries({ maxCpc: input.maxCpc, fixedCpc: input.fixedCpc, roasMinCpc: input.roasMinCpc, roasMaxCpc: input.roasMaxCpc, positionMinCpc: input.positionMinCpc, positionMaxCpc: input.positionMaxCpc, balancedMinCpc: input.balancedMinCpc, balancedMaxCpc: input.balancedMaxCpc })) {
+    if (raw != null && String(raw).trim() !== "" && (!Number.isFinite(Number(raw)) || Number(raw) <= 0)) throw new Error(`${label}は正数で入力してください`);
+  }
   const modeCpcBounds = {
-    roasMinCpc: optionalNumber(input.roasMinCpc),
-    roasMaxCpc: optionalNumber(input.roasMaxCpc),
-    positionMinCpc: optionalNumber(input.positionMinCpc),
-    positionMaxCpc: optionalNumber(input.positionMaxCpc),
-    balancedMinCpc: optionalNumber(input.balancedMinCpc),
-    balancedMaxCpc: optionalNumber(input.balancedMaxCpc),
+    roasMinCpc: optionalNumber(input.roasMinCpc), roasMaxCpc: optionalNumber(input.roasMaxCpc),
+    positionMinCpc: optionalNumber(input.positionMinCpc), positionMaxCpc: optionalNumber(input.positionMaxCpc),
+    balancedMinCpc: optionalNumber(input.balancedMinCpc), balancedMaxCpc: optionalNumber(input.balancedMaxCpc),
   };
   validateRppModeCpcBounds(modeCpcBounds);
-  const protectionType = PROTECTION_TYPES.includes(input.protectionType as RppProtectionType)
-    ? input.protectionType as RppProtectionType
-    : input.changeLocked ? "LOCKED" : "NORMAL";
+
+  const protectionType = PROTECTION_TYPES.includes(input.protectionType as RppProtectionType) ? input.protectionType as RppProtectionType : input.changeLocked ? "LOCKED" : "NORMAL";
+  const ctrGoal = finiteNumber(input.ctrGoal, 5);
+  const cvrGoal = finiteNumber(input.cvrGoal, 5);
+  const roasFloor = finiteNumber(input.roasFloor, 500);
+  if (ctrGoal < 0 || cvrGoal < 0 || roasFloor <= 0) throw new Error("CTR・CVR・ROAS目標は有効な正数で入力してください");
+  const fixedCpc = optionalNumber(input.fixedCpc);
+  const maxCpc = optionalNumber(input.maxCpc);
+  if (optimizationMode === "FIXED" && fixedCpc == null) throw new Error("CPC固定モードでは固定CPCが必須です");
+
   return {
-    itemCode,
-    keyword,
-    owner: cleanText(input.owner),
-    ctrGoal: finiteNumber(input.ctrGoal, 5),
-    cvrGoal: finiteNumber(input.cvrGoal, 5),
-    roasFloor: finiteNumber(input.roasFloor, 500),
-    positionGoal,
-    pcPositionGoal,
-    spPositionGoal,
-    policy,
-    note: cleanText(input.note),
-    adGroup: cleanText(input.adGroup) || "通常",
+    itemCode, keyword, owner: cleanText(input.owner), ctrGoal, cvrGoal, roasFloor,
+    positionGoal, pcPositionGoal, spPositionGoal, policy, note: cleanText(input.note), adGroup: cleanText(input.adGroup) || "通常",
     changeLocked: protectionType === "LOCKED" || input.changeLocked === true || String(input.changeLocked ?? "").toLowerCase() === "true",
-    lockReason: cleanText(input.lockReason),
-    protectionType,
-    searchKeywords,
-    optimizationMode,
-    fixedCpc: optionalNumber(input.fixedCpc),
-    maxCpc: optionalNumber(input.maxCpc),
-    ...modeCpcBounds,
-    experimentEndDate: cleanText(input.experimentEndDate),
-    experimentStartedAt: cleanText(input.experimentStartedAt),
+    lockReason: cleanText(input.lockReason), protectionType, searchKeywords, optimizationMode, fixedCpc,
+    maxCpc, ...modeCpcBounds,
+    experimentEndDate: cleanText(input.experimentEndDate), experimentStartedAt: cleanText(input.experimentStartedAt),
     experimentBaseline: input.experimentBaseline && typeof input.experimentBaseline === "object" ? input.experimentBaseline : null,
   };
 }
@@ -707,7 +703,7 @@ export async function readRppAlertTargets() {
 }
 
 export async function upsertRppAlertTarget(input: RppAlertTargetInput) {
-  const normalized = normalizeInput(input);
+  const normalized = normalizeRppTargetInput(input);
   const now = new Date().toISOString();
   const id = targetId(normalized.itemCode, normalized.keyword);
   const targets = await readRawTargets();
@@ -738,7 +734,7 @@ export async function seedMissingRppAlertTargets(defaults: Partial<RppAlertTarge
   const additions: RppAlertTarget[] = [];
   for (const row of configured) {
     if (existing.has(row.id)) continue;
-    const normalized = normalizeInput({
+    const normalized = normalizeRppTargetInput({
       itemCode: row.itemCode,
       keyword: row.keyword,
       owner: row.owner,

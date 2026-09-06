@@ -1,6 +1,7 @@
 import { promises as fs } from "fs";
 import path from "path";
 import { pool } from "@/lib/db";
+import { assertRppExclusionQueueAvailable } from "@/lib/rppExclusionBatch";
 
 export type RppExclusionJobChange = { itemCode: string; currentExcluded: boolean; originalExcluded?: boolean };
 export type RppExclusionJob = {
@@ -11,6 +12,8 @@ export type RppExclusionJob = {
   csvPath: string | null;
   error: string | null;
   result: unknown;
+  createdByEmail: string | null;
+  createdByName: string | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -22,6 +25,7 @@ const JOBS_PATH = path.join(DATA_DIR, "rpp_exclusion_jobs.json");
 const OVERRIDES_PATH = path.join(DATA_DIR, "rpp_exclusion_overrides.json");
 const JOBS_TABLE = "rpp_exclusion_jobs";
 const OVERRIDES_TABLE = "rpp_exclusion_overrides";
+let fileCreateQueue: Promise<unknown> = Promise.resolve();
 
 function now() { return new Date().toISOString(); }
 function csvCell(value: string) { return `"${String(value).replaceAll('"', '""')}"`; }
@@ -43,6 +47,8 @@ async function ensureTables() {
     csv_path text,
     error text,
     result jsonb,
+    created_by_email text,
+    created_by_name text,
     created_at timestamptz not null default now(),
     updated_at timestamptz not null default now()
   )`);
@@ -52,6 +58,8 @@ async function ensureTables() {
     updated_at timestamptz not null default now(),
     job_id text
   )`);
+  await pool.query(`alter table ${JOBS_TABLE} add column if not exists created_by_email text`);
+  await pool.query(`alter table ${JOBS_TABLE} add column if not exists created_by_name text`);
 }
 
 async function readFileJobs(): Promise<RppExclusionJob[]> {
@@ -65,21 +73,39 @@ async function writeFileJobs(jobs: RppExclusionJob[]) {
   await fs.writeFile(JOBS_PATH, JSON.stringify({ updatedAt: now(), jobs }, null, 2));
 }
 
-export async function createRppExclusionJob(changes: RppExclusionJobChange[]) {
+export async function createRppExclusionJob(changes: RppExclusionJobChange[], actor: { email: string; name: string }) {
   const clean = changes.filter((row) => row.itemCode && row.currentExcluded !== row.originalExcluded)
     .map((row) => ({ itemCode: row.itemCode.trim().toLowerCase(), currentExcluded: row.currentExcluded, originalExcluded: row.originalExcluded }));
   if (!clean.length) throw new Error("変更対象がありません");
   const id = `rpp_excl_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
   const csvContent = buildExclusionCsv(clean);
-  const job: RppExclusionJob = { id, status: "pending", changes: clean, csvContent, csvPath: null, error: null, result: null, createdAt: now(), updatedAt: now() };
+  const job: RppExclusionJob = { id, status: "pending", changes: clean, csvContent, csvPath: null, error: null, result: null, createdByEmail: actor.email, createdByName: actor.name, createdAt: now(), updatedAt: now() };
   await ensureTables();
   if (pool) {
-    await pool.query(
-      `insert into ${JOBS_TABLE} (id, status, changes, csv_content, created_at, updated_at) values ($1,'pending',$2::jsonb,$3,$4,$4)`,
-      [job.id, JSON.stringify(job.changes), job.csvContent, job.createdAt]
-    );
+    const client = await pool.connect();
+    try {
+      await client.query("begin");
+      await client.query("select pg_advisory_xact_lock(hashtext('rpp_exclusion_jobs_queue'))");
+      const active = await client.query(`select * from ${JOBS_TABLE} where status in ('pending','running') order by created_at asc`);
+      assertRppExclusionQueueAvailable(active.rows.map(mapJob), clean, actor.email);
+      await client.query(
+        `insert into ${JOBS_TABLE} (id, status, changes, csv_content, created_by_email, created_by_name, created_at, updated_at) values ($1,'pending',$2::jsonb,$3,$4,$5,$6,$6)`,
+        [job.id, JSON.stringify(job.changes), job.csvContent, job.createdByEmail, job.createdByName, job.createdAt],
+      );
+      await client.query("commit");
+    } catch (error) {
+      await client.query("rollback");
+      throw error;
+    } finally { client.release(); }
   } else {
-    const jobs = await readFileJobs(); jobs.push(job); await writeFileJobs(jobs);
+    const run = fileCreateQueue.then(async () => {
+      const jobs = await readFileJobs();
+      assertRppExclusionQueueAvailable(jobs.filter((row) => row.status === "pending" || row.status === "running"), clean, actor.email);
+      jobs.push(job);
+      await writeFileJobs(jobs);
+    });
+    fileCreateQueue = run.then(() => undefined, () => undefined);
+    await run;
   }
   return job;
 }
@@ -93,6 +119,8 @@ function mapJob(row: Record<string, unknown>): RppExclusionJob {
     csvPath: row.csv_path ? String(row.csv_path) : row.csvPath ? String(row.csvPath) : null,
     error: row.error ? String(row.error) : null,
     result: row.result ?? null,
+    createdByEmail: row.created_by_email ? String(row.created_by_email) : row.createdByEmail ? String(row.createdByEmail) : null,
+    createdByName: row.created_by_name ? String(row.created_by_name) : row.createdByName ? String(row.createdByName) : null,
     createdAt: new Date(String(row.created_at ?? row.createdAt)).toISOString(),
     updatedAt: new Date(String(row.updated_at ?? row.updatedAt)).toISOString(),
   };

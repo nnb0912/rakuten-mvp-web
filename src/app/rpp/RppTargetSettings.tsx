@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
 import configuredTargetsSnapshot from "@/data/rpp_configured_targets.json";
 import seoKeywords from "@/data/seo_keywords.json";
 import {
@@ -13,6 +13,8 @@ import type { RppRecommendationWithApproval } from "@/lib/rppRecommendations";
 import { canOperateProductExclusion, deliveryLabel } from "@/lib/rppTargetUiRules";
 import type { RppAlertTarget, RppConfiguredTarget, RppExclusionProduct, RppOperationPolicy, RppPositionGoal, RppProtectionType } from "@/lib/rppTargets";
 import type { RppExperimentRecord } from "@/lib/rppExperiments";
+import type { RppEditLock } from "@/lib/rppCollaboration";
+import { parseRppTargetDraft, rppTargetDraftKey } from "@/lib/rppTargetDraft";
 
 import { RppInfoTip } from "./RppInfoTip";
 type Props = {
@@ -53,6 +55,9 @@ type FormState = {
   note: string;
 };
 
+type EditSession = RppEditLock & { token: string; draftKey: string };
+type ActiveRppOperation = { id: string; status: "pending" | "running"; actorName: string; itemCodes: string[]; createdAt: string; updatedAt: string };
+
 const blank: FormState = {
   itemCode: "",
   keyword: "",
@@ -90,7 +95,7 @@ function toForm(row: RppAlertTarget): FormState {
     owner: row.owner,
     ctrGoal: String(row.ctrGoal),
     cvrGoal: String(row.cvrGoal),
-    roasFloor: String(row.roasFloor),
+    roasFloor: String(row.baseRoasFloor ?? row.roasFloor),
     positionGoal: row.positionGoal,
     pcPositionGoal: row.pcPositionGoal ?? row.positionGoal,
     spPositionGoal: row.spPositionGoal ?? row.positionGoal,
@@ -210,12 +215,78 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
   const [formDrawerOpen, setFormDrawerOpen] = useState(false);
   const [exclusionSearch, setExclusionSearch] = useState("");
   const [showExcludedProducts, setShowExcludedProducts] = useState(false);
-  const [baseExclusionProducts, setBaseExclusionProducts] = useState(exclusionProducts);
+  const [baseExclusionProducts] = useState(exclusionProducts);
   const [exclusionOverrides, setExclusionOverrides] = useState<Record<string, boolean>>({});
   const [selectedOptimizationIds, setSelectedOptimizationIds] = useState<Set<string>>(() => new Set());
   const [experiments, setExperiments] = useState<RppExperimentRecord[]>(initialExperiments);
+  const [editSession, setEditSession] = useState<EditSession | null>(null);
+  const [activeEditLocks, setActiveEditLocks] = useState<RppEditLock[]>([]);
+  const [activeOperations, setActiveOperations] = useState<ActiveRppOperation[]>([]);
+  const [draftStatus, setDraftStatus] = useState("");
   const selectedModeBoundFields = modeBoundFields(form.optimizationMode);
   const selectedRoutineMode = ROUTINE_OPTIMIZATION_MODES.find((option) => option.value === form.optimizationMode);
+  const activeEditLockMap = useMemo(() => new Map(activeEditLocks.map((row) => [row.itemCode, row])), [activeEditLocks]);
+  const activeOperation = activeOperations[0] ?? null;
+
+  async function refreshCollaboration() {
+    try {
+      const response = await fetch("/api/rpp/collaboration", { cache: "no-store" });
+      if (!response.ok) return;
+      const data = await response.json();
+      setActiveEditLocks(Array.isArray(data.locks) ? data.locks : []);
+      setActiveOperations(Array.isArray(data.activeOperations) ? data.activeOperations : []);
+    } catch { /* 次回pollで再取得 */ }
+  }
+
+  useEffect(() => {
+    const initial = window.setTimeout(() => { void refreshCollaboration(); }, 0);
+    const timer = window.setInterval(() => { void refreshCollaboration(); }, 10_000);
+    return () => {
+      window.clearTimeout(initial);
+      window.clearInterval(timer);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!editSession) return;
+    const heartbeat = async () => {
+      try {
+        const response = await fetch("/api/rpp/collaboration", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "heartbeat", itemCode: editSession.itemCode, token: editSession.token }),
+        });
+        if (!response.ok) {
+          setError("編集ロックの有効期限が切れました。下書きは保存済みです。もう一度設定を開いてください。");
+          setFormDrawerOpen(false);
+          setEditSession(null);
+        }
+      } catch { /* 5分の猶予内で次回heartbeat */ }
+    };
+    const timer = window.setInterval(() => { void heartbeat(); }, 60_000);
+    const releaseOnUnload = () => {
+      void fetch("/api/rpp/collaboration", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "release", itemCode: editSession.itemCode, token: editSession.token }),
+        keepalive: true,
+      });
+    };
+    window.addEventListener("beforeunload", releaseOnUnload);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener("beforeunload", releaseOnUnload);
+    };
+  }, [editSession]);
+
+  useEffect(() => {
+    if (!formDrawerOpen || !editSession || !form.itemCode || !form.keyword) return;
+    const timer = window.setTimeout(() => {
+      localStorage.setItem(rppTargetDraftKey(form.itemCode, form.keyword), JSON.stringify(form));
+      setDraftStatus("下書き保存済み");
+    }, 500);
+    return () => window.clearTimeout(timer);
+  }, [editSession, form, formDrawerOpen]);
 
 
   async function refreshExperiments() {
@@ -267,7 +338,7 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
       cpcKind: cfg.source === "商品CPC" ? "ITEM" : "KEYWORD",
       currentCpc,
       actualRoas: rec?.roas ?? (rec?.spend && rec.salesAmount != null ? (rec.salesAmount / rec.spend) * 100 : null),
-      targetRoas: target?.roasFloor ?? 500,
+      targetRoas: target?.effectiveRoasFloor ?? target?.roasFloor ?? 500,
       spend: rec?.spend ?? null,
       sales: rec?.salesAmount ?? null,
       positionSuggestedCpc: rec?.proposedCpc ?? null,
@@ -282,6 +353,9 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
       changeLocked: target?.changeLocked,
       protectionType: target?.protectionType,
       experimentEndDate: target?.experimentEndDate,
+      recommendationAction: rec?.action,
+      recommendationBlocks: rec?.blocks,
+      uploadReady: rec?.uploadReady,
     });
     return { cfg, target, rec, preview };
   }), [configuredTargets, recommendationMap, targetMap]);
@@ -374,12 +448,51 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
   }
 
   function patchForm<K extends keyof FormState>(key: K, value: FormState[K]) {
+    setDraftStatus("入力内容を保存中…");
     setForm((current) => ({ ...current, [key]: value }));
   }
 
-  function openTargetForm(nextForm: FormState) {
-    setForm(nextForm);
-    setFormDrawerOpen(true);
+  async function openTargetForm(nextForm: FormState) {
+    setBusy(true);
+    setError(null);
+    try {
+      const response = await fetch("/api/rpp/collaboration", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "acquire", itemCode: nextForm.itemCode }),
+      });
+      const data = await response.json();
+      if (!response.ok || !data.ok || !data.token) {
+        const owner = data.lock?.actorName || "他の担当者";
+        throw new Error(`🔒 ${owner}が ${nextForm.itemCode} を編集中です。完了後にもう一度開いてください。`);
+      }
+      const stored = parseRppTargetDraft<FormState>(localStorage.getItem(rppTargetDraftKey(nextForm.itemCode, nextForm.keyword)), nextForm.itemCode, nextForm.keyword);
+      setForm(stored ?? nextForm);
+      setEditSession({ ...data.lock, token: data.token, draftKey: rppTargetDraftKey(nextForm.itemCode, nextForm.keyword) });
+      setDraftStatus(stored ? "保存済みの下書きを復元しました" : "自動保存が有効です");
+      setFormDrawerOpen(true);
+      await refreshCollaboration();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function closeTargetForm(discardDraft = false) {
+    const currentSession = editSession;
+    if (discardDraft && form.itemCode && form.keyword) localStorage.removeItem(rppTargetDraftKey(form.itemCode, form.keyword));
+    if (currentSession) {
+      void fetch("/api/rpp/collaboration", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "release", itemCode: currentSession.itemCode, token: currentSession.token }),
+        keepalive: true,
+      }).finally(() => { void refreshCollaboration(); });
+    }
+    setFormDrawerOpen(false);
+    setEditSession(null);
+    setDraftStatus(discardDraft ? "" : "下書き保存済み");
   }
 
   function excludedProductToForm(row: RppExclusionProduct): FormState {
@@ -495,39 +608,36 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
 
   async function applyExclusionToRms() {
     if (!exclusionChanged.length) return;
+    if (activeOperation) {
+      setError(`${activeOperation.actorName}がRMS反映処理中です。完了後に実行してください。`);
+      return;
+    }
     if (!window.confirm(`RMSへ除外ON/OFFを反映しますか？対象 ${exclusionChanged.length}商品。`)) return;
     setBusy(true);
     setError(null);
     setMessage(null);
+    const queuedJobIds: string[] = [];
     try {
-      const res = await fetch("/api/rpp/apply-exclusion", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ execute: true, changes: exclusionChanged.map((row) => ({ itemCode: row.itemCode, currentExcluded: row.currentExcluded, originalExcluded: row.excluded })) }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        const detail = [data.errorOutput, data.output]
-          .filter(Boolean)
-          .join("\n")
-          .slice(0, 600)
-          .replace(/[\r\n]+/g, " / ");
-        throw new Error(`${data.error ?? "RMS反映に失敗しました"}${data.csvPath ? ` / CSV: ${data.csvPath}` : ""}${detail ? ` / 詳細: ${detail}` : ""}`);
+      for (const row of exclusionChanged) {
+        const res = await fetch("/api/rpp/apply-exclusion", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ execute: true, changes: [{ itemCode: row.itemCode, currentExcluded: row.currentExcluded, originalExcluded: row.excluded }] }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.queued || !data.jobId) {
+          const prefix = queuedJobIds.length ? `${queuedJobIds.length}商品は登録済みです。` : "";
+          throw new Error(`${prefix}${row.itemCode}: ${data.error ?? "RMS反映ジョブの登録に失敗しました"}`);
+        }
+        queuedJobIds.push(data.jobId);
+        setExclusionOverrides((current) => {
+          const next = { ...current };
+          delete next[row.itemCode];
+          return next;
+        });
       }
-      if (data.queued) {
-        setExclusionOverrides({});
-        setMessage(`RMS反映ジョブを登録しました（${data.changes}商品 / job: ${data.jobId}）。Mac Studioワーカーが反映・読戻し確認します。`);
-      } else if (data.productionChange === false || data.disabled) {
-        setMessage(`${data.reason ?? "RMS自動反映は無効です。CSVのみ生成しました。"}（${data.changes}商品 / CSV: ${data.csvPath}）`);
-      } else {
-        const appliedRows = exclusionChanged.map((row) => ({ itemCode: row.itemCode, currentExcluded: row.currentExcluded }));
-        setBaseExclusionProducts((current) => current.map((row) => {
-          const applied = appliedRows.find((item) => item.itemCode === row.itemCode);
-          return applied ? { ...row, excluded: applied.currentExcluded } : row;
-        }));
-        setExclusionOverrides({});
-        setMessage(`RMS反映を実行しました（${data.changes}商品 / CSV: ${data.csvPath}）`);
-      }
+      setExclusionOverrides({});
+      setMessage(`RMS反映ジョブを商品別に登録しました（${queuedJobIds.length}商品 / ${queuedJobIds.length}ジョブ）。Mac Studioワーカーが1商品ずつ反映・読戻し確認します。`);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -541,11 +651,13 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
     setError(null);
     setMessage(null);
     try {
+      if (!editSession || editSession.itemCode !== form.itemCode.trim().toLowerCase()) throw new Error("編集ロックを取得し直してください");
       if (form.optimizationMode === "FIXED" && !form.fixedCpc.trim()) {
         throw new Error("CPC固定モードでは固定CPCが必須です");
       }
       const payload = {
         ...form,
+        editLockToken: editSession.token,
         changeLocked: form.protectionType === "LOCKED",
         positionGoal: form.pcPositionGoal,
         searchKeywords: form.searchKeywords.split(/[\n,、]+/).map((kw) => kw.trim()).filter(Boolean),
@@ -575,9 +687,13 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
         const next = current.filter((row) => row.id !== data.target.id);
         return [...next, data.target].sort((a, b) => a.itemCode.localeCompare(b.itemCode, "ja") || a.keyword.localeCompare(b.keyword, "ja"));
       });
+      localStorage.removeItem(editSession.draftKey);
+      setEditSession(null);
+      setDraftStatus("");
       setForm(blank);
       setFormDrawerOpen(false);
       setMessage("保存しました");
+      void refreshCollaboration();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -647,6 +763,8 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
     <div className="target-settings">
       {error ? <p className="error-box">{error}</p> : null}
       {message ? <p className="success-box">{message}</p> : null}
+      {activeOperation ? <p className="rpp-collaboration-banner operation"><b>RMS反映{activeOperation.status === "running" ? "中" : "待機中"}</b><span>{activeOperation.actorName} / {activeOperation.itemCodes.join(", ")}</span><small>完了・読戻し確認まで他の反映操作は待機してください。</small></p> : null}
+      {activeEditLocks.length ? <p className="rpp-collaboration-banner"><b>編集中</b><span>{activeEditLocks.map((lock) => `${lock.actorName}：${lock.itemCode}`).join(" / ")}</span><small>別商品は同時に編集できます。</small></p> : null}
       <section className="owner-filter-strip" aria-label="担当・広告グループ絞り込み">
         <div className="owner-tabs">
           <button className={ownerFilter === "全て" ? "owner-tab active" : "owner-tab"} type="button" onClick={() => selectOwnerFilter("全て")}>全て</button>
@@ -674,7 +792,7 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
           <div className="product-list-actions">
             <span className="status-pill status-hold">表示 {filteredConfiguredTargets.length}件</span>
             <span className={exclusionChanged.length ? "status-pill approval-held" : "status-pill status-approved"}>変更予定 {exclusionChanged.length}件</span>
-            <button className="primary-button compact-button" disabled={!exclusionChanged.length || busy} type="button" onClick={applyExclusionToRms}>RMSへ反映</button>
+            <button className="primary-button compact-button" disabled={!exclusionChanged.length || busy || Boolean(activeOperation)} type="button" onClick={applyExclusionToRms}>{activeOperation ? "RMS反映中" : "RMSへ反映"}</button>
             <button className="secondary-button compact-button" disabled={!exclusionChanged.length} type="button" onClick={downloadExcludeCsv}>手動CSV</button>
             <button className="secondary-button compact-button" disabled={!exclusionChanged.length} type="button" onClick={() => setExclusionOverrides({})}>変更を戻す</button>
             <small className="rms-upload-note">自動反映がRMSログインエラーになる場合は、手動CSVをRMS除外商品の一括アップロードへ入れてください。</small>
@@ -749,7 +867,7 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
                 const exclusionChangedForItem = exclusionState ? currentExcluded !== exclusionState.excluded : false;
                 const canUndoAccidentalExclusion = Boolean(exclusionState && exclusionState.excluded === false && currentExcluded === true);
                 const itemTargetCompletion = itemTargetCompletionMap.get(cfg.itemCode) ?? { total: 1, saved: row ? 1 : 0, missing: row ? 0 : 1 };
-                const canReleaseExclusion = itemTargetCompletion.saved > 0;
+                const canReleaseExclusion = itemTargetCompletion.total > 0 && itemTargetCompletion.missing === 0;
                 const roas = rec?.roas ?? (rec?.spend && rec.salesAmount != null ? Math.round((rec.salesAmount / rec.spend) * 100) : null);
                 const optimization = optimizationPreviewMap.get(cfg.id)?.preview;
                 const optimizationActionable = optimization?.proposedCpc != null && optimization.proposedCpc !== optimization.currentCpc;
@@ -782,7 +900,7 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
                     <td><span className={`protection-pill protection-${(row?.protectionType || "NORMAL").toLowerCase()}`}>{protectionLabel}</span><small>{row?.lockReason || ""}</small></td>
                     <td><span className={`delivery-dot ${currentExcluded ? "off" : "on"}`}><i />{deliveryLabel(cfg.source, currentExcluded)}</span>{exclusionChangedForItem ? <small className="pending-change">変更予定</small> : null}</td>
                     <td className="actions-col">
-                      <button disabled={busy} type="button" onClick={() => openTargetForm(row ? toForm(row) : configuredToForm(cfg))}>設定</button>
+                      <button disabled={busy} type="button" onClick={() => openTargetForm(row ? toForm(row) : configuredToForm(cfg))} title={activeEditLockMap.get(cfg.itemCode) ? `${activeEditLockMap.get(cfg.itemCode)?.actorName}が編集中` : undefined}>{activeEditLockMap.get(cfg.itemCode) ? "🔒 設定" : "設定"}</button>
                       <button disabled={busy || row?.changeLocked === true || row?.protectionType === "BLOCK"} type="button" onClick={() => downloadCpcCsv(cfg)} title={row?.changeLocked || row?.protectionType === "BLOCK" ? "変更対象外です" : undefined}>CPC</button>
                       {productExclusionOperable ? <button className={currentExcluded ? "restore-button" : "danger-ghost"} disabled={busy || (currentExcluded && !canReleaseExclusion && !canUndoAccidentalExclusion)} type="button" onClick={() => toggleExcluded(cfg.itemCode, canReleaseExclusion)} title={currentExcluded && !canReleaseExclusion && !canUndoAccidentalExclusion ? "この商品に目標が1つ以上入るまで除外解除できません" : undefined}>{exclusionChangedForItem ? "戻す" : currentExcluded ? "再開" : "除外"}</button> : <span className="keyword-exclusion-na" title="広告除外は商品CPC行から操作します">商品単位</span>}
                     </td>
@@ -809,8 +927,9 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
             <label className="excluded-search">商品検索<input value={exclusionSearch} onChange={(e) => setExclusionSearch(e.target.value)} placeholder="商品番号・商品名・担当で検索" /></label>
             <div className="excluded-product-grid">
               {filteredExcludedProducts.slice(0, 80).map((row) => {
-                const savedCount = savedTargetCountByItemCode.get(row.itemCode) ?? 0;
-                const canTurnOn = savedCount > 0;
+                const completion = itemTargetCompletionMap.get(row.itemCode) ?? { total: 0, saved: savedTargetCountByItemCode.get(row.itemCode) ?? 0, missing: 0 };
+                const savedCount = completion.saved;
+                const canTurnOn = completion.total > 0 && completion.missing === 0;
                 const changed = row.currentExcluded !== row.excluded;
                 return (
                   <article className="excluded-product-row" key={row.itemCode}>
@@ -819,7 +938,7 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
                     <span><small>保存目標</small><strong>{savedCount}件</strong></span>
                     <div className="card-actions excluded-actions">
                       <button disabled={busy || !canTurnOn} type="button" onClick={() => toggleExcluded(row.itemCode, canTurnOn)} title={!canTurnOn ? "先に目標設定を1つ作成してください" : undefined}>{changed ? "元に戻す" : "広告ONに戻す"}</button>
-                      <button disabled={busy} type="button" onClick={() => openTargetForm(excludedProductToForm(row))}>目標設定</button>
+                      <button disabled={busy} type="button" onClick={() => openTargetForm(excludedProductToForm(row))} title={activeEditLockMap.get(row.itemCode) ? `${activeEditLockMap.get(row.itemCode)?.actorName}が編集中` : undefined}>{activeEditLockMap.get(row.itemCode) ? "🔒 目標設定" : "目標設定"}</button>
                     </div>
                   </article>
                 );
@@ -861,14 +980,14 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
         ) : <p className="experiment-empty">保存済みの実験履歴はありません。現在の4つの通常運用モードでは実験履歴を作成しません。</p>}
       </section>
 
-      {formDrawerOpen ? <button className="rpp-drawer-backdrop" aria-label="設定を閉じる" type="button" onClick={() => setFormDrawerOpen(false)} /> : null}
+      {formDrawerOpen ? <button className="rpp-drawer-backdrop" aria-label="設定を閉じる" type="button" onClick={() => closeTargetForm()} /> : null}
       <aside className={formDrawerOpen ? "rpp-target-drawer open" : "rpp-target-drawer"} id="rpp-target-form" aria-hidden={!formDrawerOpen}>
-        <div className="rpp-drawer-head"><div><small>ROW SETTINGS</small><h2>{form.itemCode || "商品/KW"} の運用設定</h2><p>{form.keyword || "一覧の設定ボタンから対象を選択"}</p></div><button type="button" aria-label="閉じる" onClick={() => setFormDrawerOpen(false)}>×</button></div>
+        <div className="rpp-drawer-head"><div><small>ROW SETTINGS</small><h2>{form.itemCode || "商品/KW"} の運用設定</h2><p>{form.keyword || "一覧の設定ボタンから対象を選択"}</p><span className="draft-status">🔒 編集中 / {draftStatus}</span></div><button type="button" aria-label="閉じる" onClick={() => closeTargetForm()}>×</button></div>
         <div className="rpp-drawer-body">
         <form className="target-form" onSubmit={saveTarget}>
           <div className="form-row two-cols">
-            <label><RppInfoTip label="商品管理番号" /><input value={form.itemCode} onChange={(e) => patchForm("itemCode", e.target.value)} placeholder="r0606" required /></label>
-            <label><RppInfoTip label="RPP設定KW" /><input value={form.keyword} onChange={(e) => patchForm("keyword", e.target.value)} placeholder="まな板 / 商品CPC" required /></label>
+            <label><RppInfoTip label="商品管理番号" /><input value={form.itemCode} onChange={(e) => patchForm("itemCode", e.target.value)} placeholder="r0606" required disabled={Boolean(editSession)} /></label>
+            <label><RppInfoTip label="RPP設定KW" /><input value={form.keyword} onChange={(e) => patchForm("keyword", e.target.value)} placeholder="まな板 / 商品CPC" required disabled={Boolean(editSession)} /></label>
           </div>
           <div className="target-form-field">
             <span><RppInfoTip label="基準ワード" />（複数可・1語以上必須）</span>
@@ -951,8 +1070,8 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
           <label><RppInfoTip label="メモ" /><textarea value={form.note} onChange={(e) => patchForm("note", e.target.value)} placeholder="通常検索が強い場合はRPPは1ページ目内でOK、など" /></label>
           <div className="inline-links form-actions">
             <button className="primary-button" disabled={busy} type="submit">目標を保存</button>
-            <button className="secondary-button" disabled={busy} type="button" onClick={() => { setForm(blank); setFormDrawerOpen(false); }}>閉じる</button>
-            <button className="secondary-button" disabled={busy || missingCount === 0} type="button" onClick={seedMissingTargets}>未設定を一括作成</button>
+            <button className="secondary-button" disabled={busy} type="button" onClick={() => closeTargetForm()}>閉じる</button>
+            <button className="secondary-button" disabled={busy || missingCount === 0 || activeEditLocks.length > 0 || Boolean(activeOperation)} type="button" onClick={seedMissingTargets}>未設定を一括作成</button>
           </div>
         </form>
         <div className="target-help">

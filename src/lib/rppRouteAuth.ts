@@ -2,12 +2,13 @@ import { auth } from "@/auth";
 import { getRppRoleForEmail, hasRppRole, type RppRole } from "@/lib/authAccess";
 
 export type RppRouteAccess =
-  | { ok: true; email: string; role: RppRole }
+  | { ok: true; email: string; name: string; role: RppRole }
   | { ok: false; response: Response };
 
 export async function requireRppRole(required: RppRole): Promise<RppRouteAccess> {
   const session = await auth();
   const email = session?.user?.email?.trim().toLowerCase() ?? "";
+  const name = session?.user?.name?.trim() || email.split("@")[0] || "担当者";
   const role = getRppRoleForEmail(email);
 
   if (!email || !role) {
@@ -16,5 +17,5 @@ export async function requireRppRole(required: RppRole): Promise<RppRouteAccess>
   if (!hasRppRole(role, required)) {
     return { ok: false, response: Response.json({ error: "forbidden", requiredRole: required }, { status: 403 }) };
   }
-  return { ok: true, email, role };
+  return { ok: true, email, name, role };
 }

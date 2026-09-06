@@ -63,6 +63,9 @@ export type RppOptimizationInput = RppModeCpcBounds & {
   protectionType?: RppProtectionType;
   experimentEndDate?: string;
   today?: string;
+  recommendationAction?: "RAISE" | "LOWER" | "HOLD";
+  recommendationBlocks?: string[];
+  uploadReady?: boolean;
 };
 
 export type RppOptimizationPreview = {
@@ -147,6 +150,9 @@ export function buildRppOptimizationPreview(input: RppOptimizationInput): RppOpt
 
   if (input.changeLocked || input.protectionType === "LOCKED") return blocked("変更不可リスト");
   if (input.protectionType === "BLOCK") return blocked("ブロック対象");
+  if (input.recommendationAction === "HOLD" || (input.recommendationBlocks?.length ?? 0) > 0 || input.uploadReady === false) {
+    return blocked(input.recommendationBlocks?.join(" / ") || "候補生成エンジンがHOLD判定");
+  }
   if (!currentCpc) return blocked("現在CPCなし");
   const focus = input.protectionType === "FOCUS";
   const bounds = selectedModeBounds(input);
@@ -171,6 +177,8 @@ export function buildRppOptimizationPreview(input: RppOptimizationInput): RppOpt
   }
 
   if (!proposedCpc) return blocked("提案を計算できません");
+  if (input.recommendationAction === "RAISE" && proposedCpc < currentCpc) return blocked("候補方向と提案方向が一致しません");
+  if (input.recommendationAction === "LOWER" && proposedCpc > currentCpc) return blocked("候補方向と提案方向が一致しません");
   const spend = finitePositive(input.spend) ? input.spend : null;
   const sales = typeof input.sales === "number" && Number.isFinite(input.sales) && input.sales >= 0 ? input.sales : null;
   const projectedSpend = spend == null ? null : spend * (proposedCpc / currentCpc);

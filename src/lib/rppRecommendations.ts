@@ -1,6 +1,8 @@
 import { promises as fs } from "fs";
 import path from "path";
 import { readLatestRppDashboardSnapshot, type RppSnapshotFile } from "./rppDashboardSnapshots";
+import { recommendationId } from "./rppRecommendationId";
+export { recommendationId } from "./rppRecommendationId";
 
 export type RppApprovalStatus = "pending" | "approved" | "rejected" | "held";
 
@@ -66,11 +68,6 @@ const FRESHNESS_LIMIT_HOURS: Record<string, number> = {
   "rpp_position_adjustment_log.json": 24,
 };
 
-export function recommendationId(row: Pick<RppRecommendation, "itemCode" | "keyword" | "direction" | "currentCpc" | "meyasuCpc">) {
-  return [row.itemCode, row.keyword, row.direction, row.currentCpc, row.meyasuCpc]
-    .map((part) => encodeURIComponent(String(part)))
-    .join("__");
-}
 
 async function pathExists(filePath: string) {
   try {
@@ -111,7 +108,7 @@ export async function readRppRecommendations() {
     filePath = "db:rpp_dashboard_snapshots";
     data = syncedSnapshot.recommendations as RecommendationFile;
   } else if (filePath) {
-    data = JSON.parse(await fs.readFile(filePath, "utf8")) as RecommendationFile;
+    data = JSON.parse(await fs.readFile(/* turbopackIgnore: true */ filePath, "utf8")) as RecommendationFile;
   } else {
     try {
       data = JSON.parse(await fs.readFile(SNAPSHOT_RECOMMENDATIONS_PATH, "utf8")) as RecommendationFile;
@@ -147,10 +144,10 @@ export async function updateRppApproval(id: string, status: RppApprovalStatus, n
 }
 
 async function statInfo(fileName: string) {
-  const filePath = path.join(RPP_PROJECT_DIR, fileName);
+  const filePath = path.join(/* turbopackIgnore: true */ RPP_PROJECT_DIR, fileName);
   const maxAgeHours = FRESHNESS_LIMIT_HOURS[fileName] ?? 24;
   try {
-    const st = await fs.stat(filePath);
+    const st = await fs.stat(/* turbopackIgnore: true */ filePath);
     const ageHours = (Date.now() - st.mtime.getTime()) / 36e5;
     const ok = ageHours <= maxAgeHours;
     return { name: fileName, filePath, exists: true, ok, status: ok ? "OK" : "古い", ageHours, maxAgeHours, size: st.size, mtime: st.mtime.toISOString() };

@@ -93,18 +93,33 @@ test("バランスモードはROAS・順位候補の両方を必須にし既存�
   assert.equal(capped.proposedCpc, 115);
 });
 
-test("CPC固定モードはRMS直接登録と同様に指定額を維持し、楽天下限だけを守る", () => {
+test("CPC固定モードは一律120円上限を設けず指定額を維持する", () => {
   const down = buildRppOptimizationPreview({ mode: "FIXED", cpcKind: "ITEM", currentCpc: 100, actualRoas: null, targetRoas: 500, spend: null, sales: null, fixedCpc: 20 });
   const up = buildRppOptimizationPreview({ mode: "FIXED", cpcKind: "ITEM", currentCpc: 100, actualRoas: null, targetRoas: 500, spend: null, sales: null, fixedCpc: 200 });
   const keywordFloor = buildRppOptimizationPreview({ mode: "FIXED", cpcKind: "KEYWORD", currentCpc: 100, actualRoas: null, targetRoas: 500, spend: null, sales: null, fixedCpc: 10 });
   assert.equal(down.proposedCpc, 20);
   assert.equal(up.proposedCpc, 200);
+  assert.equal(up.blockedReason, null);
   assert.equal(keywordFloor.proposedCpc, 40);
+});
+
+test("候補方向と逆方向のWeb提案は生成しない", () => {
+  const raise = buildRppOptimizationPreview({ mode: "FIXED", cpcKind: "ITEM", currentCpc: 100, actualRoas: null, targetRoas: 500, spend: null, sales: null, fixedCpc: 80, recommendationAction: "RAISE", uploadReady: true });
+  const lower = buildRppOptimizationPreview({ mode: "FIXED", cpcKind: "ITEM", currentCpc: 100, actualRoas: null, targetRoas: 500, spend: null, sales: null, fixedCpc: 120, recommendationAction: "LOWER", uploadReady: true });
+  assert.equal(raise.proposedCpc, null);
+  assert.equal(lower.proposedCpc, null);
+  assert.match(raise.blockedReason ?? "", /候補方向/);
 });
 
 test("変更不可とデータ不足は提案を生成しない", () => {
   assert.equal(buildRppOptimizationPreview({ mode: "ROAS", cpcKind: "ITEM", currentCpc: 40, actualRoas: 900, targetRoas: 500, spend: 100, sales: 900, changeLocked: true }).blockedReason, "変更不可リスト");
   assert.equal(buildRppOptimizationPreview({ mode: "ROAS", cpcKind: "ITEM", currentCpc: 40, actualRoas: null, targetRoas: 500, spend: 100, sales: 0 }).blockedReason, "ROAS実績または目標不足");
+});
+
+test("候補生成エンジンがHOLDまたはupload不可ならWebで再候補化しない", () => {
+  const base = { mode: "ROAS" as const, cpcKind: "ITEM" as const, currentCpc: 40, actualRoas: 900, targetRoas: 500, spend: 100, sales: 900 };
+  assert.equal(buildRppOptimizationPreview({ ...base, recommendationAction: "HOLD", recommendationBlocks: ["鮮度不足"], uploadReady: false }).proposedCpc, null);
+  assert.equal(buildRppOptimizationPreview({ ...base, recommendationAction: "RAISE", recommendationBlocks: [], uploadReady: false }).proposedCpc, null);
 });
 
 test("CPC固定モードは旧実験終了日が残っていても通常運用として動作する", () => {
@@ -137,6 +152,13 @@ test("3つの通常運用モードはそれぞれのCPC下限・上限を提案�
   assert.equal(roas.proposedCpc, 105);
   assert.equal(position.proposedCpc, 80);
   assert.equal(balanced.proposedCpc, 105);
+});
+
+test("商品別上限が300円なら120円を超えて提案できるが300円は超えない", () => {
+  const under = buildRppOptimizationPreview({ mode: "POSITION", cpcKind: "ITEM", currentCpc: 200, actualRoas: null, targetRoas: 500, spend: null, sales: null, positionSuggestedCpc: 280, positionMaxCpc: 300 });
+  const capped = buildRppOptimizationPreview({ mode: "POSITION", cpcKind: "ITEM", currentCpc: 280, actualRoas: null, targetRoas: 500, spend: null, sales: null, positionSuggestedCpc: 400, positionMaxCpc: 300 });
+  assert.equal(under.proposedCpc, 240);
+  assert.equal(capped.proposedCpc, 300);
 });
 
 test("楽天の絶対CPC下限がモード別上限より優先される", () => {
