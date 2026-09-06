@@ -396,6 +396,30 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
     });
   }
 
+  function basisWordRows() {
+    const rows = form.searchKeywords.split("\n");
+    return rows.length ? rows : [""];
+  }
+
+  function updateBasisWord(index: number, value: string) {
+    const rows = basisWordRows();
+    rows[index] = value;
+    patchForm("searchKeywords", rows.join("\n"));
+  }
+
+  function addBasisWordSlot() {
+    patchForm("searchKeywords", [...basisWordRows(), ""].join("\n"));
+  }
+
+  function removeBasisWordSlot(index: number) {
+    const rows = basisWordRows();
+    if (rows.length === 1) {
+      patchForm("searchKeywords", "");
+      return;
+    }
+    patchForm("searchKeywords", rows.filter((_, rowIndex) => rowIndex !== index).join("\n"));
+  }
+
   function toggleExcluded(itemCode: string, canRelease = true) {
     setExclusionOverrides((current) => {
       const base = baseExclusionProducts.find((row) => row.itemCode === itemCode)?.excluded ?? false;
@@ -718,7 +742,7 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
                 const rec = recommendationMap.get(metricKey(cfg.itemCode, cfg.keyword));
                 const snapshot = positionSnapshotMap.get(cfg.id);
                 const position = rec?.rppPosition || cfg.rppPosition || snapshot?.rppPosition || "未測定";
-                const positionKeyword = representativeKeyword(cfg, snapshot);
+                const positionKeyword = row?.searchKeywords?.[0] || representativeKeyword(cfg, snapshot);
                 const exclusionState = exclusionStateMap.get(cfg.itemCode);
                 const currentExcluded = exclusionState?.currentExcluded ?? false;
                 const productExclusionOperable = canOperateProductExclusion(cfg.source);
@@ -847,15 +871,28 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
             <label><RppInfoTip label="RPP設定KW" /><input value={form.keyword} onChange={(e) => patchForm("keyword", e.target.value)} placeholder="まな板 / 商品CPC" required /></label>
           </div>
           <div className="target-form-field">
-            <span><RppInfoTip label="検索調査キーワード" /></span>
+            <span><RppInfoTip label="基準ワード" />（複数可・1語以上必須）</span>
             <div className="keyword-candidate-box">
-              <b>KW候補</b>
+              <b>基準ワード候補</b>
               <div className="search-word-chips">
                 {searchWordOptions.length ? searchWordOptions.map((word) => <button type="button" key={word} onClick={() => addSearchWord(word)}>＋ {word}</button>) : <small>候補なし。直接入力できます。</small>}
               </div>
             </div>
-            <textarea value={form.searchKeywords} onChange={(e) => patchForm("searchKeywords", e.target.value)} placeholder="候補を押すか、検索したいKWを改行で入力\n例: まな板\nまな板 フチ付き\nかまぼこ型 まな板" />
-            <small>候補はSEO検索対策KW・RPP設定KW・代表KWから表示します。複数KWは改行/カンマ区切りで保存できます。</small>
+            <div className="basis-word-list">
+              {basisWordRows().map((word, index) => (
+                <div className="basis-word-row" key={`basis-word-${index}`}>
+                  <input
+                    required={form.keyword === "商品CPC" && index === 0}
+                    value={word}
+                    onChange={(event) => updateBasisWord(index, event.target.value)}
+                    placeholder={`基準ワード ${index + 1}`}
+                  />
+                  <button type="button" onClick={() => removeBasisWordSlot(index)} aria-label={`基準ワード${index + 1}を削除`}>削除</button>
+                </div>
+              ))}
+              <button className="basis-word-add" type="button" onClick={addBasisWordSlot}>＋ 基準ワードを追加</button>
+            </div>
+            <small>入力枠は追加・削除できます。登録した基準ワードのどれか1つでもPC・SPの目標順位を満たせば達成扱いです。</small>
           </div>
           <div className="form-row two-cols">
             <label><RppInfoTip label="担当" /><input value={form.owner} onChange={(e) => patchForm("owner", e.target.value)} placeholder="森下" /></label>
