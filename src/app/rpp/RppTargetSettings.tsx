@@ -15,6 +15,7 @@ import type { RppAlertTarget, RppConfiguredTarget, RppExclusionProduct, RppOpera
 import type { RppExperimentRecord } from "@/lib/rppExperiments";
 import type { RppEditLock } from "@/lib/rppCollaboration";
 import { parseRppTargetDraft, rppTargetDraftKey } from "@/lib/rppTargetDraft";
+import { formatRppClicks, formatRppYen } from "@/lib/rppMetricDisplay";
 
 import { RppInfoTip } from "./RppInfoTip";
 type Props = {
@@ -24,6 +25,7 @@ type Props = {
   ownerNames: string[];
   recommendations: RppRecommendationWithApproval[];
   initialExperiments: RppExperimentRecord[];
+  performanceDateRange?: string | null;
 };
 
 type FormState = {
@@ -200,7 +202,7 @@ function seoWordsForItem(itemCode: string) {
   return SEO_KEYWORDS[code] || SEO_KEYWORDS[code.toLowerCase()] || SEO_KEYWORDS[code.toUpperCase()] || [];
 }
 
-export default function RppTargetSettings({ initialTargets, configuredTargets, exclusionProducts, ownerNames, recommendations, initialExperiments }: Props) {
+export default function RppTargetSettings({ initialTargets, configuredTargets, exclusionProducts, ownerNames, recommendations, initialExperiments, performanceDateRange }: Props) {
   const [targets, setTargets] = useState(initialTargets);
   const [form, setForm] = useState<FormState>(blank);
   const [busy, setBusy] = useState(false);
@@ -817,6 +819,7 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
           <label className="compact-select"><RppInfoTip label="保護" /><select value={protectionFilter} onChange={(event) => setProtectionFilter(event.target.value as "ALL" | RppProtectionType)}><option value="ALL">すべて</option><option value="NORMAL">通常</option><option value="BLOCK">ブロック</option><option value="WHITELIST">ホワイト</option><option value="LOCKED">変更不可</option><option value="FOCUS">注力</option></select></label>
           <button className="filter-clear" type="button" onClick={() => { setTableSearch(""); setTableStatusFilter("ALL"); setModeFilter("ALL"); setProtectionFilter("ALL"); setOwnerFilter("全て"); setGroupFilter("全て"); }}>条件クリア</button>
           <small>表示 {filteredConfiguredTargets.length} / {configuredTargets.length}件</small>
+          <small>実績対象 {performanceDateRange || "未取得"}</small>
         </div>
         <div className="optimization-preview-bar">
           <div className="optimization-preview-main">
@@ -888,7 +891,7 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
                       <small title={cfg.itemName}>{cfg.itemName || "商品名未取得"}</small>
                     </td>
                     <td><b>{row?.owner || cfg.owner || "未設定"}</b><small>{row?.adGroup || "通常"}</small></td>
-                    <td className="number-cell"><b>{yenNumber(rec?.spend ?? 0)}</b><small>{(rec?.clicks ?? 0).toLocaleString("ja-JP")} click / 売上 {yenNumber(rec?.salesAmount ?? 0)}</small></td>
+                    <td className="number-cell"><b>{formatRppYen(rec?.spend)}</b><small>{formatRppClicks(rec?.clicks)} / 売上 {formatRppYen(rec?.salesAmount)}</small></td>
                     <td className="cpc-cell">
                       <b>{optimization?.currentCpc ? `${optimization.currentCpc}円` : cfg.source === "商品CPC" ? yen(cfg.itemCpc) : yen(cfg.keywordCpc)}</b>
                       <span className={optimization?.delta == null ? "" : optimization.delta > 0 ? "cpc-up" : optimization.delta < 0 ? "cpc-down" : ""}>→ {optimization?.proposedCpc == null ? "提案なし" : `${optimization.proposedCpc}円`}</span>

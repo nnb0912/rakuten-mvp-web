@@ -129,7 +129,7 @@ export default async function RppPage({ searchParams }: { searchParams: Promise<
     readRppRecommendations(), readRppDashboardMeta(), readRppAlertTargets(), readRppAutoAdjustmentSettings(),
     readRppExperimentHistory(), listRecentRppExclusionJobs(8), readRppBudgetSettings(), readRppStrategySettings(), readRppDailySpendActuals(), listRppAuditEvents(30), readRppAnomalyComparison(),
   ]);
-  const summary = data.summary as { generatedAt?: string; counts?: { raise?: number; lower?: number; hold?: number; ok?: number }; safety?: { productionChange?: boolean }; budgetMetrics?: RppBudgetMetrics } | null;
+  const summary = data.summary as { generatedAt?: string; performanceDateRange?: string | null; counts?: { raise?: number; lower?: number; hold?: number; ok?: number }; safety?: { productionChange?: boolean }; budgetMetrics?: RppBudgetMetrics } | null;
   const candidateTotal = (summary?.counts?.raise ?? 0) + (summary?.counts?.lower ?? 0);
   const holdRows = data.recommendations.filter((row) => row.action === "HOLD");
   const outOfScopeRows = holdRows.filter(isAutoAdjustmentOutOfScope);
@@ -219,7 +219,7 @@ export default async function RppPage({ searchParams }: { searchParams: Promise<
       </> : null}
 
       {view === "products" ? <section className="panel target-panel" id="rpp-products">
-        <RppTargetSettings initialTargets={targetData.targets} configuredTargets={targetData.configuredTargets} exclusionProducts={targetData.exclusionProducts} ownerNames={targetData.ownerNames} recommendations={data.recommendations} initialExperiments={experimentHistory} />
+        <RppTargetSettings initialTargets={targetData.targets} configuredTargets={targetData.configuredTargets} exclusionProducts={targetData.exclusionProducts} ownerNames={targetData.ownerNames} recommendations={data.recommendations} initialExperiments={experimentHistory} performanceDateRange={summary?.performanceDateRange} />
       </section> : null}
 
       {view === "alerts" ? <RppAnomalyAlertPanel {...anomalyData} /> : null}
