@@ -143,14 +143,30 @@ export default async function RppPage({ searchParams }: { searchParams: Promise<
   const latestExclusionJob = exclusionJobs[0];
   const allowedItemCodes = summary?.safety?.autoAdjustment?.allowedItemCodes ?? [];
   const allowedRecommendations = data.recommendations.filter((row) => allowedItemCodes.includes(row.itemCode));
-  const allowedRows = allowedItemCodes.map((itemCode) => {
-    const recommendation = allowedRecommendations.find((row) => row.itemCode === itemCode) ?? null;
-    const target = targetData.targets.find((row) => row.itemCode === itemCode) ?? null;
-    const configured = targetData.configuredTargets.find((row) => row.itemCode === itemCode) ?? null;
+  type AllowedDashboardRow = {
+    itemCode: string;
+    recommendation: (typeof data.recommendations)[number] | null;
+    target: (typeof targetData.targets)[number] | null;
+    configured: (typeof targetData.configuredTargets)[number] | null;
+    product: (typeof targetData.exclusionProducts)[number] | null;
+    excluded: boolean;
+  };
+  const allowedRows = allowedItemCodes.flatMap<AllowedDashboardRow>((itemCode) => {
     const product = targetData.exclusionProducts.find((row) => row.itemCode === itemCode) ?? null;
-    return { itemCode, recommendation, target, configured, product, excluded: product?.excluded === true };
+    const recommendations = allowedRecommendations.filter((row) => row.itemCode === itemCode);
+    if (!recommendations.length) return [{ itemCode, recommendation: null, target: null, configured: null, product, excluded: product?.excluded === true }];
+    return recommendations.map((recommendation) => ({
+      itemCode,
+      recommendation,
+      target: targetData.targets.find((row) => row.itemCode === itemCode && row.keyword === recommendation.keyword) ?? null,
+      configured: targetData.configuredTargets.find((row) => row.itemCode === itemCode && row.keyword === recommendation.keyword) ?? null,
+      product,
+      excluded: product?.excluded === true,
+    }));
   });
   const activeAllowedRows = allowedRows.filter((row) => !row.excluded);
+  const activeAllowedProducts = new Set(activeAllowedRows.map((row) => row.itemCode)).size;
+  const excludedAllowedProducts = allowedItemCodes.filter((itemCode) => targetData.exclusionProducts.some((row) => row.itemCode === itemCode && row.excluded)).length;
   const dashboardSpend = allowedRecommendations.reduce((sum, row) => sum + (row.spend ?? 0), 0);
   const dashboardSales = allowedRecommendations.reduce((sum, row) => sum + (row.salesAmount ?? 0), 0);
   const dashboardRoas = dashboardSpend > 0 ? (dashboardSales / dashboardSpend) * 100 : null;
@@ -184,9 +200,9 @@ export default async function RppPage({ searchParams }: { searchParams: Promise<
 
       {view === "dashboard" ? <>
         <section className="grid cards rpp-kpi-strip" aria-label="自動調整許可商品の概要">
-          <div className="card"><span>許可商品</span><strong>{allowedRows.length}</strong></div>
-          <div className="card"><span>現在稼働</span><strong>{activeAllowedRows.length}</strong></div>
-          <div className="card"><span>除外中</span><strong>{allowedRows.filter((row) => row.excluded).length}</strong></div>
+          <div className="card"><span>許可商品</span><strong>{allowedItemCodes.length}</strong></div>
+          <div className="card"><span>現在稼働</span><strong>{activeAllowedProducts}</strong></div>
+          <div className="card"><span>除外中</span><strong>{excludedAllowedProducts}</strong></div>
           <div className="card"><span>前日広告費</span><strong>{fmtYen(dashboardSpend)}</strong></div>
           <div className="card"><span>前日売上</span><strong>{fmtYen(dashboardSales)}</strong></div>
           <div className="card"><span>前日ROAS</span><strong>{dashboardRoas == null ? "未取得" : `${Math.round(dashboardRoas)}%`}</strong></div>
@@ -205,8 +221,8 @@ export default async function RppPage({ searchParams }: { searchParams: Promise<
               const rec = row.recommendation;
               const currentCpc = rec?.currentCpc ?? row.configured?.itemCpc ?? row.configured?.keywordCpc ?? null;
               const status = row.excluded ? { label: "除外中", className: "status-hold" } : rec?.action === "RAISE" ? { label: "上げ候補", className: "status-approved" } : rec?.action === "LOWER" ? { label: "下げ候補", className: "approval-rejected" } : { label: "維持", className: "status-hold" };
-              return <tr key={row.itemCode}>
-                <td><b>{row.itemCode}</b><br /><small>{rec?.itemName || row.configured?.itemName || row.product?.itemName || "商品名未取得"}</small></td>
+              return <tr key={`${row.itemCode}__${rec?.keyword || "status"}`}>
+                <td><b>{row.itemCode} / {rec?.keyword || "商品"}</b><br /><small>{rec?.itemName || row.configured?.itemName || row.product?.itemName || "商品名未取得"}</small></td>
                 <td><span className={`status-pill ${row.excluded ? "approval-rejected" : "status-approved"}`}>{row.excluded ? "広告OFF" : "広告ON"}</span></td>
                 <td><b>{currentCpc == null ? "-" : `${currentCpc}円`}</b><br /><small>{row.target?.optimizationMode || "目標未設定"}</small></td>
                 <td><b>{fmtYen(rec?.spend)}</b><br /><small>{rec?.clicks == null ? "未取得" : `${rec.clicks} click`} / 売上 {fmtYen(rec?.salesAmount)} / ROAS {rec?.roas == null ? "未取得" : `${Math.round(rec.roas)}%`}</small></td>
@@ -242,7 +258,7 @@ export default async function RppPage({ searchParams }: { searchParams: Promise<
           <li><b>4. 反映前確認</b><span>変更前後・対象行・戻し手段を確認</span></li>
         </ol>
         <div className="rpp-guide-grid">
-          <article><div><span>01</span><b>ダッシュボード</b></div><p>上げ・下げ・保留・対象外の件数とデータ状態を確認します。「要更新」の日は設定変更せず、データ更新を待ちます。</p><Link href="/rpp?view=dashboard">この画面を開く →</Link></article>
+          <article><div><span>01</span><b>ダッシュボード</b></div><p>自動調整を許可した商品だけを、商品CPC・KWCPC別に確認します。配信状態、前日実績、順位、現在判断を見て、要更新の日は設定変更せず待ちます。</p><Link href="/rpp?view=dashboard">この画面を開く →</Link></article>
           <article><div><span>02</span><b>予算管理</b></div><p>月予算、消化率、月末着地、期間比較を確認します。現段階は監視専用で、ここからRMS予算を自動変更しません。</p><Link href="/rpp?view=budget">この画面を開く →</Link></article>
           <article className="rpp-guide-wide"><div><span>03</span><b>商品・KW・実験</b></div><p>①担当タブを選ぶ → ②商品番号・商品名・KWで検索 → ③現CPC、提案CPC、ROAS、PC/SP順位、運用モード、保護、配信状態を確認します。「設定」で右側の編集画面を開きます。</p><ul><li><b>通常運用：</b>ROASモード／検索順位モード／バランスモード／CPC固定モードの4つから選びます。固定以外の3モードは専用のCPC下限・上限を設定できます。</li><li><b>基準ワード：</b>商品CPCの順位判定ワードを複数追加できます。どれか1語でもPC・SPの目標順位を満たせば達成扱いです。</li><li><b>商品CPC行：</b>CPC設定と商品単位の広告除外／再開を操作できます。</li><li><b>KWCPC行：</b>キーワードCPCを設定します。広告除外は商品単位のため、KWCPC行には除外操作がありません。</li><li><b>変更予定：</b>RMS反映前のローカル状態です。誤操作は同じ行の「戻す」で取り消します。</li></ul><Link href="/rpp?view=products">この画面を開く →</Link></article>
           <article><div><span>04</span><b>異常アラート</b></div><p>CPC急騰、ROAS急落、広告費急増、データ欠損・鮮度・件数差を確認します。Chatworkは画面上ではDry Run固定です。</p><Link href="/rpp?view=alerts">この画面を開く →</Link></article>
