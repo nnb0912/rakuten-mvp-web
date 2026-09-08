@@ -53,6 +53,10 @@ function asText(value: unknown) {
   return JSON.stringify(value);
 }
 
+function fmtYen(value: number | null | undefined) {
+  return value == null ? "未取得" : `${Math.round(value).toLocaleString("ja-JP")}円`;
+}
+
 function readbackLabel(row: Record<string, unknown>) {
   const applied = row.applied as { readback?: { ok?: boolean } } | undefined;
   if (!row.productionChange) return "未実行";
@@ -129,7 +133,7 @@ export default async function RppPage({ searchParams }: { searchParams: Promise<
     readRppRecommendations(), readRppDashboardMeta(), readRppAlertTargets(), readRppAutoAdjustmentSettings(),
     readRppExperimentHistory(), listRecentRppExclusionJobs(8), readRppBudgetSettings(), readRppStrategySettings(), readRppDailySpendActuals(), listRppAuditEvents(30), readRppAnomalyComparison(),
   ]);
-  const summary = data.summary as { generatedAt?: string; performanceDateRange?: string | null; counts?: { raise?: number; lower?: number; hold?: number; ok?: number }; safety?: { productionChange?: boolean }; budgetMetrics?: RppBudgetMetrics } | null;
+  const summary = data.summary as { generatedAt?: string; performanceDateRange?: string | null; counts?: { raise?: number; lower?: number; hold?: number; ok?: number }; safety?: { productionChange?: boolean; autoAdjustment?: { enabled?: boolean; allowedItemCodes?: string[] } }; budgetMetrics?: RppBudgetMetrics } | null;
   const candidateTotal = (summary?.counts?.raise ?? 0) + (summary?.counts?.lower ?? 0);
   const holdRows = data.recommendations.filter((row) => row.action === "HOLD");
   const outOfScopeRows = holdRows.filter(isAutoAdjustmentOutOfScope);
@@ -137,6 +141,19 @@ export default async function RppPage({ searchParams }: { searchParams: Promise<
   const removeSettingCandidates = outOfScopeRows.filter((row) => outOfScopeOperation(row).label === "RPP設定解除候補");
   const searchSurfaceCandidates = outOfScopeRows.filter((row) => outOfScopeOperation(row).label === "検索面確認候補");
   const latestExclusionJob = exclusionJobs[0];
+  const allowedItemCodes = summary?.safety?.autoAdjustment?.allowedItemCodes ?? [];
+  const allowedRecommendations = data.recommendations.filter((row) => allowedItemCodes.includes(row.itemCode));
+  const allowedRows = allowedItemCodes.map((itemCode) => {
+    const recommendation = allowedRecommendations.find((row) => row.itemCode === itemCode) ?? null;
+    const target = targetData.targets.find((row) => row.itemCode === itemCode) ?? null;
+    const configured = targetData.configuredTargets.find((row) => row.itemCode === itemCode) ?? null;
+    const product = targetData.exclusionProducts.find((row) => row.itemCode === itemCode) ?? null;
+    return { itemCode, recommendation, target, configured, product, excluded: product?.excluded === true };
+  });
+  const activeAllowedRows = allowedRows.filter((row) => !row.excluded);
+  const dashboardSpend = allowedRecommendations.reduce((sum, row) => sum + (row.spend ?? 0), 0);
+  const dashboardSales = allowedRecommendations.reduce((sum, row) => sum + (row.salesAmount ?? 0), 0);
+  const dashboardRoas = dashboardSpend > 0 ? (dashboardSales / dashboardSpend) * 100 : null;
 
   return (
     <div className="rpp-console-shell">
@@ -165,14 +182,41 @@ export default async function RppPage({ searchParams }: { searchParams: Promise<
         </div>
       </section>
 
-      {view === "dashboard" ? <section className="grid cards rpp-kpi-strip" aria-label="RPP概要">
-        <div className="card"><span><RppInfoTip label="上げ候補" /></span><strong>{summary?.counts?.raise ?? 0}</strong></div>
-        <div className="card"><span><RppInfoTip label="下げ候補" /></span><strong>{summary?.counts?.lower ?? 0}</strong></div>
-        <div className="card"><span><RppInfoTip label="保留" /></span><strong>{decisionHoldRows.length}</strong></div>
-        <div className="card"><span><RppInfoTip label="対象外" /></span><strong>{outOfScopeRows.length}</strong></div>
-        <div className="card"><span><RppInfoTip label="RPP設定中" /></span><strong>{targetData.configuredTargets.length}</strong></div>
-        <div className="card"><span><RppInfoTip label="データ状態" /></span><strong className={meta.dataReady ? "ok-text" : "warn-text"}>{meta.dataReady ? "OK" : "要更新"}</strong></div>
-      </section> : null}
+      {view === "dashboard" ? <>
+        <section className="grid cards rpp-kpi-strip" aria-label="自動調整許可商品の概要">
+          <div className="card"><span>許可商品</span><strong>{allowedRows.length}</strong></div>
+          <div className="card"><span>現在稼働</span><strong>{activeAllowedRows.length}</strong></div>
+          <div className="card"><span>除外中</span><strong>{allowedRows.filter((row) => row.excluded).length}</strong></div>
+          <div className="card"><span>前日広告費</span><strong>{fmtYen(dashboardSpend)}</strong></div>
+          <div className="card"><span>前日売上</span><strong>{fmtYen(dashboardSales)}</strong></div>
+          <div className="card"><span>前日ROAS</span><strong>{dashboardRoas == null ? "未取得" : `${Math.round(dashboardRoas)}%`}</strong></div>
+        </section>
+        <section className="panel history-panel hold-detail-panel">
+          <div className="section-heading compact-heading">
+            <div>
+              <h2>自動調整を許可した商品</h2>
+              <p>対象はこの一覧だけです。実績対象 {summary?.performanceDateRange || "未取得"} / RMSへの自動反映なし</p>
+            </div>
+            <Link className="text-link" href="/rpp?view=products">商品・KWを開く →</Link>
+          </div>
+          {allowedRows.length ? <table className="wide-table hold-detail-table">
+            <thead><tr><th><RppInfoTip label="商品" /></th><th><RppInfoTip label="配信" /></th><th><RppInfoTip label="CPC" /></th><th><RppInfoTip label="実績" /></th><th><RppInfoTip label="検索順位" /></th><th><RppInfoTip label="判定" /></th></tr></thead>
+            <tbody>{allowedRows.map((row) => {
+              const rec = row.recommendation;
+              const currentCpc = rec?.currentCpc ?? row.configured?.itemCpc ?? row.configured?.keywordCpc ?? null;
+              const status = row.excluded ? { label: "除外中", className: "status-hold" } : rec?.action === "RAISE" ? { label: "上げ候補", className: "status-approved" } : rec?.action === "LOWER" ? { label: "下げ候補", className: "approval-rejected" } : { label: "維持", className: "status-hold" };
+              return <tr key={row.itemCode}>
+                <td><b>{row.itemCode}</b><br /><small>{rec?.itemName || row.configured?.itemName || row.product?.itemName || "商品名未取得"}</small></td>
+                <td><span className={`status-pill ${row.excluded ? "approval-rejected" : "status-approved"}`}>{row.excluded ? "広告OFF" : "広告ON"}</span></td>
+                <td><b>{currentCpc == null ? "-" : `${currentCpc}円`}</b><br /><small>{row.target?.optimizationMode || "目標未設定"}</small></td>
+                <td><b>{fmtYen(rec?.spend)}</b><br /><small>{rec?.clicks == null ? "未取得" : `${rec.clicks} click`} / 売上 {fmtYen(rec?.salesAmount)} / ROAS {rec?.roas == null ? "未取得" : `${Math.round(rec.roas)}%`}</small></td>
+                <td><small>{rec?.rppPosition || (row.excluded ? "除外中" : "未測定")}</small></td>
+                <td><span className={`status-pill ${status.className}`}>{status.label}</span><br /><small>{rec ? compactReasons(rec) : row.excluded ? "除外解除後に候補計算" : "実績更新待ち"}</small></td>
+              </tr>;
+            })}</tbody>
+          </table> : <p className="warn-text">許可商品が未設定です。自動調整候補を生成しません。</p>}
+        </section>
+      </> : null}
 
       {view === "guide" ?
       <section className="panel rpp-view-guide" id="rpp-guide">
