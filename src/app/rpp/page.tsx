@@ -186,10 +186,10 @@ export default async function RppPage({ searchParams }: { searchParams: Promise<
             <p>自分の担当商品の絞り込みからRMS反映確認まで、実際の画面と音声・字幕で確認できます。</p>
           </div>
           <video controls playsInline preload="metadata" aria-label="RPP CONTROL 使い方マニュアル動画">
-            <source src="/rpp/manuals/rpp-control-guide-v7.mp4" type="video/mp4" />
+            <source src="/rpp/manuals/rpp-control-guide-v8.mp4" type="video/mp4" />
             お使いのブラウザでは動画を再生できません。
           </video>
-          <a href="/rpp/manuals/rpp-control-guide-v7.mp4" download>動画をダウンロード</a>
+          <a href="/rpp/manuals/rpp-control-guide-v8.mp4" download>動画をダウンロード</a>
         </div>
         <ol className="rpp-guide-flow" aria-label="基本操作フロー">
           <li><b>1. 状態確認</b><span>ダッシュボードでデータ状態が「OK」か確認</span></li>
