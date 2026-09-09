@@ -8,6 +8,7 @@ import { normalizeRppOptimizationMode, validateRppModeCpcBounds, type RppOptimiz
 import { readRppStrategySettings, resolveRppRoas } from "@/lib/rppStrategySettings";
 import { readLatestRppDashboardSnapshot } from "@/lib/rppDashboardSnapshots";
 import { validateRppTargetInputValues } from "@/lib/rppTargetValidation";
+import { assertRppOptimizationModeAllowed, isRppAutoCpcItem } from "@/lib/rppCpcModePolicy";
 
 export type RppPositionGoal = "FIRST_PAGE" | "TOP_7" | "TOP_5" | "TOP_3";
 export type RppOperationPolicy = "攻め" | "維持" | "テスト" | "停止候補";
@@ -172,6 +173,7 @@ export function normalizeRppTargetInput(input: RppAlertTargetInput) {
   if (pcPositionGoal === "TOP_7") throw new Error("PC順位目標に7位以内は指定できません");
   const policy = POLICIES.includes(input.policy as RppOperationPolicy) ? input.policy as RppOperationPolicy : "維持";
   const optimizationMode = normalizeRppOptimizationMode(input.optimizationMode);
+  assertRppOptimizationModeAllowed(itemCode, optimizationMode);
   for (const [label, raw] of Object.entries({ maxCpc: input.maxCpc, fixedCpc: input.fixedCpc, roasMinCpc: input.roasMinCpc, roasMaxCpc: input.roasMaxCpc, positionMinCpc: input.positionMinCpc, positionMaxCpc: input.positionMaxCpc, balancedMinCpc: input.balancedMinCpc, balancedMaxCpc: input.balancedMaxCpc })) {
     if (raw != null && String(raw).trim() !== "" && (!Number.isFinite(Number(raw)) || Number(raw) <= 0)) throw new Error(`${label}は正数で入力してください`);
   }
@@ -744,6 +746,10 @@ export async function seedMissingRppAlertTargets(defaults: Partial<RppAlertTarge
       changeLocked: false,
       lockReason: "",
       ...defaults,
+      optimizationMode: isRppAutoCpcItem(row.itemCode) ? defaults.optimizationMode : "FIXED",
+      fixedCpc: isRppAutoCpcItem(row.itemCode)
+        ? defaults.fixedCpc
+        : (row.source === "商品CPC" ? row.itemCpc : row.keywordCpc),
     });
     additions.push({ id: row.id, ...normalized, createdAt: now, updatedAt: now });
   }

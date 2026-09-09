@@ -10,6 +10,7 @@ import {
   type RppOptimizationMode,
 } from "@/lib/rppOptimization";
 import type { RppRecommendationWithApproval } from "@/lib/rppRecommendations";
+import { canDownloadManualCpcCsv, effectiveRppOptimizationMode, isRppAutoCpcItem } from "@/lib/rppCpcModePolicy";
 import { canOperateProductExclusion, deliveryLabel } from "@/lib/rppTargetUiRules";
 import type { RppAlertTarget, RppConfiguredTarget, RppExclusionProduct, RppOperationPolicy, RppPositionGoal, RppProtectionType } from "@/lib/rppTargets";
 import type { RppExperimentRecord } from "@/lib/rppExperiments";
@@ -89,7 +90,13 @@ const blank: FormState = {
   note: "",
 };
 
-function toForm(row: RppAlertTarget): FormState {
+function configuredCurrentCpc(row: RppConfiguredTarget) {
+  return row.source === "商品CPC" ? row.itemCpc : row.keywordCpc;
+}
+
+function toForm(row: RppAlertTarget, configured?: RppConfiguredTarget): FormState {
+  const automatic = isRppAutoCpcItem(row.itemCode);
+  const currentCpc = configured ? configuredCurrentCpc(configured) : null;
   return {
     itemCode: row.itemCode,
     keyword: row.keyword,
@@ -106,8 +113,8 @@ function toForm(row: RppAlertTarget): FormState {
     changeLocked: row.changeLocked === true,
     lockReason: row.lockReason || "",
     protectionType: row.protectionType || (row.changeLocked ? "LOCKED" : "NORMAL"),
-    optimizationMode: row.optimizationMode || "ROAS",
-    fixedCpc: row.fixedCpc == null ? "" : String(row.fixedCpc),
+    optimizationMode: effectiveRppOptimizationMode(row.itemCode, row.optimizationMode || "ROAS"),
+    fixedCpc: row.fixedCpc == null ? (!automatic && currentCpc != null ? String(currentCpc) : "") : String(row.fixedCpc),
     maxCpc: row.maxCpc == null ? "" : String(row.maxCpc),
     roasMinCpc: row.roasMinCpc == null ? "" : String(row.roasMinCpc),
     roasMaxCpc: row.roasMaxCpc == null ? "" : String(row.roasMaxCpc),
@@ -128,7 +135,9 @@ function representativeKeyword(row: RppConfiguredTarget, snapshot?: RppConfigure
 
 function configuredToForm(row: RppConfiguredTarget): FormState {
   const defaultSearchKeyword = row.keyword === "商品CPC" ? representativeKeyword(row) : row.keyword;
-  return { ...blank, itemCode: row.itemCode, keyword: row.keyword, searchKeywords: defaultSearchKeyword, owner: row.owner ?? "", adGroup: "通常" };
+  const automatic = isRppAutoCpcItem(row.itemCode);
+  const currentCpc = configuredCurrentCpc(row);
+  return { ...blank, itemCode: row.itemCode, keyword: row.keyword, searchKeywords: defaultSearchKeyword, owner: row.owner ?? "", adGroup: "通常", optimizationMode: automatic ? "ROAS" : "FIXED", fixedCpc: !automatic && currentCpc != null ? String(currentCpc) : "" };
 }
 
 
@@ -227,6 +236,8 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
   const [draftStatus, setDraftStatus] = useState("");
   const selectedModeBoundFields = modeBoundFields(form.optimizationMode);
   const selectedRoutineMode = ROUTINE_OPTIMIZATION_MODES.find((option) => option.value === form.optimizationMode);
+  const formUsesAutomaticCpc = isRppAutoCpcItem(form.itemCode);
+  const availableOptimizationModes = formUsesAutomaticCpc ? ROUTINE_OPTIMIZATION_MODES : ROUTINE_OPTIMIZATION_MODES.filter((option) => option.value === "FIXED");
   const activeEditLockMap = useMemo(() => new Map(activeEditLocks.map((row) => [row.itemCode, row])), [activeEditLocks]);
   const activeOperation = activeOperations[0] ?? null;
 
@@ -336,7 +347,7 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
     const rec = recommendationMap.get(metricKey(cfg.itemCode, cfg.keyword));
     const currentCpc = cfg.source === "商品CPC" ? cfg.itemCpc : cfg.keywordCpc;
     const preview = buildRppOptimizationPreview({
-      mode: target?.optimizationMode || "ROAS",
+      mode: effectiveRppOptimizationMode(cfg.itemCode, target?.optimizationMode || "ROAS"),
       cpcKind: cfg.source === "商品CPC" ? "ITEM" : "KEYWORD",
       currentCpc,
       actualRoas: rec?.roas ?? (rec?.spend && rec.salesAmount != null ? (rec.salesAmount / rec.spend) * 100 : null),
@@ -344,7 +355,7 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
       spend: rec?.spend ?? null,
       sales: rec?.salesAmount ?? null,
       positionSuggestedCpc: rec?.proposedCpc ?? null,
-      fixedCpc: target?.fixedCpc ?? null,
+      fixedCpc: target?.fixedCpc ?? (!isRppAutoCpcItem(cfg.itemCode) ? currentCpc : null),
       maxCpc: target?.maxCpc ?? null,
       roasMinCpc: target?.roasMinCpc ?? null,
       roasMaxCpc: target?.roasMaxCpc ?? null,
@@ -416,7 +427,7 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
       || (tableStatusFilter === "CANDIDATE" && preview?.proposedCpc != null && preview.proposedCpc !== preview.currentCpc)
       || (tableStatusFilter === "ATTENTION" && (!target || /未測定|圏外|広告枠なし|測定エラー/.test(position)))
       || (tableStatusFilter === "EXCLUDED" && excluded);
-    const modeOk = modeFilter === "ALL" || (target?.optimizationMode || "ROAS") === modeFilter;
+    const modeOk = modeFilter === "ALL" || effectiveRppOptimizationMode(cfg.itemCode, target?.optimizationMode || "ROAS") === modeFilter;
     const protectionOk = protectionFilter === "ALL" || (target?.protectionType || "NORMAL") === protectionFilter;
     return ownerOk && groupOk && searchOk && statusOk && modeOk && protectionOk;
   });
@@ -469,7 +480,12 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
         throw new Error(`🔒 ${owner}が ${nextForm.itemCode} を編集中です。完了後にもう一度開いてください。`);
       }
       const stored = parseRppTargetDraft<FormState>(localStorage.getItem(rppTargetDraftKey(nextForm.itemCode, nextForm.keyword)), nextForm.itemCode, nextForm.keyword);
-      setForm(stored ?? nextForm);
+      const restored = stored ?? nextForm;
+      setForm(isRppAutoCpcItem(restored.itemCode) ? restored : {
+        ...restored,
+        optimizationMode: "FIXED",
+        fixedCpc: restored.fixedCpc || nextForm.fixedCpc,
+      });
       setEditSession({ ...data.lock, token: data.token, draftKey: rppTargetDraftKey(nextForm.itemCode, nextForm.keyword) });
       setDraftStatus(stored ? "保存済みの下書きを復元しました" : "自動保存が有効です");
       setFormDrawerOpen(true);
@@ -498,7 +514,8 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
   }
 
   function excludedProductToForm(row: RppExclusionProduct): FormState {
-    return { ...blank, itemCode: row.itemCode, keyword: "商品CPC", owner: row.owner ?? "", adGroup: "通常", searchKeywords: seoWordsForItem(row.itemCode)[0] ?? "" };
+    const automatic = isRppAutoCpcItem(row.itemCode);
+    return { ...blank, itemCode: row.itemCode, keyword: "商品CPC", owner: row.owner ?? "", adGroup: "通常", searchKeywords: seoWordsForItem(row.itemCode)[0] ?? "", optimizationMode: automatic ? "ROAS" : "FIXED", fixedCpc: !automatic && row.itemCpc != null ? String(row.itemCpc) : "" };
   }
 
   function addSearchWord(word: string) {
@@ -878,6 +895,8 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
                 const protectionLabel = row?.protectionType && row.protectionType !== "NORMAL"
                   ? ({ BLOCK: "ブロック", WHITELIST: "ホワイト", LOCKED: "変更不可", FOCUS: "注力" }[row.protectionType])
                   : "通常";
+                const effectiveMode = effectiveRppOptimizationMode(cfg.itemCode, row?.optimizationMode || "ROAS");
+                const effectiveFixedCpc = row?.fixedCpc ?? (!isRppAutoCpcItem(cfg.itemCode) ? configuredCurrentCpc(cfg) : null);
                 return (
                   <tr key={cfg.id} className={selectedOptimizationIds.has(cfg.id) ? "selected" : currentExcluded ? "excluded" : ""}>
                     <td className="select-col">
@@ -899,12 +918,14 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
                     </td>
                     <td className="number-cell"><b>{roas == null ? "-" : `${Math.round(roas)}%`}</b><small>→ {optimization?.projectedRoas == null ? "-" : `${Math.round(optimization.projectedRoas)}%`}</small></td>
                     <td className="rank-cell" title={positionKeyword || undefined}>{positions.map((part) => <span key={`${part.device}-${part.status}`}><b>{part.device}</b><em>{part.status}</em></span>)}</td>
-                    <td><span className={`optimization-mode-pill mode-${(row?.optimizationMode || "ROAS").toLowerCase()}`}>{optimizationModeLabel(row?.optimizationMode || "ROAS")}</span><small>{row?.optimizationMode === "FIXED" ? `固定 ${yen(row.fixedCpc)}` : `目標 ${row?.roasFloor ?? 500}%`}</small></td>
+                    <td><span className={`optimization-mode-pill mode-${effectiveMode.toLowerCase()}`}>{optimizationModeLabel(effectiveMode)}</span><small>{effectiveMode === "FIXED" ? `固定 ${yen(effectiveFixedCpc)}` : `目標 ${row?.roasFloor ?? 500}%`}</small></td>
                     <td><span className={`protection-pill protection-${(row?.protectionType || "NORMAL").toLowerCase()}`}>{protectionLabel}</span><small>{row?.lockReason || ""}</small></td>
                     <td><span className={`delivery-dot ${currentExcluded ? "off" : "on"}`}><i />{deliveryLabel(cfg.source, currentExcluded)}</span>{exclusionChangedForItem ? <small className="pending-change">変更予定</small> : null}</td>
                     <td className="actions-col">
-                      <button disabled={busy} type="button" onClick={() => openTargetForm(row ? toForm(row) : configuredToForm(cfg))} title={activeEditLockMap.get(cfg.itemCode) ? `${activeEditLockMap.get(cfg.itemCode)?.actorName}が編集中` : undefined}>{activeEditLockMap.get(cfg.itemCode) ? "🔒 設定" : "設定"}</button>
-                      <button disabled={busy || row?.changeLocked === true || row?.protectionType === "BLOCK"} type="button" onClick={() => downloadCpcCsv(cfg)} title={row?.changeLocked || row?.protectionType === "BLOCK" ? "変更対象外です" : undefined}>CPC</button>
+                      <button disabled={busy} type="button" onClick={() => openTargetForm(row ? toForm(row, cfg) : configuredToForm(cfg))} title={activeEditLockMap.get(cfg.itemCode) ? `${activeEditLockMap.get(cfg.itemCode)?.actorName}が編集中` : undefined}>{activeEditLockMap.get(cfg.itemCode) ? "🔒 設定" : "設定"}</button>
+                      {canDownloadManualCpcCsv(cfg.itemCode)
+                        ? <button disabled={busy || row?.changeLocked === true || row?.protectionType === "BLOCK"} type="button" onClick={() => downloadCpcCsv(cfg)} title={row?.changeLocked || row?.protectionType === "BLOCK" ? "変更対象外です" : "RMS手動アップロード用のCPC変更CSVを出力します"}>CPC変更CSV</button>
+                        : <span className="keyword-exclusion-na" title="設定したルールに従って自動調整します">自動管理</span>}
                       {productExclusionOperable ? <button className={currentExcluded ? "restore-button" : "danger-ghost"} disabled={busy || (currentExcluded && !canReleaseExclusion && !canUndoAccidentalExclusion)} type="button" onClick={() => toggleExcluded(cfg.itemCode, canReleaseExclusion)} title={currentExcluded && !canReleaseExclusion && !canUndoAccidentalExclusion ? "この商品に目標が1つ以上入るまで除外解除できません" : undefined}>{exclusionChangedForItem ? "戻す" : currentExcluded ? "再開" : "除外"}</button> : <span className="keyword-exclusion-na" title="広告除外は商品CPC行から操作します">商品単位</span>}
                     </td>
                   </tr>
@@ -1046,8 +1067,9 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
           <div className="optimization-mode-selector">
             <span><RppInfoTip label="最適化モード" /></span>
             <div className="optimization-mode-options" aria-label="通常運用モード">
-              {ROUTINE_OPTIMIZATION_MODES.map((option) => <button className={form.optimizationMode === option.value ? `active mode-${option.value.toLowerCase()}` : `mode-${option.value.toLowerCase()}`} key={option.value} type="button" onClick={() => patchForm("optimizationMode", option.value)}><b>{option.label}</b><small>{option.description}</small></button>)}
+              {availableOptimizationModes.map((option) => <button className={form.optimizationMode === option.value ? `active mode-${option.value.toLowerCase()}` : `mode-${option.value.toLowerCase()}`} key={option.value} type="button" onClick={() => patchForm("optimizationMode", option.value)}><b>{option.label}</b><small>{option.description}</small></button>)}
             </div>
+            <small>{formUsesAutomaticCpc ? "R0445・R0406は自動調整対象です。" : "R0445・R0406以外は自動調整対象外のため、CPC固定モードで運用します。"}</small>
           </div>
           {selectedModeBoundFields && selectedRoutineMode ? <div className="form-row two-cols optimization-mode-fields">
             <label><RppInfoTip label="モード別CPC下限" /><input type="number" min="1" step="1" value={form[selectedModeBoundFields.minimum]} onChange={(e) => patchForm(selectedModeBoundFields.minimum, e.target.value)} placeholder="未設定なら楽天下限" /><small>{selectedRoutineMode.label}専用。楽天下限（商品20円 / KW40円）が優先されます。</small></label>
@@ -1090,7 +1112,7 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
             <li><b>検索順位モード</b><small>既存のPC/SP検索順位提案を方向シグナルとして使う通常運用です。</small></li>
             <li><b>バランスモード</b><small>ROASを採算ゲートにし、検索順位提案と組み合わせます。未達時は低い候補を選び、達成時の引き上げもROAS候補までに制限します。</small></li>
             <li><b>モード別CPC範囲</b><small>ROAS・検索順位・バランスは各モードの下限・上限を保存します。商品20円・KW40円の楽天下限と1回の安全幅は常に優先されます。</small></li>
-            <li><b>CPC固定モード</b><small>RMSへ直接登録する場合と同じ指定CPCを維持します。終了日や実験履歴は使いません。</small></li>
+            <li><b>CPC固定モード</b><small>R0445・R0406以外はこのモードだけを使用します。指定CPCを維持し、変更時は一覧の「CPC変更CSV」を使います。</small></li>
           </ul>
         </div>
         </div>
