@@ -17,6 +17,7 @@ const routePolicies: Record<string, string[]> = {
   "export-approved": ["operator"],
   "export-remove-setting-candidates": ["viewer", "operator", "operator"],
   "meta": ["viewer"],
+  "night-pause": ["viewer", "operator"],
   "recommendations": ["viewer", "operator"],
   "regenerate-recommendations": ["operator"],
   "strategy-settings": ["viewer", "operator"],

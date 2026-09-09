@@ -1,5 +1,6 @@
 import { timingSafeEqual } from "crypto";
 import { readLatestRppDashboardSnapshot, saveRppDashboardSnapshot } from "@/lib/rppDashboardSnapshots";
+import { readRppNightPauseProducts } from "@/lib/rppNightPause";
 import { readRppAlertTargets } from "@/lib/rppTargets";
 
 export const dynamic = "force-dynamic";
@@ -21,6 +22,10 @@ export async function GET(request: Request) {
     if (searchParams.get("resource") === "targets") {
       const data = await readRppAlertTargets();
       return Response.json({ ok: true, targets: data.targets, updatedAt: new Date().toISOString() });
+    }
+    if (searchParams.get("resource") === "night-pause") {
+      const data = await readRppNightPauseProducts();
+      return Response.json({ ok: true, itemCodes: data.itemCodes });
     }
     const snapshot = await readLatestRppDashboardSnapshot();
     return Response.json({ ok: true, snapshot });

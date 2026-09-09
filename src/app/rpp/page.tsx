@@ -9,6 +9,7 @@ import { readRppBudgetSettings, type RppBudgetMetrics } from "@/lib/rppBudgetSet
 import { readRppDailySpendActuals } from "@/lib/rppComparisons";
 import { readRppStrategySettings } from "@/lib/rppStrategySettings";
 import { readRppAnomalyComparison } from "@/lib/rppAnomalyData";
+import { readRppNightPauseProducts } from "@/lib/rppNightPause";
 import { isAutomaticRppOptimizationMode } from "@/lib/rppCpcModePolicy";
 import { shortRppItemName } from "@/lib/rppItemShortNames";
 import RppAutoAdjustmentSettingsPanel from "./RppAutoAdjustmentSettingsPanel";
@@ -132,9 +133,9 @@ function outOfScopeOperation(row: { blocks: string[]; reasons: string[]; rppPosi
 export default async function RppPage({ searchParams }: { searchParams: Promise<{ view?: string | string[] }> }) {
   const requestedView = (await searchParams).view;
   const view: RppView = isRppView(requestedView) ? requestedView : "dashboard";
-  const [data, meta, targetData, autoSettingsData, experimentHistory, exclusionJobs, budgetData, strategyData, dailyActuals, auditEvents, anomalyData] = await Promise.all([
+  const [data, meta, targetData, autoSettingsData, experimentHistory, exclusionJobs, budgetData, strategyData, dailyActuals, auditEvents, anomalyData, nightPauseData] = await Promise.all([
     readRppRecommendations(), readRppDashboardMeta(), readRppAlertTargets(), readRppAutoAdjustmentSettings(),
-    readRppExperimentHistory(), listRecentRppExclusionJobs(8), readRppBudgetSettings(), readRppStrategySettings(), readRppDailySpendActuals(), listRppAuditEvents(30), readRppAnomalyComparison(),
+    readRppExperimentHistory(), listRecentRppExclusionJobs(8), readRppBudgetSettings(), readRppStrategySettings(), readRppDailySpendActuals(), listRppAuditEvents(30), readRppAnomalyComparison(), readRppNightPauseProducts(),
   ]);
   const summary = data.summary as { generatedAt?: string; performanceDateRange?: string | null; counts?: { raise?: number; lower?: number; hold?: number; ok?: number }; safety?: { productionChange?: boolean; autoAdjustment?: { enabled?: boolean } }; budgetMetrics?: RppBudgetMetrics } | null;
   const candidateTotal = (summary?.counts?.raise ?? 0) + (summary?.counts?.lower ?? 0);
@@ -259,10 +260,10 @@ export default async function RppPage({ searchParams }: { searchParams: Promise<
             <p>自分の担当商品の絞り込みからRMS反映確認まで、実際の画面と音声・字幕で確認できます。</p>
           </div>
           <video controls playsInline preload="metadata" aria-label="RPP CONTROL 使い方マニュアル動画">
-            <source src="/rpp/manuals/rpp-control-guide-v9.mp4" type="video/mp4" />
+            <source src="/rpp/manuals/rpp-control-guide-v10.mp4" type="video/mp4" />
             お使いのブラウザでは動画を再生できません。
           </video>
-          <a href="/rpp/manuals/rpp-control-guide-v9.mp4" download>動画をダウンロード</a>
+          <a href="/rpp/manuals/rpp-control-guide-v10.mp4" download>動画をダウンロード</a>
         </div>
         <ol className="rpp-guide-flow" aria-label="基本操作フロー">
           <li><b>1. 状態確認</b><span>ダッシュボードでデータ状態が「OK」か確認</span></li>
@@ -273,7 +274,7 @@ export default async function RppPage({ searchParams }: { searchParams: Promise<
         <div className="rpp-guide-grid">
           <article><div><span>01</span><b>ダッシュボード</b></div><p>固定以外のモードを選択した商品を、商品CPC・KWCPC別に確認します。配信状態、前日実績、順位、現在判断を確認します。</p><Link href="/rpp?view=dashboard">この画面を開く →</Link></article>
           <article><div><span>02</span><b>予算管理</b></div><p>月予算、消化率、月末着地、期間比較を確認します。現段階は監視専用で、ここからRMS予算を自動変更しません。</p><Link href="/rpp?view=budget">この画面を開く →</Link></article>
-          <article className="rpp-guide-wide"><div><span>03</span><b>広告掲載商品リスト</b></div><p>①担当タブを選ぶ → ②商品番号・商品名・KWで検索 → ③現CPC、提案CPC、ROAS、PC/SP順位、運用モード、保護、配信状態を確認します。「設定」で右側の編集画面を開きます。</p><ul><li><b>自動運用：</b>商品番号による制限はありません。ROAS／検索順位／バランスを選択すると、その設定行が自動調整対象になります。</li><li><b>CPC固定：</b>固定額を維持し、自動調整しません。「CPC変更CSV」からRMS手動アップロード用CSVを出力します。</li><li><b>基準ワード：</b>商品CPCの順位判定ワードを複数追加できます。どれか1語でもPC・SPの目標順位を満たせば達成扱いです。</li><li><b>商品CPC行：</b>CPC設定と商品単位の広告除外／再開を操作できます。</li><li><b>KWCPC行：</b>キーワードCPCを設定します。広告除外は商品単位のため、KWCPC行には除外操作がありません。</li><li><b>変更予定：</b>RMS反映前のローカル状態です。「戻す」で取り消せます。</li></ul><Link href="/rpp?view=products">この画面を開く →</Link></article>
+          <article className="rpp-guide-wide"><div><span>03</span><b>広告掲載商品リスト</b></div><p>①担当タブを選ぶ → ②商品番号・商品名・KWで検索 → ③現CPC、提案CPC、ROAS、PC/SP順位、運用モード、保護、配信状態を確認します。「設定」で右側の編集画面を開きます。</p><ul><li><b>自動運用：</b>商品番号による制限はありません。ROAS／検索順位／バランスを選択すると、その設定行が自動調整対象になります。</li><li><b>CPC固定：</b>固定額を維持し、自動調整しません。「CPC変更CSV」からRMS手動アップロード用CSVを出力します。</li><li><b>基準ワード：</b>商品CPCの順位判定ワードを複数追加できます。どれか1語でもPC・SPの目標順位を満たせば達成扱いです。</li><li><b>商品CPC行：</b>CPC設定と商品単位の広告除外／再開を操作できます。</li><li><b>夜間停止：</b>ONの商品だけを01:30に広告OFF、06:00にONへ戻します。元から除外中の商品は戻しません。</li><li><b>KWCPC行：</b>キーワードCPCを設定します。広告除外は商品単位のため、KWCPC行には除外操作がありません。</li><li><b>変更予定：</b>RMS反映前のローカル状態です。「戻す」で取り消せます。</li></ul><Link href="/rpp?view=products">この画面を開く →</Link></article>
           <article><div><span>04</span><b>除外中・広告ON戻し</b></div><p>除外中商品を独立画面で開き、担当者タブだけで絞り込みます。目標設定後に広告ONへ戻します。</p><Link href="/rpp?view=excluded">この画面を開く →</Link></article>
           <article><div><span>05</span><b>CPC最適化</b></div><p>最低CPC、上限、ROAS基準、1回変更幅などの提案ルールを確認します。設定は提案生成条件であり、RMSへ即時反映するものではありません。</p><Link href="/rpp?view=optimization">この画面を開く →</Link></article>
           <article><div><span>06</span><b>実験履歴</b></div><p>既存の実験履歴は開始値と終了値を同じ指標で比較できます。現在の4つの通常運用モードは終了日不要で、実験履歴を新規作成しません。</p><Link href="/rpp?view=products">広告掲載商品リストを開く →</Link></article>
@@ -292,7 +293,7 @@ export default async function RppPage({ searchParams }: { searchParams: Promise<
       </> : null}
 
       {view === "products" || view === "excluded" ? <section className="panel target-panel" id={view === "excluded" ? "rpp-excluded-view" : "rpp-products"}>
-        <RppTargetSettings surface={view === "excluded" ? "excluded" : "targets"} initialTargets={targetData.targets} configuredTargets={targetData.configuredTargets} exclusionProducts={targetData.exclusionProducts} ownerNames={targetData.ownerNames} recommendations={data.recommendations} initialExperiments={experimentHistory} performanceDateRange={summary?.performanceDateRange} />
+        <RppTargetSettings surface={view === "excluded" ? "excluded" : "targets"} initialTargets={targetData.targets} configuredTargets={targetData.configuredTargets} exclusionProducts={targetData.exclusionProducts} initialNightPauseItemCodes={nightPauseData.itemCodes} ownerNames={targetData.ownerNames} recommendations={data.recommendations} initialExperiments={experimentHistory} performanceDateRange={summary?.performanceDateRange} />
       </section> : null}
 
 

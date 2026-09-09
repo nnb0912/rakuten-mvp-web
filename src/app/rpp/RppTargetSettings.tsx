@@ -24,6 +24,7 @@ type Props = {
   initialTargets: RppAlertTarget[];
   configuredTargets: RppConfiguredTarget[];
   exclusionProducts: RppExclusionProduct[];
+  initialNightPauseItemCodes: string[];
   ownerNames: string[];
   recommendations: RppRecommendationWithApproval[];
   initialExperiments: RppExperimentRecord[];
@@ -212,7 +213,7 @@ function seoWordsForItem(itemCode: string) {
   return SEO_KEYWORDS[code] || SEO_KEYWORDS[code.toLowerCase()] || SEO_KEYWORDS[code.toUpperCase()] || [];
 }
 
-export default function RppTargetSettings({ initialTargets, configuredTargets, exclusionProducts, ownerNames, recommendations, initialExperiments, performanceDateRange, surface = "targets" }: Props) {
+export default function RppTargetSettings({ initialTargets, configuredTargets, exclusionProducts, initialNightPauseItemCodes, ownerNames, recommendations, initialExperiments, performanceDateRange, surface = "targets" }: Props) {
   const [targets, setTargets] = useState(initialTargets);
   const [form, setForm] = useState<FormState>(blank);
   const [busy, setBusy] = useState(false);
@@ -234,6 +235,8 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
   const [activeEditLocks, setActiveEditLocks] = useState<RppEditLock[]>([]);
   const [activeOperations, setActiveOperations] = useState<ActiveRppOperation[]>([]);
   const [draftStatus, setDraftStatus] = useState("");
+  const [nightPauseItemCodes, setNightPauseItemCodes] = useState<Set<string>>(() => new Set(initialNightPauseItemCodes));
+  const [nightPauseBusyItemCode, setNightPauseBusyItemCode] = useState<string | null>(null);
   const selectedModeBoundFields = modeBoundFields(form.optimizationMode);
   const selectedRoutineMode = ROUTINE_OPTIMIZATION_MODES.find((option) => option.value === form.optimizationMode);
   const formUsesAutomaticCpc = isAutomaticRppOptimizationMode(form.optimizationMode);
@@ -565,6 +568,28 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
       setError(null);
       return { ...current, [itemCode]: nextValue };
     });
+  }
+
+  async function toggleNightPause(itemCode: string) {
+    const enabled = !nightPauseItemCodes.has(itemCode);
+    setNightPauseBusyItemCode(itemCode);
+    setError(null);
+    setMessage(null);
+    try {
+      const response = await fetch("/api/rpp/night-pause", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ itemCode, enabled }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error ?? "夜間停止設定の保存に失敗しました");
+      setNightPauseItemCodes(new Set((Array.isArray(data.itemCodes) ? data.itemCodes : []).map((code: unknown) => String(code).trim().toLowerCase())));
+      setMessage(`${itemCode} の夜間停止を${enabled ? "ON" : "OFF"}にしました（01:30 OFF / 06:00 ON）`);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setNightPauseBusyItemCode(null);
+    }
   }
 
   function toggleOptimizationSelection(id: string) {
@@ -907,6 +932,7 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
                   : "通常";
                 const effectiveMode = row?.optimizationMode || "FIXED";
                 const effectiveFixedCpc = row?.fixedCpc ?? (effectiveMode === "FIXED" ? configuredCurrentCpc(cfg) : null);
+                const nightPauseEnabled = nightPauseItemCodes.has(cfg.itemCode);
                 return (
                   <tr key={cfg.id} className={selectedOptimizationIds.has(cfg.id) ? "selected" : currentExcluded ? "excluded" : ""}>
                     <td className="select-col">
@@ -937,6 +963,7 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
                         ? <button disabled={busy || row?.changeLocked === true || row?.protectionType === "BLOCK"} type="button" onClick={() => downloadCpcCsv(cfg)} title={row?.changeLocked || row?.protectionType === "BLOCK" ? "変更対象外です" : "RMS手動アップロード用のCPC変更CSVを出力します"}>CPC変更CSV</button>
                         : <span className="keyword-exclusion-na" title="設定したルールに従って自動調整します">自動管理</span>}
                       {productExclusionOperable ? <button className={currentExcluded ? "restore-button" : "danger-ghost"} disabled={busy || (currentExcluded && !canReleaseExclusion && !canUndoAccidentalExclusion)} type="button" onClick={() => toggleExcluded(cfg.itemCode, canReleaseExclusion)} title={currentExcluded && !canReleaseExclusion && !canUndoAccidentalExclusion ? "この商品に目標が1つ以上入るまで除外解除できません" : undefined}>{exclusionChangedForItem ? "戻す" : currentExcluded ? "再開" : "除外"}</button> : <span className="keyword-exclusion-na" title="広告除外は商品CPC行から操作します">商品単位</span>}
+                      {productExclusionOperable ? <div className="night-pause-control"><RppInfoTip label="夜間停止" /><button className={nightPauseEnabled ? "restore-button" : ""} disabled={busy || nightPauseBusyItemCode !== null} type="button" aria-pressed={nightPauseEnabled} onClick={() => toggleNightPause(cfg.itemCode)}>{nightPauseBusyItemCode === cfg.itemCode ? "保存中…" : `夜間停止 ${nightPauseEnabled ? "ON" : "OFF"}`}</button><small>01:30 OFF / 06:00 ON</small></div> : null}
                     </td>
                   </tr>
                 );
