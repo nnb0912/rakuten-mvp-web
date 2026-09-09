@@ -93,7 +93,7 @@ export default function RppAutoAdjustmentSettingsPanel({ initialSettings, source
       <div className="section-heading compact-heading">
         <div>
           <h2>自動調整ルール</h2>
-          <p>固定以外のモードを選択した設定行だけを候補化します。</p>
+          <p>固定以外のモードを選択した設定行を各判定時に調整します。</p>
         </div>
         <span className={`status-pill ${form.enabled ? "status-approved" : "status-hold"}`}>{form.enabled ? "自動候補ON" : "自動候補OFF"}</span>
       </div>
@@ -107,8 +107,8 @@ export default function RppAutoAdjustmentSettingsPanel({ initialSettings, source
           <label><RppInfoTip label="最低CPC" /><input type="number" min="1" value={form.floorCpc} onChange={(e) => patch("floorCpc", Number(e.target.value))} /></label>
           <label><RppInfoTip label="商品CPC上限" /><input type="number" min="1" value={form.itemCpcMax} onChange={(e) => patch("itemCpcMax", Number(e.target.value))} /></label>
           <label><RppInfoTip label="KW CPC上限" /><input type="number" min="1" value={form.keywordCpcMax} onChange={(e) => patch("keywordCpcMax", Number(e.target.value))} /></label>
-          <label><RppInfoTip label="1日最大上げ" /><input type="number" min="0" value={form.maxRaisePerDay} onChange={(e) => patch("maxRaisePerDay", Number(e.target.value))} /></label>
-          <label><RppInfoTip label="1日最大下げ" /><input type="number" min="0" value={form.maxLowerPerDay} onChange={(e) => patch("maxLowerPerDay", Number(e.target.value))} /></label>
+          <label><RppInfoTip label="1回最大上げ" /><input type="number" min="0" value={form.maxRaisePerDay} onChange={(e) => patch("maxRaisePerDay", Number(e.target.value))} /></label>
+          <label><RppInfoTip label="1回最大下げ" /><input type="number" min="0" value={form.maxLowerPerDay} onChange={(e) => patch("maxLowerPerDay", Number(e.target.value))} /></label>
           <label><RppInfoTip label="ROAS最低" /><input type="number" min="0" step="10" value={form.roasFloor} onChange={(e) => patch("roasFloor", Number(e.target.value))} /></label>
         </div>
         <div className="auto-switch-row guard-row">

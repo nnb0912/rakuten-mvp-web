@@ -38,6 +38,16 @@ test("RPPの主要KPIと設定項目にも説明アイコンがある", () => {
   }
 });
 
+test("自動調整の増減上限は1日単位でなく各判定1回単位で表示する", () => {
+  const panel = readFileSync(join(rppDir, "RppAutoAdjustmentSettingsPanel.tsx"), "utf8");
+  const help = readFileSync(join(rppDir, "RppInfoTip.tsx"), "utf8");
+  assert.match(panel, /label="1回最大上げ"/);
+  assert.match(panel, /label="1回最大下げ"/);
+  assert.doesNotMatch(panel, /label="1日最大(?:上げ|下げ)"/);
+  assert.match(help, /"1回最大上げ"/);
+  assert.match(help, /"1回最大下げ"/);
+});
+
 test("説明アイコンはhover・キーボード・タッチ確認に対応する", () => {
   const component = readFileSync(join(rppDir, "RppInfoTip.tsx"), "utf8");
   assert.match(component, /tabIndex=\{0\}/);
