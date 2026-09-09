@@ -82,6 +82,13 @@ test("最適化サマリーのカード装飾を説明アイコン内部へ波�
   assert.match(css, /\.optimization-summary-grid > span\s*\{[^}]*padding:/s);
 });
 
+test("商品管理メニューは広告掲載商品リストと表示する", () => {
+  const page = readFileSync(join(rppDir, "page.tsx"), "utf8");
+  assert.match(page, /products: \{ label: "広告掲載商品リスト"/);
+  assert.doesNotMatch(page, /商品・KW・実験/);
+  assert.doesNotMatch(page, /1日変更幅/);
+});
+
 test("画面の見方はRPPメニューの一番下に置く", () => {
   const page = readFileSync(join(rppDir, "page.tsx"), "utf8");
   const views = page.slice(page.indexOf("const RPP_VIEWS"), page.indexOf("} as const;"));
@@ -91,9 +98,9 @@ test("画面の見方はRPPメニューの一番下に置く", () => {
 test("画面の見方から使い方マニュアル動画を再生できる", () => {
   const page = readFileSync(join(rppDir, "page.tsx"), "utf8");
   const css = readFileSync(join(process.cwd(), "src", "app", "globals.css"), "utf8");
-  const video = join(process.cwd(), "public", "rpp", "manuals", "rpp-control-guide-v8.mp4");
+  const video = join(process.cwd(), "public", "rpp", "manuals", "rpp-control-guide-v9.mp4");
   assert.match(page, /<video[^>]*controls[^>]*playsInline/s);
-  assert.match(page, /src="\/rpp\/manuals\/rpp-control-guide-v8\.mp4"/);
+  assert.match(page, /src="\/rpp\/manuals\/rpp-control-guide-v9\.mp4"/);
   assert.match(page, /全利用者向け 使い方マニュアル動画/);
   assert.match(css, /\.rpp-guide-video\s+video\s*\{[^}]*width:\s*100%/s);
   assert.ok(readFileSync(video).length > 1_000_000, "動画ファイルが存在しないか小さすぎます");

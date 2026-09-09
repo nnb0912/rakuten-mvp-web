@@ -25,7 +25,7 @@ export const dynamic = "force-dynamic";
 const RPP_VIEWS = {
   dashboard: { label: "ダッシュボード", description: "候補件数とデータ状態を確認します。" },
   budget: { label: "予算管理", description: "予算進捗・期間比較・運用戦略を確認します。" },
-  products: { label: "商品・KW・実験", description: "商品/KWの目標設定・除外・実験を操作します。" },
+  products: { label: "広告掲載商品リスト", description: "商品/KWの目標設定・除外・実験を操作します。" },
   excluded: { label: "除外中・広告ON戻し", description: "除外中商品を担当者別に確認し、広告ONへ戻します。" },
 
   optimization: { label: "CPC最適化", description: "自動調整ルールと安全設定を確認します。" },
@@ -259,10 +259,10 @@ export default async function RppPage({ searchParams }: { searchParams: Promise<
             <p>自分の担当商品の絞り込みからRMS反映確認まで、実際の画面と音声・字幕で確認できます。</p>
           </div>
           <video controls playsInline preload="metadata" aria-label="RPP CONTROL 使い方マニュアル動画">
-            <source src="/rpp/manuals/rpp-control-guide-v8.mp4" type="video/mp4" />
+            <source src="/rpp/manuals/rpp-control-guide-v9.mp4" type="video/mp4" />
             お使いのブラウザでは動画を再生できません。
           </video>
-          <a href="/rpp/manuals/rpp-control-guide-v8.mp4" download>動画をダウンロード</a>
+          <a href="/rpp/manuals/rpp-control-guide-v9.mp4" download>動画をダウンロード</a>
         </div>
         <ol className="rpp-guide-flow" aria-label="基本操作フロー">
           <li><b>1. 状態確認</b><span>ダッシュボードでデータ状態が「OK」か確認</span></li>
@@ -273,10 +273,10 @@ export default async function RppPage({ searchParams }: { searchParams: Promise<
         <div className="rpp-guide-grid">
           <article><div><span>01</span><b>ダッシュボード</b></div><p>固定以外のモードを選択した商品を、商品CPC・KWCPC別に確認します。配信状態、前日実績、順位、現在判断を確認します。</p><Link href="/rpp?view=dashboard">この画面を開く →</Link></article>
           <article><div><span>02</span><b>予算管理</b></div><p>月予算、消化率、月末着地、期間比較を確認します。現段階は監視専用で、ここからRMS予算を自動変更しません。</p><Link href="/rpp?view=budget">この画面を開く →</Link></article>
-          <article className="rpp-guide-wide"><div><span>03</span><b>商品・KW・実験</b></div><p>①担当タブを選ぶ → ②商品番号・商品名・KWで検索 → ③現CPC、提案CPC、ROAS、PC/SP順位、運用モード、保護、配信状態を確認します。「設定」で右側の編集画面を開きます。</p><ul><li><b>自動運用：</b>商品番号による制限はありません。ROAS／検索順位／バランスを選択すると、その設定行が自動調整対象になります。</li><li><b>CPC固定：</b>固定額を維持し、自動調整しません。「CPC変更CSV」からRMS手動アップロード用CSVを出力します。</li><li><b>基準ワード：</b>商品CPCの順位判定ワードを複数追加できます。どれか1語でもPC・SPの目標順位を満たせば達成扱いです。</li><li><b>商品CPC行：</b>CPC設定と商品単位の広告除外／再開を操作できます。</li><li><b>KWCPC行：</b>キーワードCPCを設定します。広告除外は商品単位のため、KWCPC行には除外操作がありません。</li><li><b>変更予定：</b>RMS反映前のローカル状態です。「戻す」で取り消せます。</li></ul><Link href="/rpp?view=products">この画面を開く →</Link></article>
+          <article className="rpp-guide-wide"><div><span>03</span><b>広告掲載商品リスト</b></div><p>①担当タブを選ぶ → ②商品番号・商品名・KWで検索 → ③現CPC、提案CPC、ROAS、PC/SP順位、運用モード、保護、配信状態を確認します。「設定」で右側の編集画面を開きます。</p><ul><li><b>自動運用：</b>商品番号による制限はありません。ROAS／検索順位／バランスを選択すると、その設定行が自動調整対象になります。</li><li><b>CPC固定：</b>固定額を維持し、自動調整しません。「CPC変更CSV」からRMS手動アップロード用CSVを出力します。</li><li><b>基準ワード：</b>商品CPCの順位判定ワードを複数追加できます。どれか1語でもPC・SPの目標順位を満たせば達成扱いです。</li><li><b>商品CPC行：</b>CPC設定と商品単位の広告除外／再開を操作できます。</li><li><b>KWCPC行：</b>キーワードCPCを設定します。広告除外は商品単位のため、KWCPC行には除外操作がありません。</li><li><b>変更予定：</b>RMS反映前のローカル状態です。「戻す」で取り消せます。</li></ul><Link href="/rpp?view=products">この画面を開く →</Link></article>
           <article><div><span>04</span><b>除外中・広告ON戻し</b></div><p>除外中商品を独立画面で開き、担当者タブだけで絞り込みます。目標設定後に広告ONへ戻します。</p><Link href="/rpp?view=excluded">この画面を開く →</Link></article>
-          <article><div><span>05</span><b>CPC最適化</b></div><p>最低CPC、上限、ROAS基準、1日変更幅などの提案ルールを確認します。設定は提案生成条件であり、RMSへ即時反映するものではありません。</p><Link href="/rpp?view=optimization">この画面を開く →</Link></article>
-          <article><div><span>06</span><b>実験履歴</b></div><p>既存の実験履歴は開始値と終了値を同じ指標で比較できます。現在の4つの通常運用モードは終了日不要で、実験履歴を新規作成しません。</p><Link href="/rpp?view=products">商品・KW・実験を開く →</Link></article>
+          <article><div><span>05</span><b>CPC最適化</b></div><p>最低CPC、上限、ROAS基準、1回変更幅などの提案ルールを確認します。設定は提案生成条件であり、RMSへ即時反映するものではありません。</p><Link href="/rpp?view=optimization">この画面を開く →</Link></article>
+          <article><div><span>06</span><b>実験履歴</b></div><p>既存の実験履歴は開始値と終了値を同じ指標で比較できます。現在の4つの通常運用モードは終了日不要で、実験履歴を新規作成しません。</p><Link href="/rpp?view=products">広告掲載商品リストを開く →</Link></article>
           <article><div><span>07</span><b>データ・実行履歴</b></div><p>同期ファイルの時刻、保留理由、対象外、監査ログ、RMS反映履歴を確認します。反映後は結果と読み戻しが一致しているか確認します。</p><Link href="/rpp?view=data">この画面を開く →</Link></article>
         </div>
         <div className="rpp-guide-safety">
