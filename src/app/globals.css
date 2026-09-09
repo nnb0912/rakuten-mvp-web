@@ -248,6 +248,8 @@ small { color: var(--muted); line-height: 1.45; }
 .product-exclusion-action { display: inline-flex; align-items: center; justify-content: flex-end; gap: 6px; flex-wrap: wrap; margin-right: 0; }
 .product-exclusion-action small { color: var(--muted); font-weight: 700; }
 .excluded-product-block { margin-top: 18px; border-top: 1px solid var(--border); padding-top: 16px; }
+.excluded-product-page { margin-top: 0; border-top: 0; padding-top: 0; }
+.excluded-owner-filter { grid-template-columns: minmax(0, 1fr); }
 .compact-heading { margin-bottom: 10px; }
 .compact-heading h3 { margin: 0 0 4px; font-size: 16px; }
 .excluded-product-grid { display: grid; gap: 8px; }
