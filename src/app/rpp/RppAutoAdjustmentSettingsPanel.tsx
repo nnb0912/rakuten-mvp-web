@@ -93,7 +93,7 @@ export default function RppAutoAdjustmentSettingsPanel({ initialSettings, source
       <div className="section-heading compact-heading">
         <div>
           <h2>自動調整ルール</h2>
-          <p>まずは候補生成だけに使います。RMS本番反映はこの画面では行いません。</p>
+          <p>固定以外のモードを選択した設定行だけを候補化します。</p>
         </div>
         <span className={`status-pill ${form.enabled ? "status-approved" : "status-hold"}`}>{form.enabled ? "自動候補ON" : "自動候補OFF"}</span>
       </div>
@@ -101,9 +101,7 @@ export default function RppAutoAdjustmentSettingsPanel({ initialSettings, source
       {message ? <p className="success-box">{message}</p> : null}
       <form className="auto-adjust-form" onSubmit={save}>
         <div className="auto-switch-row">
-          <label className="checkbox-field"><input type="checkbox" checked={form.enabled} onChange={(e) => patch("enabled", e.target.checked)} /> <RppInfoTip label="自動調整候補を有効化" /></label>
-          <label className="checkbox-field"><input type="checkbox" checked={form.itemEnabledDefault} onChange={(e) => patch("itemEnabledDefault", e.target.checked)} /> <RppInfoTip label="商品CPCも候補化" /></label>
-          <label className="checkbox-field"><input type="checkbox" checked={form.keywordEnabledDefault} onChange={(e) => patch("keywordEnabledDefault", e.target.checked)} /> <RppInfoTip label="キーワードCPCを候補化" /></label>
+          <label className="checkbox-field"><input type="checkbox" checked={form.enabled} onChange={(e) => patch("enabled", e.target.checked)} /> <RppInfoTip label="選択モードの自動調整を有効化" /></label>
         </div>
         <div className="form-row six-cols auto-number-grid">
           <label><RppInfoTip label="最低CPC" /><input type="number" min="1" value={form.floorCpc} onChange={(e) => patch("floorCpc", Number(e.target.value))} /></label>

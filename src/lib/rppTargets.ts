@@ -8,7 +8,7 @@ import { normalizeRppOptimizationMode, validateRppModeCpcBounds, type RppOptimiz
 import { readRppStrategySettings, resolveRppRoas } from "@/lib/rppStrategySettings";
 import { readLatestRppDashboardSnapshot } from "@/lib/rppDashboardSnapshots";
 import { validateRppTargetInputValues } from "@/lib/rppTargetValidation";
-import { assertRppOptimizationModeAllowed, isRppAutoCpcItem } from "@/lib/rppCpcModePolicy";
+
 
 export type RppPositionGoal = "FIRST_PAGE" | "TOP_7" | "TOP_5" | "TOP_3";
 export type RppOperationPolicy = "攻め" | "維持" | "テスト" | "停止候補";
@@ -173,7 +173,7 @@ export function normalizeRppTargetInput(input: RppAlertTargetInput) {
   if (pcPositionGoal === "TOP_7") throw new Error("PC順位目標に7位以内は指定できません");
   const policy = POLICIES.includes(input.policy as RppOperationPolicy) ? input.policy as RppOperationPolicy : "維持";
   const optimizationMode = normalizeRppOptimizationMode(input.optimizationMode);
-  assertRppOptimizationModeAllowed(itemCode, optimizationMode);
+
   for (const [label, raw] of Object.entries({ maxCpc: input.maxCpc, fixedCpc: input.fixedCpc, roasMinCpc: input.roasMinCpc, roasMaxCpc: input.roasMaxCpc, positionMinCpc: input.positionMinCpc, positionMaxCpc: input.positionMaxCpc, balancedMinCpc: input.balancedMinCpc, balancedMaxCpc: input.balancedMaxCpc })) {
     if (raw != null && String(raw).trim() !== "" && (!Number.isFinite(Number(raw)) || Number(raw) <= 0)) throw new Error(`${label}は正数で入力してください`);
   }
@@ -425,7 +425,7 @@ async function ensureRppAlertTargetsTable() {
       lock_reason text not null default '',
       protection_type text not null default 'NORMAL',
       search_keywords jsonb not null default '[]'::jsonb,
-      optimization_mode text not null default 'ROAS',
+      optimization_mode text not null default 'FIXED',
       fixed_cpc numeric,
       max_cpc numeric,
       roas_min_cpc numeric,
@@ -447,7 +447,8 @@ async function ensureRppAlertTargetsTable() {
   await pool.query(`alter table ${TARGETS_TABLE} add column if not exists change_locked boolean not null default false`);
   await pool.query(`alter table ${TARGETS_TABLE} add column if not exists lock_reason text not null default ''`);
   await pool.query(`alter table ${TARGETS_TABLE} add column if not exists protection_type text not null default 'NORMAL'`);
-  await pool.query(`alter table ${TARGETS_TABLE} add column if not exists optimization_mode text not null default 'ROAS'`);
+  await pool.query(`alter table ${TARGETS_TABLE} add column if not exists optimization_mode text not null default 'FIXED'`);
+  await pool.query(`alter table ${TARGETS_TABLE} alter column optimization_mode set default 'FIXED'`);
   await pool.query(`alter table ${TARGETS_TABLE} add column if not exists fixed_cpc numeric`);
   await pool.query(`alter table ${TARGETS_TABLE} add column if not exists max_cpc numeric`);
   await pool.query(`alter table ${TARGETS_TABLE} add column if not exists roas_min_cpc numeric`);
@@ -734,6 +735,7 @@ export async function seedMissingRppAlertTargets(defaults: Partial<RppAlertTarge
   const existing = new Set(targets.map((row) => row.id));
   const now = new Date().toISOString();
   const additions: RppAlertTarget[] = [];
+  const defaultOptimizationMode = defaults.optimizationMode ? normalizeRppOptimizationMode(defaults.optimizationMode) : "FIXED";
   for (const row of configured) {
     if (existing.has(row.id)) continue;
     const normalized = normalizeRppTargetInput({
@@ -746,10 +748,10 @@ export async function seedMissingRppAlertTargets(defaults: Partial<RppAlertTarge
       changeLocked: false,
       lockReason: "",
       ...defaults,
-      optimizationMode: isRppAutoCpcItem(row.itemCode) ? defaults.optimizationMode : "FIXED",
-      fixedCpc: isRppAutoCpcItem(row.itemCode)
-        ? defaults.fixedCpc
-        : (row.source === "商品CPC" ? row.itemCpc : row.keywordCpc),
+      optimizationMode: defaultOptimizationMode,
+      fixedCpc: defaultOptimizationMode === "FIXED"
+        ? (defaults.fixedCpc ?? (row.source === "商品CPC" ? row.itemCpc : row.keywordCpc))
+        : defaults.fixedCpc,
     });
     additions.push({ id: row.id, ...normalized, createdAt: now, updatedAt: now });
   }
