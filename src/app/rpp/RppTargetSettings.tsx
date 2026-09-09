@@ -11,6 +11,7 @@ import {
 } from "@/lib/rppOptimization";
 import type { RppRecommendationWithApproval } from "@/lib/rppRecommendations";
 import { canDownloadManualCpcCsv, isAutomaticRppOptimizationMode } from "@/lib/rppCpcModePolicy";
+import { shortRppItemName } from "@/lib/rppItemShortNames";
 import { canOperateProductExclusion, deliveryLabel } from "@/lib/rppTargetUiRules";
 import type { RppAlertTarget, RppConfiguredTarget, RppExclusionProduct, RppOperationPolicy, RppPositionGoal, RppProtectionType } from "@/lib/rppTargets";
 import type { RppExperimentRecord } from "@/lib/rppExperiments";
@@ -416,7 +417,7 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
     const ownerOk = ownerFilter === "全て" || (target?.owner || cfg.owner || "担当未設定") === ownerFilter;
     const groupOk = groupFilter === "全て" || (target?.adGroup || "通常") === groupFilter;
     const query = tableSearch.trim().toLowerCase();
-    const searchOk = !query || [cfg.itemCode, cfg.keyword, cfg.itemName, target?.owner, target?.adGroup]
+    const searchOk = !query || [cfg.itemCode, cfg.keyword, cfg.itemName, shortRppItemName(cfg.itemCode, cfg.itemName), target?.owner, target?.adGroup]
       .filter(Boolean)
       .some((value) => String(value).toLowerCase().includes(query));
     const preview = optimizationPreviewMap.get(cfg.id)?.preview;
@@ -916,7 +917,7 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
                     <td className="product-col">
                       <div className="adant-product-code"><b>{cfg.itemCode}</b><span>{cfg.source}</span></div>
                       <strong>{cfg.keyword}</strong>
-                      <small title={cfg.itemName}>{cfg.itemName || "商品名未取得"}</small>
+                      <small title={cfg.itemName}>{shortRppItemName(cfg.itemCode, cfg.itemName)}</small>
                     </td>
                     <td><b>{row?.owner || cfg.owner || "未設定"}</b><small>{row?.adGroup || "通常"}</small></td>
                     <td className="number-cell"><b>{formatRppYen(rec?.spend)}</b><small>{formatRppClicks(rec?.clicks)} / 売上 {formatRppYen(rec?.salesAmount)}</small></td>
@@ -966,7 +967,7 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
             const changed = row.currentExcluded !== row.excluded;
             return (
               <article className="excluded-product-row" key={row.itemCode}>
-                <div><b>{row.itemCode}</b><br /><small>{row.itemName || "商品名未取得"}</small><br /><small>{row.owner || "担当未設定"}</small></div>
+                <div><b>{row.itemCode}</b><br /><small title={row.itemName}>{shortRppItemName(row.itemCode, row.itemName)}</small><br /><small>{row.owner || "担当未設定"}</small></div>
                 <span><small>商品CPC</small><strong>{yen(row.itemCpc)}</strong></span>
                 <span><small>保存目標</small><strong>{savedCount}件</strong></span>
                 <div className="card-actions excluded-actions">
