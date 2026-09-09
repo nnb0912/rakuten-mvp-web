@@ -24,6 +24,7 @@ const RPP_VIEWS = {
   dashboard: { label: "ダッシュボード", description: "候補件数とデータ状態を確認します。" },
   budget: { label: "予算管理", description: "予算進捗・期間比較・運用戦略を確認します。" },
   products: { label: "商品・KW・実験", description: "商品/KWの目標設定・除外・実験を操作します。" },
+  excluded: { label: "除外中・広告ON戻し", description: "除外中商品を担当者別に確認し、広告ONへ戻します。" },
   alerts: { label: "異常アラート", description: "CPC・ROAS・広告費・データ異常を確認します。" },
   optimization: { label: "CPC最適化", description: "自動調整ルールと安全設定を確認します。" },
   data: { label: "データ・実行履歴", description: "データ鮮度・保留理由・監査ログを確認します。" },
@@ -261,10 +262,11 @@ export default async function RppPage({ searchParams }: { searchParams: Promise<
           <article><div><span>01</span><b>ダッシュボード</b></div><p>自動調整を許可した商品だけを、商品CPC・KWCPC別に確認します。配信状態、前日実績、順位、現在判断を見て、要更新の日は設定変更せず待ちます。</p><Link href="/rpp?view=dashboard">この画面を開く →</Link></article>
           <article><div><span>02</span><b>予算管理</b></div><p>月予算、消化率、月末着地、期間比較を確認します。現段階は監視専用で、ここからRMS予算を自動変更しません。</p><Link href="/rpp?view=budget">この画面を開く →</Link></article>
           <article className="rpp-guide-wide"><div><span>03</span><b>商品・KW・実験</b></div><p>①担当タブを選ぶ → ②商品番号・商品名・KWで検索 → ③現CPC、提案CPC、ROAS、PC/SP順位、運用モード、保護、配信状態を確認します。「設定」で右側の編集画面を開きます。</p><ul><li><b>自動運用：</b>R0445・R0406だけが対象です。ROAS／検索順位／バランス／CPC固定を選び、固定以外は専用のCPC下限・上限を設定できます。</li><li><b>その他の商品：</b>CPC固定モードで運用し、「CPC変更CSV」からRMS手動アップロード用CSVを出力します。</li><li><b>基準ワード：</b>商品CPCの順位判定ワードを複数追加できます。どれか1語でもPC・SPの目標順位を満たせば達成扱いです。</li><li><b>商品CPC行：</b>CPC設定と商品単位の広告除外／再開を操作できます。</li><li><b>KWCPC行：</b>キーワードCPCを設定します。広告除外は商品単位のため、KWCPC行には除外操作がありません。</li><li><b>変更予定：</b>RMS反映前のローカル状態です。「戻す」で取り消せます。</li></ul><Link href="/rpp?view=products">この画面を開く →</Link></article>
-          <article><div><span>04</span><b>異常アラート</b></div><p>CPC急騰、ROAS急落、広告費急増、データ欠損・鮮度・件数差を確認します。Chatworkは画面上ではDry Run固定です。</p><Link href="/rpp?view=alerts">この画面を開く →</Link></article>
-          <article><div><span>05</span><b>CPC最適化</b></div><p>最低CPC、上限、ROAS基準、1日変更幅などの提案ルールを確認します。設定は提案生成条件であり、RMSへ即時反映するものではありません。</p><Link href="/rpp?view=optimization">この画面を開く →</Link></article>
-          <article><div><span>06</span><b>実験履歴</b></div><p>既存の実験履歴は開始値と終了値を同じ指標で比較できます。現在の4つの通常運用モードは終了日不要で、実験履歴を新規作成しません。</p><Link href="/rpp?view=products">商品・KW・実験を開く →</Link></article>
-          <article><div><span>07</span><b>データ・実行履歴</b></div><p>同期ファイルの時刻、保留理由、対象外、監査ログ、RMS反映履歴を確認します。反映後は結果と読み戻しが一致しているか確認します。</p><Link href="/rpp?view=data">この画面を開く →</Link></article>
+          <article><div><span>04</span><b>除外中・広告ON戻し</b></div><p>除外中商品を独立画面で開き、担当者タブだけで絞り込みます。目標設定後に広告ONへ戻します。</p><Link href="/rpp?view=excluded">この画面を開く →</Link></article>
+          <article><div><span>05</span><b>異常アラート</b></div><p>CPC急騰、ROAS急落、広告費急増、データ欠損・鮮度・件数差を確認します。Chatworkは画面上ではDry Run固定です。</p><Link href="/rpp?view=alerts">この画面を開く →</Link></article>
+          <article><div><span>06</span><b>CPC最適化</b></div><p>最低CPC、上限、ROAS基準、1日変更幅などの提案ルールを確認します。設定は提案生成条件であり、RMSへ即時反映するものではありません。</p><Link href="/rpp?view=optimization">この画面を開く →</Link></article>
+          <article><div><span>07</span><b>実験履歴</b></div><p>既存の実験履歴は開始値と終了値を同じ指標で比較できます。現在の4つの通常運用モードは終了日不要で、実験履歴を新規作成しません。</p><Link href="/rpp?view=products">商品・KW・実験を開く →</Link></article>
+          <article><div><span>08</span><b>データ・実行履歴</b></div><p>同期ファイルの時刻、保留理由、対象外、監査ログ、RMS反映履歴を確認します。反映後は結果と読み戻しが一致しているか確認します。</p><Link href="/rpp?view=data">この画面を開く →</Link></article>
         </div>
         <div className="rpp-guide-safety">
           <div><b>ステータスの見方</b><p><span className="status-pill status-approved">上げ／正常</span> 条件を満たす候補　<span className="status-pill status-hold">保留</span> データ・条件待ち　<span className="status-pill approval-rejected">下げ／異常</span> 採算・鮮度を要確認</p></div>
@@ -278,8 +280,8 @@ export default async function RppPage({ searchParams }: { searchParams: Promise<
         <RppStrategyPanel initialSettings={strategyData.settings} source={strategyData.source} />
       </> : null}
 
-      {view === "products" ? <section className="panel target-panel" id="rpp-products">
-        <RppTargetSettings initialTargets={targetData.targets} configuredTargets={targetData.configuredTargets} exclusionProducts={targetData.exclusionProducts} ownerNames={targetData.ownerNames} recommendations={data.recommendations} initialExperiments={experimentHistory} performanceDateRange={summary?.performanceDateRange} />
+      {view === "products" || view === "excluded" ? <section className="panel target-panel" id={view === "excluded" ? "rpp-excluded-view" : "rpp-products"}>
+        <RppTargetSettings surface={view === "excluded" ? "excluded" : "targets"} initialTargets={targetData.targets} configuredTargets={targetData.configuredTargets} exclusionProducts={targetData.exclusionProducts} ownerNames={targetData.ownerNames} recommendations={data.recommendations} initialExperiments={experimentHistory} performanceDateRange={summary?.performanceDateRange} />
       </section> : null}
 
       {view === "alerts" ? <RppAnomalyAlertPanel {...anomalyData} /> : null}

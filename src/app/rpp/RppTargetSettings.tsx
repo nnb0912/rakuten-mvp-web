@@ -27,6 +27,7 @@ type Props = {
   recommendations: RppRecommendationWithApproval[];
   initialExperiments: RppExperimentRecord[];
   performanceDateRange?: string | null;
+  surface?: "targets" | "excluded";
 };
 
 type FormState = {
@@ -211,7 +212,7 @@ function seoWordsForItem(itemCode: string) {
   return SEO_KEYWORDS[code] || SEO_KEYWORDS[code.toLowerCase()] || SEO_KEYWORDS[code.toUpperCase()] || [];
 }
 
-export default function RppTargetSettings({ initialTargets, configuredTargets, exclusionProducts, ownerNames, recommendations, initialExperiments, performanceDateRange }: Props) {
+export default function RppTargetSettings({ initialTargets, configuredTargets, exclusionProducts, ownerNames, recommendations, initialExperiments, performanceDateRange, surface = "targets" }: Props) {
   const [targets, setTargets] = useState(initialTargets);
   const [form, setForm] = useState<FormState>(blank);
   const [busy, setBusy] = useState(false);
@@ -224,8 +225,7 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
   const [modeFilter, setModeFilter] = useState<"ALL" | RppOptimizationMode>("ALL");
   const [protectionFilter, setProtectionFilter] = useState<"ALL" | RppProtectionType>("ALL");
   const [formDrawerOpen, setFormDrawerOpen] = useState(false);
-  const [exclusionSearch, setExclusionSearch] = useState("");
-  const [showExcludedProducts, setShowExcludedProducts] = useState(false);
+
   const [baseExclusionProducts] = useState(exclusionProducts);
   const [exclusionOverrides, setExclusionOverrides] = useState<Record<string, boolean>>({});
   const [selectedOptimizationIds, setSelectedOptimizationIds] = useState<Set<string>>(() => new Set());
@@ -432,12 +432,18 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
     return ownerOk && groupOk && searchOk && statusOk && modeOk && protectionOk;
   });
   const exclusionChanged = exclusionRows.filter((row) => row.currentExcluded !== row.excluded);
+  const excludedOwnerStats = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const row of exclusionRows) {
+      if (!row.excluded) continue;
+      const owner = row.owner || "担当未設定";
+      counts.set(owner, (counts.get(owner) ?? 0) + 1);
+    }
+    return [...counts.entries()]
+      .map(([owner, count]) => ({ owner, count }))
+      .sort((a, b) => (a.owner === "担当未設定" ? -1 : b.owner === "担当未設定" ? 1 : a.owner.localeCompare(b.owner, "ja")));
+  }, [exclusionRows]);
   const excludedProductsForOwner = exclusionRows.filter((row) => row.excluded && (ownerFilter === "全て" || (row.owner || "担当未設定") === ownerFilter));
-  const filteredExcludedProducts = excludedProductsForOwner.filter((row) => {
-    const query = exclusionSearch.trim().toLowerCase();
-    if (!query) return true;
-    return [row.itemCode, row.itemName, row.owner || "担当未設定"].some((value) => value.toLowerCase().includes(query));
-  });
   const searchWordOptions = useMemo(() => {
     const itemCode = form.itemCode.trim().toLowerCase();
     if (!itemCode) return [] as string[];
@@ -784,7 +790,7 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
       {message ? <p className="success-box">{message}</p> : null}
       {activeOperation ? <p className="rpp-collaboration-banner operation"><b>RMS反映{activeOperation.status === "running" ? "中" : "待機中"}</b><span>{activeOperation.actorName} / {activeOperation.itemCodes.join(", ")}</span><small>完了・読戻し確認まで他の反映操作は待機してください。</small></p> : null}
       {activeEditLocks.length ? <p className="rpp-collaboration-banner"><b>編集中</b><span>{activeEditLocks.map((lock) => `${lock.actorName}：${lock.itemCode}`).join(" / ")}</span><small>別商品は同時に編集できます。</small></p> : null}
-      <section className="owner-filter-strip" aria-label="担当・広告グループ絞り込み">
+      {surface === "targets" ? <section className="owner-filter-strip" aria-label="担当・広告グループ絞り込み">
         <div className="owner-tabs">
           <button className={ownerFilter === "全て" ? "owner-tab active" : "owner-tab"} type="button" onClick={() => selectOwnerFilter("全て")}>全て</button>
           {ownerStats.map((row) => (
@@ -800,9 +806,18 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
             </button>
           ))}
         </div>
-      </section>
+      </section> : <section className="owner-filter-strip excluded-owner-filter" aria-label="除外中商品の担当者絞り込み">
+        <div className="owner-tabs">
+          <button className={ownerFilter === "全て" ? "owner-tab active" : "owner-tab"} type="button" onClick={() => selectOwnerFilter("全て")}>全て<small>{exclusionRows.filter((row) => row.excluded).length}件</small></button>
+          {excludedOwnerStats.map((row) => (
+            <button className={ownerFilter === row.owner ? "owner-tab active" : "owner-tab"} key={row.owner} type="button" onClick={() => selectOwnerFilter(row.owner)}>
+              {row.owner}<small>{row.count}件</small>
+            </button>
+          ))}
+        </div>
+      </section>}
 
-      <section className="panel product-card-panel">
+      {surface === "targets" ? <section className="panel product-card-panel">
         <div className="section-heading">
           <div>
             <h2>{ownerFilter === "全て" ? "商品/KW別一覧" : `${ownerFilter}の商品/KW`}</h2>
@@ -935,48 +950,43 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
           </table>
           {!filteredConfiguredTargets.length ? <p>この担当のRPP設定中商品/KWはありません。</p> : null}
         </div>
-        {excludedProductsForOwner.length ? (
-          <div className="excluded-product-block" id="rpp-excluded">
-            <div className="section-heading compact-heading">
-              <div>
-                <h3>除外中商品（広告ON戻し）</h3>
-                <p>除外中の商品を広告ONに戻すには、商品内に目標が1つ以上必要です。</p>
-              </div>
-              <button className="secondary-button compact-button" type="button" onClick={() => setShowExcludedProducts((current) => !current)}>
-                {showExcludedProducts ? "閉じる" : `開く（除外中 ${excludedProductsForOwner.length}件）`}
-              </button>
-            </div>
-            {showExcludedProducts ? (
-              <>
-            <label className="excluded-search">商品検索<input value={exclusionSearch} onChange={(e) => setExclusionSearch(e.target.value)} placeholder="商品番号・商品名・担当で検索" /></label>
-            <div className="excluded-product-grid">
-              {filteredExcludedProducts.slice(0, 80).map((row) => {
-                const completion = itemTargetCompletionMap.get(row.itemCode) ?? { total: 0, saved: savedTargetCountByItemCode.get(row.itemCode) ?? 0, missing: 0 };
-                const savedCount = completion.saved;
-                const canTurnOn = completion.total > 0 && completion.missing === 0;
-                const changed = row.currentExcluded !== row.excluded;
-                return (
-                  <article className="excluded-product-row" key={row.itemCode}>
-                    <div><b>{row.itemCode}</b><br /><small>{row.itemName || "商品名未取得"}</small><br /><small>{row.owner || "担当未設定"}</small></div>
-                    <span><small>商品CPC</small><strong>{yen(row.itemCpc)}</strong></span>
-                    <span><small>保存目標</small><strong>{savedCount}件</strong></span>
-                    <div className="card-actions excluded-actions">
-                      <button disabled={busy || !canTurnOn} type="button" onClick={() => toggleExcluded(row.itemCode, canTurnOn)} title={!canTurnOn ? "先に目標設定を1つ作成してください" : undefined}>{changed ? "元に戻す" : "広告ONに戻す"}</button>
-                      <button disabled={busy} type="button" onClick={() => openTargetForm(excludedProductToForm(row))} title={activeEditLockMap.get(row.itemCode) ? `${activeEditLockMap.get(row.itemCode)?.actorName}が編集中` : undefined}>{activeEditLockMap.get(row.itemCode) ? "🔒 目標設定" : "目標設定"}</button>
-                    </div>
-                  </article>
-                );
-              })}
-              {!filteredExcludedProducts.length ? <p>検索に一致する除外中商品はありません。</p> : null}
-            </div>
-            {filteredExcludedProducts.length > 80 ? <p>除外中商品は先頭80件だけ表示しています。担当タブで絞り込んでください。</p> : null}
-              </>
-            ) : null}
+      </section> : <section className="panel excluded-product-block excluded-product-page" id="rpp-excluded">
+        <div className="section-heading">
+          <div>
+            <h2>{ownerFilter === "全て" ? "除外中商品（広告ON戻し）" : `${ownerFilter}の除外中商品`}</h2>
+            <p>担当者タブで切り替えます。目標設定後に広告ONへ戻し、RMS反映で確定します。</p>
           </div>
-        ) : null}
-      </section>
+          <div className="product-list-actions">
+            <span className="status-pill status-hold">表示 {excludedProductsForOwner.length}件</span>
+            <span className={exclusionChanged.length ? "status-pill approval-held" : "status-pill status-approved"}>変更予定 {exclusionChanged.length}件</span>
+            <button className="primary-button compact-button" disabled={!exclusionChanged.length || busy || Boolean(activeOperation)} type="button" onClick={applyExclusionToRms}>{activeOperation ? "RMS反映中" : "RMSへ反映"}</button>
+            <button className="secondary-button compact-button" disabled={!exclusionChanged.length} type="button" onClick={downloadExcludeCsv}>手動CSV</button>
+            <button className="secondary-button compact-button" disabled={!exclusionChanged.length} type="button" onClick={() => setExclusionOverrides({})}>変更を戻す</button>
+          </div>
+        </div>
+        <div className="excluded-product-grid">
+          {excludedProductsForOwner.map((row) => {
+            const completion = itemTargetCompletionMap.get(row.itemCode) ?? { total: 0, saved: savedTargetCountByItemCode.get(row.itemCode) ?? 0, missing: 0 };
+            const savedCount = completion.saved;
+            const canTurnOn = completion.total > 0 && completion.missing === 0;
+            const changed = row.currentExcluded !== row.excluded;
+            return (
+              <article className="excluded-product-row" key={row.itemCode}>
+                <div><b>{row.itemCode}</b><br /><small>{row.itemName || "商品名未取得"}</small><br /><small>{row.owner || "担当未設定"}</small></div>
+                <span><small>商品CPC</small><strong>{yen(row.itemCpc)}</strong></span>
+                <span><small>保存目標</small><strong>{savedCount}件</strong></span>
+                <div className="card-actions excluded-actions">
+                  <button disabled={busy || !canTurnOn} type="button" onClick={() => toggleExcluded(row.itemCode, canTurnOn)} title={!canTurnOn ? "先に目標設定を1つ作成してください" : undefined}>{changed ? "元に戻す" : "広告ONに戻す"}</button>
+                  <button disabled={busy} type="button" onClick={() => openTargetForm(excludedProductToForm(row))} title={activeEditLockMap.get(row.itemCode) ? `${activeEditLockMap.get(row.itemCode)?.actorName}が編集中` : undefined}>{activeEditLockMap.get(row.itemCode) ? "🔒 目標設定" : "目標設定"}</button>
+                </div>
+              </article>
+            );
+          })}
+          {!excludedProductsForOwner.length ? <p>この担当者の除外中商品はありません。</p> : null}
+        </div>
+      </section>}
 
-      <section className="panel experiment-history-panel" id="rpp-experiments">
+      {surface === "targets" ? <section className="panel experiment-history-panel" id="rpp-experiments">
         <div className="section-heading compact-heading">
           <div><h2>実験トラッキング</h2><p>過去に保存された実験履歴を、終了時の同じ指標と比較します。</p></div>
           <div className="experiment-summary">
@@ -1002,7 +1012,7 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
             </table>
           </div>
         ) : <p className="experiment-empty">保存済みの実験履歴はありません。現在の4つの通常運用モードでは実験履歴を作成しません。</p>}
-      </section>
+      </section> : null}
 
       {formDrawerOpen ? <button className="rpp-drawer-backdrop" aria-label="設定を閉じる" type="button" onClick={() => closeTargetForm()} /> : null}
       <aside className={formDrawerOpen ? "rpp-target-drawer open" : "rpp-target-drawer"} id="rpp-target-form" aria-hidden={!formDrawerOpen}>
