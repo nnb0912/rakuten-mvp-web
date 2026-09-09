@@ -1,34 +1,33 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import {
-  assertRppOptimizationModeAllowed,
-  canDownloadManualCpcCsv,
-  effectiveRppOptimizationMode,
-  isRppAutoCpcItem,
-} from "./rppCpcModePolicy.ts";
+import { canDownloadManualCpcCsv, isAutomaticRppOptimizationMode } from "./rppCpcModePolicy.ts";
 
-test("R0445とR0406だけをCPC自動調整対象として扱う", () => {
-  assert.equal(isRppAutoCpcItem(" R0445 "), true);
-  assert.equal(isRppAutoCpcItem("r0406"), true);
-  assert.equal(isRppAutoCpcItem("c017"), false);
-  assert.equal(canDownloadManualCpcCsv("r0445"), false);
-  assert.equal(canDownloadManualCpcCsv("c017"), true);
+const targets = readFileSync(new URL("./rppTargets.ts", import.meta.url), "utf8");
+
+test("商品番号に関係なく選択モードで自動運用を決める", () => {
+  for (const mode of ["ROAS", "POSITION", "BALANCED"] as const) {
+    assert.equal(isAutomaticRppOptimizationMode(mode), true);
+    assert.equal(canDownloadManualCpcCsv(mode), false);
+  }
+  assert.equal(isAutomaticRppOptimizationMode("FIXED"), false);
+  assert.equal(canDownloadManualCpcCsv("FIXED"), true);
 });
 
-test("自動化対象外はCPC固定モードへ固定し、保存時にも拒否する", () => {
-  assert.equal(effectiveRppOptimizationMode("r0445", "BALANCED"), "BALANCED");
-  assert.equal(effectiveRppOptimizationMode("c017", "ROAS"), "FIXED");
-  assert.doesNotThrow(() => assertRppOptimizationModeAllowed("c017", "FIXED"));
-  assert.throws(() => assertRppOptimizationModeAllowed("c017", "ROAS"), /R0445・R0406以外/);
+test("任意の商品で自動モードを保存できる", () => {
+  assert.match(targets, /const optimizationMode = normalizeRppOptimizationMode\(input\.optimizationMode\)/);
+  assert.doesNotMatch(targets, /RPP_AUTO_CPC_ITEM_CODES|assertRppOptimizationModeAllowed|isRppAutoCpcItem/);
 });
 
-test("一覧は自動対象の手動CPC操作を隠し、対象外をCPC変更CSVと明記する", () => {
+test("未設定行は固定で開始し、固定だけ手動CSVを表示する", () => {
   const component = readFileSync(new URL("../app/rpp/RppTargetSettings.tsx", import.meta.url), "utf8");
-  const targets = readFileSync(new URL("./rppTargets.ts", import.meta.url), "utf8");
-  assert.match(component, /canDownloadManualCpcCsv\(cfg\.itemCode\)/);
-  assert.match(component, />CPC変更CSV<\/button>/);
-  assert.match(component, />自動管理<\/span>/);
-  assert.match(targets, /assertRppOptimizationModeAllowed\(itemCode, optimizationMode\)/);
-  assert.match(targets, /optimizationMode: isRppAutoCpcItem\(row\.itemCode\) \? defaults\.optimizationMode : "FIXED"/);
+
+  assert.match(component, /const availableOptimizationModes = ROUTINE_OPTIMIZATION_MODES/);
+  assert.match(component, /optimizationMode: "FIXED", fixedCpc:/);
+  assert.match(component, /canDownloadManualCpcCsv\(effectiveMode\)/);
+  assert.match(component, /選択したモードに従って自動調整します/);
+  assert.doesNotMatch(component, /R0445・R0406以外は自動調整対象外/);
+  assert.match(targets, /defaultOptimizationMode = defaults\.optimizationMode \? normalizeRppOptimizationMode\(defaults\.optimizationMode\) : "FIXED"/);
+  assert.match(targets, /optimization_mode text not null default 'FIXED'/);
+  assert.doesNotMatch(targets, /assertRppOptimizationModeAllowed|isRppAutoCpcItem/);
 });

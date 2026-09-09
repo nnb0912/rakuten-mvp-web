@@ -9,6 +9,7 @@ import { readRppBudgetSettings, type RppBudgetMetrics } from "@/lib/rppBudgetSet
 import { readRppDailySpendActuals } from "@/lib/rppComparisons";
 import { readRppStrategySettings } from "@/lib/rppStrategySettings";
 import { readRppAnomalyComparison } from "@/lib/rppAnomalyData";
+import { isAutomaticRppOptimizationMode } from "@/lib/rppCpcModePolicy";
 import RppAutoAdjustmentSettingsPanel from "./RppAutoAdjustmentSettingsPanel";
 import RppAnomalyAlertPanel from "./RppAnomalyAlertPanel";
 import RppBudgetPanel from "./RppBudgetPanel";
@@ -134,7 +135,7 @@ export default async function RppPage({ searchParams }: { searchParams: Promise<
     readRppRecommendations(), readRppDashboardMeta(), readRppAlertTargets(), readRppAutoAdjustmentSettings(),
     readRppExperimentHistory(), listRecentRppExclusionJobs(8), readRppBudgetSettings(), readRppStrategySettings(), readRppDailySpendActuals(), listRppAuditEvents(30), readRppAnomalyComparison(),
   ]);
-  const summary = data.summary as { generatedAt?: string; performanceDateRange?: string | null; counts?: { raise?: number; lower?: number; hold?: number; ok?: number }; safety?: { productionChange?: boolean; autoAdjustment?: { enabled?: boolean; allowedItemCodes?: string[] } }; budgetMetrics?: RppBudgetMetrics } | null;
+  const summary = data.summary as { generatedAt?: string; performanceDateRange?: string | null; counts?: { raise?: number; lower?: number; hold?: number; ok?: number }; safety?: { productionChange?: boolean; autoAdjustment?: { enabled?: boolean } }; budgetMetrics?: RppBudgetMetrics } | null;
   const candidateTotal = (summary?.counts?.raise ?? 0) + (summary?.counts?.lower ?? 0);
   const holdRows = data.recommendations.filter((row) => row.action === "HOLD");
   const outOfScopeRows = holdRows.filter(isAutoAdjustmentOutOfScope);
@@ -142,9 +143,10 @@ export default async function RppPage({ searchParams }: { searchParams: Promise<
   const removeSettingCandidates = outOfScopeRows.filter((row) => outOfScopeOperation(row).label === "RPP設定解除候補");
   const searchSurfaceCandidates = outOfScopeRows.filter((row) => outOfScopeOperation(row).label === "検索面確認候補");
   const latestExclusionJob = exclusionJobs[0];
-  const allowedItemCodes = summary?.safety?.autoAdjustment?.allowedItemCodes ?? [];
-  const allowedRecommendations = data.recommendations.filter((row) => allowedItemCodes.includes(row.itemCode));
-  type AllowedDashboardRow = {
+  const automaticTargets = targetData.targets.filter((row) => isAutomaticRppOptimizationMode(row.optimizationMode));
+  const automaticTargetKeys = new Set(automaticTargets.map((row) => `${row.itemCode}\t${row.keyword}`));
+  const automaticRecommendations = data.recommendations.filter((row) => automaticTargetKeys.has(`${row.itemCode}\t${row.keyword}`));
+  type AutomaticDashboardRow = {
     itemCode: string;
     recommendation: (typeof data.recommendations)[number] | null;
     target: (typeof targetData.targets)[number] | null;
@@ -152,24 +154,23 @@ export default async function RppPage({ searchParams }: { searchParams: Promise<
     product: (typeof targetData.exclusionProducts)[number] | null;
     excluded: boolean;
   };
-  const allowedRows = allowedItemCodes.flatMap<AllowedDashboardRow>((itemCode) => {
-    const product = targetData.exclusionProducts.find((row) => row.itemCode === itemCode) ?? null;
-    const recommendations = allowedRecommendations.filter((row) => row.itemCode === itemCode);
-    if (!recommendations.length) return [{ itemCode, recommendation: null, target: null, configured: null, product, excluded: product?.excluded === true }];
-    return recommendations.map((recommendation) => ({
-      itemCode,
+  const automaticRows = automaticTargets.map<AutomaticDashboardRow>((target) => {
+    const product = targetData.exclusionProducts.find((row) => row.itemCode === target.itemCode) ?? null;
+    const recommendation = automaticRecommendations.find((row) => row.itemCode === target.itemCode && row.keyword === target.keyword) ?? null;
+    return {
+      itemCode: target.itemCode,
       recommendation,
-      target: targetData.targets.find((row) => row.itemCode === itemCode && row.keyword === recommendation.keyword) ?? null,
-      configured: targetData.configuredTargets.find((row) => row.itemCode === itemCode && row.keyword === recommendation.keyword) ?? null,
+      target,
+      configured: targetData.configuredTargets.find((row) => row.itemCode === target.itemCode && row.keyword === target.keyword) ?? null,
       product,
       excluded: product?.excluded === true,
-    }));
+    };
   });
-  const activeAllowedRows = allowedRows.filter((row) => !row.excluded);
-  const activeAllowedProducts = new Set(activeAllowedRows.map((row) => row.itemCode)).size;
-  const excludedAllowedProducts = allowedItemCodes.filter((itemCode) => targetData.exclusionProducts.some((row) => row.itemCode === itemCode && row.excluded)).length;
-  const dashboardSpend = allowedRecommendations.reduce((sum, row) => sum + (row.spend ?? 0), 0);
-  const dashboardSales = allowedRecommendations.reduce((sum, row) => sum + (row.salesAmount ?? 0), 0);
+  const automaticItemCodes = new Set(automaticTargets.map((row) => row.itemCode));
+  const activeAutomaticProducts = new Set(automaticRows.filter((row) => !row.excluded).map((row) => row.itemCode)).size;
+  const excludedAutomaticProducts = [...automaticItemCodes].filter((itemCode) => targetData.exclusionProducts.some((row) => row.itemCode === itemCode && row.excluded)).length;
+  const dashboardSpend = automaticRecommendations.reduce((sum, row) => sum + (row.spend ?? 0), 0);
+  const dashboardSales = automaticRecommendations.reduce((sum, row) => sum + (row.salesAmount ?? 0), 0);
   const dashboardRoas = dashboardSpend > 0 ? (dashboardSales / dashboardSpend) * 100 : null;
 
   return (
@@ -183,7 +184,7 @@ export default async function RppPage({ searchParams }: { searchParams: Promise<
             </Link>
           ))}
         </nav>
-        <div className="rpp-console-safe"><b>提案のみ</b><small>RMSへ自動反映しません</small></div>
+        <div className="rpp-console-safe"><b>モード選択式</b><small>固定以外だけ自動調整</small></div>
         <Link className="rpp-console-back" href="/">← 管理トップへ</Link>
       </aside>
       <main className="page-shell rpp-console-main">
@@ -200,10 +201,10 @@ export default async function RppPage({ searchParams }: { searchParams: Promise<
       </section>
 
       {view === "dashboard" ? <>
-        <section className="grid cards rpp-kpi-strip" aria-label="自動調整許可商品の概要">
-          <div className="card"><span>許可商品</span><strong>{allowedItemCodes.length}</strong></div>
-          <div className="card"><span>現在稼働</span><strong>{activeAllowedProducts}</strong></div>
-          <div className="card"><span>除外中</span><strong>{excludedAllowedProducts}</strong></div>
+        <section className="grid cards rpp-kpi-strip" aria-label="自動モード商品の概要">
+          <div className="card"><span>自動モード商品</span><strong>{automaticItemCodes.size}</strong></div>
+          <div className="card"><span>現在稼働</span><strong>{activeAutomaticProducts}</strong></div>
+          <div className="card"><span>除外中</span><strong>{excludedAutomaticProducts}</strong></div>
           <div className="card"><span>前日広告費</span><strong>{fmtYen(dashboardSpend)}</strong></div>
           <div className="card"><span>前日売上</span><strong>{fmtYen(dashboardSales)}</strong></div>
           <div className="card"><span>前日ROAS</span><strong>{dashboardRoas == null ? "未取得" : `${Math.round(dashboardRoas)}%`}</strong></div>
@@ -211,14 +212,14 @@ export default async function RppPage({ searchParams }: { searchParams: Promise<
         <section className="panel history-panel hold-detail-panel">
           <div className="section-heading compact-heading">
             <div>
-              <h2>自動調整を許可した商品</h2>
-              <p>対象はこの一覧だけです。実績対象 {summary?.performanceDateRange || "未取得"} / RMSへの自動反映なし</p>
+              <h2>自動モードの商品</h2>
+              <p>ROAS・検索順位・バランスを選択した設定行です。実績対象 {summary?.performanceDateRange || "未取得"}</p>
             </div>
             <Link className="text-link" href="/rpp?view=products">商品・KWを開く →</Link>
           </div>
-          {allowedRows.length ? <table className="wide-table hold-detail-table">
+          {automaticRows.length ? <table className="wide-table hold-detail-table">
             <thead><tr><th><RppInfoTip label="商品" /></th><th><RppInfoTip label="配信" /></th><th><RppInfoTip label="CPC" /></th><th><RppInfoTip label="実績" /></th><th><RppInfoTip label="検索順位" /></th><th><RppInfoTip label="判定" /></th></tr></thead>
-            <tbody>{allowedRows.map((row) => {
+            <tbody>{automaticRows.map((row) => {
               const rec = row.recommendation;
               const currentCpc = rec?.currentCpc ?? row.configured?.itemCpc ?? row.configured?.keywordCpc ?? null;
               const status = row.excluded ? { label: "除外中", className: "status-hold" } : rec?.action === "RAISE" ? { label: "上げ候補", className: "status-approved" } : rec?.action === "LOWER" ? { label: "下げ候補", className: "approval-rejected" } : { label: "維持", className: "status-hold" };
@@ -231,7 +232,7 @@ export default async function RppPage({ searchParams }: { searchParams: Promise<
                 <td><span className={`status-pill ${status.className}`}>{status.label}</span><br /><small>{rec ? compactReasons(rec) : row.excluded ? "除外解除後に候補計算" : "実績更新待ち"}</small></td>
               </tr>;
             })}</tbody>
-          </table> : <p className="warn-text">許可商品が未設定です。自動調整候補を生成しません。</p>}
+          </table> : <p className="warn-text">自動モードの商品はありません。商品・KW画面からモードを選択してください。</p>}
         </section>
       </> : null}
 
@@ -259,9 +260,9 @@ export default async function RppPage({ searchParams }: { searchParams: Promise<
           <li><b>4. 反映前確認</b><span>変更前後・対象行・戻し手段を確認</span></li>
         </ol>
         <div className="rpp-guide-grid">
-          <article><div><span>01</span><b>ダッシュボード</b></div><p>自動調整を許可した商品だけを、商品CPC・KWCPC別に確認します。配信状態、前日実績、順位、現在判断を見て、要更新の日は設定変更せず待ちます。</p><Link href="/rpp?view=dashboard">この画面を開く →</Link></article>
+          <article><div><span>01</span><b>ダッシュボード</b></div><p>固定以外のモードを選択した商品を、商品CPC・KWCPC別に確認します。配信状態、前日実績、順位、現在判断を確認します。</p><Link href="/rpp?view=dashboard">この画面を開く →</Link></article>
           <article><div><span>02</span><b>予算管理</b></div><p>月予算、消化率、月末着地、期間比較を確認します。現段階は監視専用で、ここからRMS予算を自動変更しません。</p><Link href="/rpp?view=budget">この画面を開く →</Link></article>
-          <article className="rpp-guide-wide"><div><span>03</span><b>商品・KW・実験</b></div><p>①担当タブを選ぶ → ②商品番号・商品名・KWで検索 → ③現CPC、提案CPC、ROAS、PC/SP順位、運用モード、保護、配信状態を確認します。「設定」で右側の編集画面を開きます。</p><ul><li><b>自動運用：</b>R0445・R0406だけが対象です。ROAS／検索順位／バランス／CPC固定を選び、固定以外は専用のCPC下限・上限を設定できます。</li><li><b>その他の商品：</b>CPC固定モードで運用し、「CPC変更CSV」からRMS手動アップロード用CSVを出力します。</li><li><b>基準ワード：</b>商品CPCの順位判定ワードを複数追加できます。どれか1語でもPC・SPの目標順位を満たせば達成扱いです。</li><li><b>商品CPC行：</b>CPC設定と商品単位の広告除外／再開を操作できます。</li><li><b>KWCPC行：</b>キーワードCPCを設定します。広告除外は商品単位のため、KWCPC行には除外操作がありません。</li><li><b>変更予定：</b>RMS反映前のローカル状態です。「戻す」で取り消せます。</li></ul><Link href="/rpp?view=products">この画面を開く →</Link></article>
+          <article className="rpp-guide-wide"><div><span>03</span><b>商品・KW・実験</b></div><p>①担当タブを選ぶ → ②商品番号・商品名・KWで検索 → ③現CPC、提案CPC、ROAS、PC/SP順位、運用モード、保護、配信状態を確認します。「設定」で右側の編集画面を開きます。</p><ul><li><b>自動運用：</b>商品番号による制限はありません。ROAS／検索順位／バランスを選択すると、その設定行が自動調整対象になります。</li><li><b>CPC固定：</b>固定額を維持し、自動調整しません。「CPC変更CSV」からRMS手動アップロード用CSVを出力します。</li><li><b>基準ワード：</b>商品CPCの順位判定ワードを複数追加できます。どれか1語でもPC・SPの目標順位を満たせば達成扱いです。</li><li><b>商品CPC行：</b>CPC設定と商品単位の広告除外／再開を操作できます。</li><li><b>KWCPC行：</b>キーワードCPCを設定します。広告除外は商品単位のため、KWCPC行には除外操作がありません。</li><li><b>変更予定：</b>RMS反映前のローカル状態です。「戻す」で取り消せます。</li></ul><Link href="/rpp?view=products">この画面を開く →</Link></article>
           <article><div><span>04</span><b>除外中・広告ON戻し</b></div><p>除外中商品を独立画面で開き、担当者タブだけで絞り込みます。目標設定後に広告ONへ戻します。</p><Link href="/rpp?view=excluded">この画面を開く →</Link></article>
           <article><div><span>05</span><b>異常アラート</b></div><p>CPC急騰、ROAS急落、広告費急増、データ欠損・鮮度・件数差を確認します。Chatworkは画面上ではDry Run固定です。</p><Link href="/rpp?view=alerts">この画面を開く →</Link></article>
           <article><div><span>06</span><b>CPC最適化</b></div><p>最低CPC、上限、ROAS基準、1日変更幅などの提案ルールを確認します。設定は提案生成条件であり、RMSへ即時反映するものではありません。</p><Link href="/rpp?view=optimization">この画面を開く →</Link></article>
