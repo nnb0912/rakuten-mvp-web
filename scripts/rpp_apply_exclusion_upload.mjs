@@ -3,6 +3,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
+import { pathToFileURL } from 'node:url';
 import { chromium } from 'playwright';
 
 function argValue(name) {
@@ -62,6 +63,7 @@ function updateWalPhase(walPath, operationId, phase) {
   if (payload.operationId !== operationId) throw new Error('WAL operationId mismatch');
   payload.phase = phase;
   payload.phaseUpdatedAt = new Date().toISOString();
+  if (phase === 'SUBMITTED') payload.submittedAt = payload.phaseUpdatedAt;
   const temporary = `${walPath}.${process.pid}.tmp`;
   const fd = fs.openSync(temporary, 'w', 0o600);
   try {
@@ -78,23 +80,82 @@ function updateWalPhase(walPath, operationId, phase) {
 async function searchExclusionStatus(page, itemCode) {
   await page.goto('https://ad.rms.rakuten.co.jp/rpp/exclude', { waitUntil: 'domcontentloaded', timeout: 60000 });
   await page.waitForTimeout(1500);
-  const searchInput = page.locator('input[placeholder="商品管理番号"], input[name*="item"], input[type="text"]').first();
-  if (await searchInput.count()) {
-    await searchInput.fill(itemCode);
-    const searchButton = page.locator('#btnSearchExcludeItem, button:has-text("検索"), input[value="検索"]').first();
-    if (await searchButton.count()) await searchButton.click({ timeout: 5000 }).catch(async () => searchButton.evaluate((el) => el.click()));
-    await page.waitForLoadState('networkidle', { timeout: 10000 }).catch(() => undefined);
-    await page.waitForTimeout(1500);
-  }
+  const searchInput = page.locator('input[placeholder="商品管理番号"], input[name*="item"]').first();
+  if ((await searchInput.count()) === 0) throw new Error('RMS exclusion item-code search input not found');
+  await searchInput.fill(itemCode);
+  const searchButton = page.locator('#btnSearchExcludeItem, button:has-text("検索"), input[value="検索"]').first();
+  if ((await searchButton.count()) === 0) throw new Error('RMS exclusion search button not found');
+  await searchButton.click({ timeout: 5000 }).catch(async () => searchButton.evaluate((el) => el.click()));
+  await page.waitForLoadState('networkidle', { timeout: 10000 }).catch(() => undefined);
+  await page.waitForTimeout(1500);
   const status = await page.evaluate((code) => {
     const normalized = String(code).trim().toLowerCase();
     const text = document.body.innerText;
-    const rows = [...document.querySelectorAll('tr')].map((tr) => tr.innerText.replace(/[\r\n]+/g, ' ').trim()).filter(Boolean);
-    const exactRows = rows.filter((row) => row.split(/\s+/).some((cell) => cell.trim().toLowerCase() === normalized));
-    return { text, exactRows };
+    let headerFound = false;
+    const exactRows = [];
+    for (const table of document.querySelectorAll('table')) {
+      const headers = [...table.querySelectorAll('thead th, tr:first-child th')].map((cell) => cell.innerText.trim());
+      const codeIndex = headers.findIndex((header) => header.includes('商品管理番号'));
+      if (codeIndex < 0) continue;
+      headerFound = true;
+      for (const tr of table.querySelectorAll('tbody tr')) {
+        const cells = [...tr.querySelectorAll('td')];
+        if (cells[codeIndex]?.innerText.trim().toLowerCase() === normalized) exactRows.push(tr.innerText.replace(/[\r\n]+/g, ' ').trim());
+      }
+    }
+    return { text, headerFound, exactRows };
   }, itemCode);
-  const found = status.exactRows.length > 0;
+  if (!status.headerFound) throw new Error('RMS exclusion item-code column not found');
+  if (status.exactRows.length > 1) throw new Error(`RMS exclusion duplicate exact rows: ${itemCode}`);
+  const found = status.exactRows.length === 1;
   return { itemCode, found, exactRows: status.exactRows.slice(0, 5), textSample: status.text.replace(/[\r\n]+/g, ' ').slice(0, 500) };
+}
+
+export function acquireProfileLock(profileDir) {
+  const lockPath = path.join(profileDir, '.rpp-adapter.lock');
+  const create = () => {
+    const fd = fs.openSync(lockPath, 'wx', 0o600);
+    fs.writeFileSync(fd, `${JSON.stringify({ pid: process.pid, createdAt: new Date().toISOString() })}\n`);
+    fs.fsyncSync(fd);
+    return { fd, lockPath };
+  };
+  try {
+    return create();
+  } catch (error) {
+    if (error?.code !== 'EEXIST') throw error;
+    let owner = null;
+    try { owner = JSON.parse(fs.readFileSync(lockPath, 'utf8')); } catch { /* invalid lock is stale */ }
+    let alive = false;
+    if (Number.isInteger(owner?.pid) && owner.pid > 0) {
+      try { process.kill(owner.pid, 0); alive = true; } catch (killError) { alive = killError?.code === 'EPERM'; }
+    }
+    if (alive) throw new Error(`RMS adapter profile is locked by pid ${owner.pid}`);
+    fs.rmSync(lockPath, { force: true });
+    return create();
+  }
+}
+
+export function releaseProfileLock(lock) {
+  if (!lock) return;
+  try { fs.closeSync(lock.fd); } finally { fs.rmSync(lock.lockPath, { force: true }); }
+}
+
+export async function pollExactReadback(page, rows, options = {}) {
+  const configured = Number.parseInt(process.env.RPP_RMS_READBACK_TIMEOUT_MS || '180000', 10);
+  const timeoutMs = Math.max(0, Math.min(180000, options.timeoutMs ?? (Number.isFinite(configured) ? configured : 180000)));
+  const intervalMs = Math.max(1, options.intervalMs ?? 10000);
+  const search = options.search || searchExclusionStatus;
+  const sleep = options.sleep || ((milliseconds) => page.waitForTimeout(milliseconds));
+  const deadline = Date.now() + timeoutMs;
+  let readback = [];
+  do {
+    readback = [];
+    for (const row of rows) readback.push(await search(page, row.itemCode));
+    const failures = readback.filter((result, idx) => (rows[idx].control === 'n' && !result.found) || (rows[idx].control === 'd' && result.found));
+    if (!failures.length || Date.now() >= deadline) return readback;
+    await sleep(Math.min(intervalMs, Math.max(1, deadline - Date.now())));
+  } while (Date.now() <= deadline);
+  return readback;
 }
 
 async function loginAndUpload(csvPath, rows, finalSubmit, expectedBefore, walPath, operationId) {
@@ -105,9 +166,11 @@ async function loginAndUpload(csvPath, rows, finalSubmit, expectedBefore, walPat
   const profileDir = process.env.RPP_RMS_PROFILE_DIR || '/Users/nob/.hermes/rpp-rms-adapter-profile';
   fs.mkdirSync(profileDir, { recursive: true, mode: 0o700 });
   fs.chmodSync(profileDir, 0o700);
-  const context = await chromium.launchPersistentContext(profileDir, { headless: true, acceptDownloads: true, locale: 'ja-JP', args: ['--no-sandbox'] });
-  const page = context.pages()[0] || await context.newPage();
+  const profileLock = acquireProfileLock(profileDir);
+  let context = null;
   try {
+    context = await chromium.launchPersistentContext(profileDir, { headless: true, acceptDownloads: true, locale: 'ja-JP', args: ['--no-sandbox'] });
+    const page = context.pages()[0] || await context.newPage();
     page.on('dialog', async (dialog) => {
       await dialog.accept().catch(() => undefined);
     });
@@ -222,8 +285,7 @@ async function loginAndUpload(csvPath, rows, finalSubmit, expectedBefore, walPat
     await page.waitForTimeout(5000);
     const pageTextSample = await page.evaluate(() => document.body.innerText.slice(0, 3000));
     const failureText = pageTextSample.match(/[^\n]*(失敗|エラー|不正|登録できません|アップロードできません)[^\n]*/g)?.slice(0, 8) || [];
-    const readback = [];
-    for (const row of rows) readback.push(await searchExclusionStatus(page, row.itemCode));
+    const readback = await pollExactReadback(page, rows);
     const readbackFailures = readback.filter((row, idx) => (rows[idx].control === 'n' && !row.found) || (rows[idx].control === 'd' && row.found));
     if (failureText.length || readbackFailures.length) {
       throw new Error(`RMS upload verification failed: ${[...failureText, ...readbackFailures.map((row) => `${row.itemCode} readback=${row.found}`)].join(' / ')}`);
@@ -231,7 +293,8 @@ async function loginAndUpload(csvPath, rows, finalSubmit, expectedBefore, walPat
     updateWalPhase(walPath, operationId, 'VERIFIED');
     return { fileSelected: true, finalSubmitClicked: true, pageTextSample, beforeReadback, readback, ...info };
   } finally {
-    await context.close();
+    if (context) await context.close();
+    releaseProfileLock(profileLock);
   }
 }
 
@@ -254,4 +317,6 @@ async function main() {
   const applied = await loginAndUpload(csvPath, rows, finalSubmit, expectedBefore, walPath, operationId);
   emit({ ...base, productionChange: finalSubmit, applied });
 }
-main().catch((e) => { console.error(`❌ エラー: ${e?.message || e}`); process.exit(1); });
+if (import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main().catch((e) => { console.error(`❌ エラー: ${e?.message || e}`); process.exit(1); });
+}

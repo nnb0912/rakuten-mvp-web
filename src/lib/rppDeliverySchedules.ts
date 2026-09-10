@@ -16,10 +16,12 @@ export type RppProductDeliverySchedule = {
   itemCode: string;
   recurring: RppRecurringSchedule;
   updatedAt: string;
+  updatedByEmail: string | null;
+  updatedByName: string | null;
 };
 
 export type RppDeliveryReservationAction = "ON" | "OFF";
-export type RppDeliveryReservationStatus = "PENDING" | "SUCCEEDED" | "FAILED" | "CANCELLED";
+export type RppDeliveryReservationStatus = "PENDING" | "RUNNING" | "SUCCEEDED" | "FAILED" | "CANCELLED";
 
 export type RppDeliveryReservation = {
   id: string;
@@ -41,6 +43,23 @@ export type RppDeliverySchedulesData = {
   schedules: RppProductDeliverySchedule[];
   reservations: RppDeliveryReservation[];
 };
+
+export type RppDeliveryScheduleActor = { email: string; name: string };
+export type RppDeliveryScheduleStatus = {
+  itemCode: string;
+  effectiveState: "ON" | "OFF";
+  recurringActive: boolean;
+  nextTransition: { action: RppDeliveryReservationAction; at: string; source: "recurring" | "reservation" } | null;
+  backlog: number;
+  running: number;
+};
+
+export class RppDeliveryScheduleConflictError extends Error {
+  constructor() {
+    super("時間指定設定が他の担当者に更新されました。再読み込みしてから保存してください");
+    this.name = "RppDeliveryScheduleConflictError";
+  }
+}
 
 const SCHEDULES_TABLE = "rpp_product_delivery_schedules";
 const RESERVATIONS_TABLE = "rpp_product_delivery_reservations";
@@ -94,6 +113,8 @@ function normalizeSchedule(value: Partial<RppProductDeliverySchedule>): RppProdu
       itemCode,
       recurring: validateRecurring(value.recurring),
       updatedAt: normalizeIso(value.updatedAt ?? new Date(0), "updatedAt"),
+      updatedByEmail: value.updatedByEmail == null ? null : String(value.updatedByEmail),
+      updatedByName: value.updatedByName == null ? null : String(value.updatedByName),
     };
   } catch {
     return null;
@@ -105,7 +126,57 @@ function isReservationAction(value: unknown): value is RppDeliveryReservationAct
 }
 
 function isReservationStatus(value: unknown): value is RppDeliveryReservationStatus {
-  return value === "PENDING" || value === "SUCCEEDED" || value === "FAILED" || value === "CANCELLED";
+  return value === "PENDING" || value === "RUNNING" || value === "SUCCEEDED" || value === "FAILED" || value === "CANCELLED";
+}
+
+export function isRppDeliveryReservationRunning(reservation: RppDeliveryReservation, now = new Date()) {
+  return reservation.status === "PENDING"
+    && Boolean(reservation.claimId)
+    && Boolean(reservation.claimExpiresAt)
+    && Date.parse(reservation.claimExpiresAt!) > now.getTime();
+}
+
+export function withRppDeliveryReservationRuntimeStatus(reservation: RppDeliveryReservation, now = new Date()): RppDeliveryReservation {
+  return isRppDeliveryReservationRunning(reservation, now) ? { ...reservation, status: "RUNNING" } : reservation;
+}
+
+function jstParts(now: Date) {
+  const parts = new Intl.DateTimeFormat("en-CA", { timeZone: RPP_DELIVERY_TIME_ZONE, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).formatToParts(now);
+  return Object.fromEntries(parts.map((part) => [part.type, part.value])) as Record<string, string>;
+}
+
+function jstTransitionIso(now: Date, time: string, dayOffset: number) {
+  const parts = jstParts(now);
+  const base = new Date(`${parts.year}-${parts.month}-${parts.day}T00:00:00+09:00`);
+  const [hour, minute] = time.split(":").map(Number);
+  return new Date(base.getTime() + dayOffset * 86_400_000 + hour * 3_600_000 + minute * 60_000).toISOString();
+}
+
+export function summarizeRppDeliverySchedule(schedule: RppProductDeliverySchedule | undefined, reservations: RppDeliveryReservation[], now = new Date()): RppDeliveryScheduleStatus {
+  const parts = jstParts(now);
+  const currentTime = `${parts.hour}:${parts.minute}`;
+  const recurring = schedule?.recurring;
+  const recurringActive = Boolean(recurring?.enabled && (recurring.startTime < recurring.endTime
+    ? currentTime >= recurring.startTime && currentTime < recurring.endTime
+    : currentTime >= recurring.startTime || currentTime < recurring.endTime));
+  const transitions: NonNullable<RppDeliveryScheduleStatus["nextTransition"]>[] = [];
+  if (recurring?.enabled) {
+    const nextTime = recurringActive ? recurring.endTime : recurring.startTime;
+    let dayOffset = currentTime < nextTime ? 0 : 1;
+    if (recurringActive && recurring.startTime > recurring.endTime && currentTime >= recurring.startTime) dayOffset = 1;
+    transitions.push({ action: recurringActive ? "ON" : "OFF", at: jstTransitionIso(now, nextTime, dayOffset), source: "recurring" });
+  }
+  for (const reservation of reservations) {
+    if (reservation.status === "PENDING" && Date.parse(reservation.executeAt) > now.getTime()) transitions.push({ action: reservation.action, at: reservation.executeAt, source: "reservation" });
+  }
+  return {
+    itemCode: schedule?.itemCode ?? reservations[0]?.itemCode ?? "",
+    effectiveState: recurringActive ? "OFF" : "ON",
+    recurringActive,
+    nextTransition: transitions.sort((a, b) => a.at.localeCompare(b.at))[0] ?? null,
+    backlog: reservations.filter((row) => row.status === "PENDING" && !isRppDeliveryReservationRunning(row, now) && Date.parse(row.executeAt) <= now.getTime()).length,
+    running: reservations.filter((row) => isRppDeliveryReservationRunning(row, now)).length,
+  };
 }
 
 function normalizeReservation(value: Partial<RppDeliveryReservation>): RppDeliveryReservation | null {
@@ -153,10 +224,14 @@ async function ensureTables() {
     start_time char(5) not null,
     end_time char(5) not null,
     updated_at timestamptz not null default now(),
+    updated_by_email text,
+    updated_by_name text,
     check (start_time ~ '^(?:[01][0-9]|2[0-3]):[0-5][0-9]$'),
     check (end_time ~ '^(?:[01][0-9]|2[0-3]):[0-5][0-9]$'),
     check (start_time <> end_time)
   )`);
+  await pool.query(`alter table ${SCHEDULES_TABLE} add column if not exists updated_by_email text`);
+  await pool.query(`alter table ${SCHEDULES_TABLE} add column if not exists updated_by_name text`);
   await pool.query(`create table if not exists ${RESERVATIONS_TABLE} (
     id uuid primary key,
     item_code text not null,
@@ -178,22 +253,42 @@ async function ensureTables() {
   await pool.query(`create index if not exists ${RESERVATIONS_TABLE}_pending_idx on ${RESERVATIONS_TABLE} (execute_at) where status='PENDING'`);
 }
 
-export async function readRppDeliverySchedules(): Promise<RppDeliverySchedulesData> {
+export async function readRppDeliverySchedules(options: { itemCode?: string; reservationLimitPerItem?: number } = {}): Promise<RppDeliverySchedulesData> {
+  const itemCode = options.itemCode ? requireItemCode(options.itemCode) : null;
+  const limit = options.reservationLimitPerItem == null ? null : Math.max(0, Math.min(100, Math.floor(options.reservationLimitPerItem)));
   if (pool) {
     await ensureTables();
+    const reservationQuery = limit === 0
+      ? Promise.resolve({ rows: [] as Record<string, unknown>[] })
+      : itemCode && limit != null
+        ? pool.query(`select id,item_code,action,execute_at,status,error,created_at,updated_at,claim_id,claim_expires_at,attempts from ${RESERVATIONS_TABLE} where item_code=$1 order by execute_at desc,id desc limit $2`, [itemCode, limit])
+        : !itemCode && limit != null
+          ? pool.query(`select id,item_code,action,execute_at,status,error,created_at,updated_at,claim_id,claim_expires_at,attempts from (select *,row_number() over(partition by item_code order by execute_at desc,id desc) as rn from ${RESERVATIONS_TABLE}) ranked where rn<=$1 order by item_code,execute_at desc,id desc`, [limit])
+          : pool.query(`select id,item_code,action,execute_at,status,error,created_at,updated_at,claim_id,claim_expires_at,attempts from ${RESERVATIONS_TABLE} ${itemCode ? "where item_code=$1" : ""} order by execute_at,id`, itemCode ? [itemCode] : []);
     const [scheduleRows, reservationRows] = await Promise.all([
-      pool.query(`select item_code,enabled,start_time,end_time,updated_at from ${SCHEDULES_TABLE} order by item_code`),
-      pool.query(`select id,item_code,action,execute_at,status,error,created_at,updated_at,claim_id,claim_expires_at,attempts from ${RESERVATIONS_TABLE} order by execute_at,id`),
+      pool.query(`select item_code,enabled,start_time,end_time,updated_at,updated_by_email,updated_by_name from ${SCHEDULES_TABLE} ${itemCode ? "where item_code=$1" : ""} order by item_code`, itemCode ? [itemCode] : []),
+      reservationQuery,
     ]);
     return normalizedData(`db:${SCHEDULES_TABLE},${RESERVATIONS_TABLE}`, {
-      schedules: scheduleRows.rows.map((row) => ({ itemCode: row.item_code, recurring: { enabled: row.enabled === true, startTime: row.start_time.trim(), endTime: row.end_time.trim() }, updatedAt: new Date(row.updated_at).toISOString() })),
-      reservations: reservationRows.rows.map((row) => ({ id: row.id, itemCode: row.item_code, action: row.action, executeAt: new Date(row.execute_at).toISOString(), status: row.status, error: row.error, createdAt: new Date(row.created_at).toISOString(), updatedAt: new Date(row.updated_at).toISOString(), claimId: row.claim_id, claimExpiresAt: row.claim_expires_at == null ? null : new Date(row.claim_expires_at).toISOString(), attempts: row.attempts })),
+      schedules: scheduleRows.rows.map((row) => ({ itemCode: row.item_code, recurring: { enabled: row.enabled === true, startTime: row.start_time.trim(), endTime: row.end_time.trim() }, updatedAt: new Date(row.updated_at).toISOString(), updatedByEmail: row.updated_by_email, updatedByName: row.updated_by_name })),
+      reservations: reservationRows.rows.map((row) => ({ id: row.id, itemCode: row.item_code, action: row.action, executeAt: new Date(String(row.execute_at)).toISOString(), status: row.status, error: row.error, createdAt: new Date(String(row.created_at)).toISOString(), updatedAt: new Date(String(row.updated_at)).toISOString(), claimId: row.claim_id, claimExpiresAt: row.claim_expires_at == null ? null : new Date(String(row.claim_expires_at)).toISOString(), attempts: row.attempts })),
     });
   }
   if (process.env.NODE_ENV === "production") throw new Error("DATABASE_URL is required for RPP delivery schedules");
   const target = fallbackPath();
   try {
-    return normalizedData(target, JSON.parse(await fs.readFile(target, "utf8")));
+    const data = normalizedData(target, JSON.parse(await fs.readFile(target, "utf8")));
+    const schedules = itemCode ? data.schedules.filter((row) => row.itemCode === itemCode) : data.schedules;
+    let reservations = itemCode ? data.reservations.filter((row) => row.itemCode === itemCode) : data.reservations;
+    if (limit != null) {
+      const counts = new Map<string, number>();
+      reservations = [...reservations].sort((a, b) => b.executeAt.localeCompare(a.executeAt)).filter((row) => {
+        const count = counts.get(row.itemCode) ?? 0;
+        counts.set(row.itemCode, count + 1);
+        return count < limit;
+      });
+    }
+    return normalizedData(target, { schedules, reservations });
   } catch {
     return normalizedData(target);
   }
@@ -213,22 +308,36 @@ function mutateFallback<T>(operation: () => Promise<T>): Promise<T> {
   return next;
 }
 
-export async function writeRppRecurringSchedule(itemCodeInput: unknown, recurringInput: RppRecurringSchedule) {
+export async function writeRppRecurringSchedule(
+  itemCodeInput: unknown,
+  recurringInput: RppRecurringSchedule,
+  expectedUpdatedAtInput: unknown = null,
+  actor: RppDeliveryScheduleActor = { email: "", name: "" },
+) {
   const itemCode = requireItemCode(itemCodeInput);
   const recurring = validateRecurring(recurringInput);
+  const expectedUpdatedAt = expectedUpdatedAtInput == null || expectedUpdatedAtInput === "" ? null : normalizeIso(expectedUpdatedAtInput, "expectedUpdatedAt");
+  const actorEmail = actor.email.trim().toLowerCase() || null;
+  const actorName = actor.name.trim() || actorEmail;
   if (pool) {
     await ensureTables();
-    await pool.query(
-      `insert into ${SCHEDULES_TABLE}(item_code,enabled,start_time,end_time,updated_at) values($1,$2,$3,$4,now())
-       on conflict(item_code) do update set enabled=excluded.enabled,start_time=excluded.start_time,end_time=excluded.end_time,updated_at=now()`,
-      [itemCode, recurring.enabled, recurring.startTime, recurring.endTime],
+    const result = await pool.query(
+      `insert into ${SCHEDULES_TABLE}(item_code,enabled,start_time,end_time,updated_at,updated_by_email,updated_by_name)
+       select $1,$2,$3,$4,now(),$6,$7 where $5::timestamptz is null or exists(select 1 from ${SCHEDULES_TABLE} where item_code=$1 and updated_at=$5::timestamptz)
+       on conflict(item_code) do update set enabled=excluded.enabled,start_time=excluded.start_time,end_time=excluded.end_time,updated_at=now(),updated_by_email=excluded.updated_by_email,updated_by_name=excluded.updated_by_name
+       where ${SCHEDULES_TABLE}.updated_at=$5::timestamptz
+       returning item_code`,
+      [itemCode, recurring.enabled, recurring.startTime, recurring.endTime, expectedUpdatedAt, actorEmail, actorName],
     );
-    return readRppDeliverySchedules();
+    if (!result.rows[0]) throw new RppDeliveryScheduleConflictError();
+    return readRppDeliverySchedules({ itemCode, reservationLimitPerItem: 100 });
   }
   return mutateFallback(async () => {
     const data = await readRppDeliverySchedules();
+    const current = data.schedules.find((row) => row.itemCode === itemCode);
+    if ((current?.updatedAt ?? null) !== expectedUpdatedAt) throw new RppDeliveryScheduleConflictError();
     data.schedules = data.schedules.filter((row) => row.itemCode !== itemCode);
-    data.schedules.push({ itemCode, recurring, updatedAt: new Date().toISOString() });
+    data.schedules.push({ itemCode, recurring, updatedAt: new Date().toISOString(), updatedByEmail: actorEmail, updatedByName: actorName });
     const normalized = normalizedData(data.source, data);
     await writeFallback(normalized);
     return normalized;
@@ -258,20 +367,16 @@ export async function createRppDeliveryReservation(itemCodeInput: unknown, actio
   const reservation: RppDeliveryReservation = { id: randomUUID(), itemCode, action: actionInput, executeAt, status: "PENDING", error: null, createdAt: timestamp, updatedAt: timestamp, claimId: null, claimExpiresAt: null, attempts: 0 };
   if (pool) {
     await ensureTables();
-    const existing = await pool.query(
-      `select id,item_code,action,execute_at,status,error,created_at,updated_at,claim_id,claim_expires_at,attempts from ${RESERVATIONS_TABLE} where item_code=$1 and execute_at=$2 limit 1`,
-      [itemCode, executeAt],
-    );
-    if (existing.rows[0]) {
-      const row = existing.rows[0];
-      if (row.action !== actionInput) throw new Error("同じ商品・日時にONとOFFを同時登録できません");
-      return { reservation: normalizeReservation({ id: row.id, itemCode: row.item_code, action: row.action, executeAt: row.execute_at, status: row.status, error: row.error, createdAt: row.created_at, updatedAt: row.updated_at, claimId: row.claim_id, claimExpiresAt: row.claim_expires_at, attempts: row.attempts })! };
-    }
     const result = await pool.query(
-      `insert into ${RESERVATIONS_TABLE}(id,item_code,action,execute_at,status,error,created_at,updated_at) values($1,$2,$3,$4,'PENDING',null,now(),now()) returning id,item_code,action,execute_at,status,error,created_at,updated_at,claim_id,claim_expires_at,attempts`,
+      `insert into ${RESERVATIONS_TABLE}(id,item_code,action,execute_at,status,error,created_at,updated_at)
+       values($1,$2,$3,$4,'PENDING',null,now(),now())
+       on conflict(item_code,execute_at) do update set item_code=excluded.item_code
+       where ${RESERVATIONS_TABLE}.action=excluded.action
+       returning id,item_code,action,execute_at,status,error,created_at,updated_at,claim_id,claim_expires_at,attempts`,
       [reservation.id, itemCode, actionInput, executeAt],
     );
     const row = result.rows[0];
+    if (!row) throw new Error("同じ商品・日時にONとOFFを同時登録できません");
     return { reservation: normalizeReservation({ id: row.id, itemCode: row.item_code, action: row.action, executeAt: row.execute_at, status: row.status, error: row.error, createdAt: row.created_at, updatedAt: row.updated_at, claimId: row.claim_id, claimExpiresAt: row.claim_expires_at, attempts: row.attempts })! };
   }
   return mutateFallback(async () => {
@@ -312,7 +417,7 @@ export async function cancelRppDeliveryReservation(reservationIdInput: unknown, 
     );
     if (!result.rows[0]) throw new Error("PENDINGの予約が見つかりません");
     const row = result.rows[0];
-    return { reservation: normalizeReservation({ id: row.id, itemCode: row.item_code, action: row.action, executeAt: row.execute_at, status: row.status, error: row.error, createdAt: row.created_at, updatedAt: row.updated_at })! };
+    return { reservation: normalizeReservation({ id: row.id, itemCode: row.item_code, action: row.action, executeAt: row.execute_at, status: row.status, error: row.error, createdAt: row.created_at, updatedAt: row.updated_at, claimId: row.claim_id, claimExpiresAt: row.claim_expires_at, attempts: row.attempts })! };
   }
   return updateFallbackReservation(reservationId, (row) => {
     if (itemCode && row.itemCode !== itemCode) throw new Error("予約の商品管理番号が一致しません");
@@ -350,6 +455,64 @@ export async function claimRppDeliveryReservation(reservationIdInput: unknown, n
     if (new Date(row.executeAt).getTime() > now.getTime()) throw new Error("予約日時前です");
     if (row.claimId && row.claimExpiresAt && new Date(row.claimExpiresAt).getTime() > now.getTime()) throw new Error("予約は別の実行処理がclaim済みです");
     return { ...row, claimId, claimExpiresAt, attempts: row.attempts + 1, updatedAt: new Date().toISOString() };
+  });
+}
+
+export async function heartbeatRppDeliveryReservation(reservationIdInput: unknown, claimIdInput: unknown, now = new Date()) {
+  const reservationId = String(reservationIdInput ?? "").trim();
+  const claimId = String(claimIdInput ?? "").trim();
+  if (!reservationId) throw new Error("reservationIdは必須です");
+  if (!claimId) throw new Error("claimIdは必須です");
+  const claimExpiresAt = new Date(now.getTime() + 15 * 60 * 1000).toISOString();
+  if (pool) {
+    await ensureTables();
+    const result = await pool.query(
+      `update ${RESERVATIONS_TABLE} set claim_expires_at=$4,updated_at=now() where id=$1 and status='PENDING' and claim_id=$2 and claim_expires_at>$3 returning id,item_code,action,execute_at,status,error,created_at,updated_at,claim_id,claim_expires_at,attempts`,
+      [reservationId, claimId, now.toISOString(), claimExpiresAt],
+    );
+    if (!result.rows[0]) throw new Error("有効なclaimが一致するPENDING予約が見つかりません");
+    const row = result.rows[0];
+    return { reservation: normalizeReservation({ id: row.id, itemCode: row.item_code, action: row.action, executeAt: row.execute_at, status: row.status, error: row.error, createdAt: row.created_at, updatedAt: row.updated_at, claimId: row.claim_id, claimExpiresAt: row.claim_expires_at, attempts: row.attempts })! };
+  }
+  return mutateFallback(async () => {
+    const data = await readRppDeliverySchedules();
+    const index = data.reservations.findIndex((row) => row.id === reservationId);
+    const row = data.reservations[index];
+    if (!row || row.status !== "PENDING" || row.claimId !== claimId || !row.claimExpiresAt || Date.parse(row.claimExpiresAt) <= now.getTime()) {
+      throw new Error("有効なclaimが一致するPENDING予約が見つかりません");
+    }
+    const reservation = { ...row, claimExpiresAt, updatedAt: now.toISOString() };
+    data.reservations[index] = reservation;
+    await writeFallback(normalizedData(data.source, data));
+    return { reservation };
+  });
+}
+
+export async function releaseRppDeliveryReservationClaim(reservationIdInput: unknown, claimIdInput: unknown, errorInput?: unknown) {
+  const reservationId = String(reservationIdInput ?? "").trim();
+  const claimId = String(claimIdInput ?? "").trim();
+  const error = String(errorInput ?? "").trim() || null;
+  if (!reservationId) throw new Error("reservationIdは必須です");
+  if (!claimId) throw new Error("claimIdは必須です");
+  if (pool) {
+    await ensureTables();
+    const result = await pool.query(
+      `update ${RESERVATIONS_TABLE} set claim_id=null,claim_expires_at=null,error=$3,updated_at=now() where id=$1 and status='PENDING' and claim_id=$2 returning id,item_code,action,execute_at,status,error,created_at,updated_at,claim_id,claim_expires_at,attempts`,
+      [reservationId, claimId, error],
+    );
+    if (!result.rows[0]) throw new Error("claimが一致するPENDING予約が見つかりません");
+    const row = result.rows[0];
+    return { reservation: normalizeReservation({ id: row.id, itemCode: row.item_code, action: row.action, executeAt: row.execute_at, status: row.status, error: row.error, createdAt: row.created_at, updatedAt: row.updated_at, claimId: row.claim_id, claimExpiresAt: row.claim_expires_at, attempts: row.attempts })! };
+  }
+  return mutateFallback(async () => {
+    const data = await readRppDeliverySchedules();
+    const index = data.reservations.findIndex((row) => row.id === reservationId);
+    const row = data.reservations[index];
+    if (!row || row.status !== "PENDING" || row.claimId !== claimId) throw new Error("claimが一致するPENDING予約が見つかりません");
+    const reservation = { ...row, claimId: null, claimExpiresAt: null, error, updatedAt: new Date().toISOString() };
+    data.reservations[index] = reservation;
+    await writeFallback(normalizedData(data.source, data));
+    return { reservation };
   });
 }
 
