@@ -7,7 +7,7 @@ export RPP_ENABLE_PRODUCT_DELIVERY_SCHEDULER=1
 export RPP_PROJECT_DIR="/Users/nob/Projects/rpp-8am-notify"
 export RPP_RUNTIME_DIR="/Users/nob/Projects/rakuten-mvp-web-runtime"
 export RAKUTEN_MVP_WEB_DIR="$RPP_RUNTIME_DIR"
-export RPP_SETTINGS_REFRESH_SCRIPT="$RPP_RUNTIME_DIR/scripts/rpp-product-delivery/scripts_refresh_rpp_settings_csvs.py"
+export RPP_SETTINGS_REFRESH_SCRIPT="/Users/nob/Projects/rpp-8am-notify/scripts_refresh_rpp_settings_csvs.py"
 TMP="$(mktemp /tmp/rpp-product-delivery-scheduler.XXXXXX)"
 trap 'rm -f "$TMP"' EXIT
 set +e
