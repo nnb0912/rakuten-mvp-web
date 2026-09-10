@@ -13,6 +13,7 @@ const routePolicies: Record<string, string[]> = {
   "comparisons": ["viewer"],
   "comparisons/export": ["viewer"],
   "collaboration": ["viewer", "operator"],
+  "delivery-schedules": ["viewer", "operator", "operator", "operator"],
   "experiments": ["viewer", "operator", "operator"],
   "export-approved": ["operator"],
   "export-remove-setting-candidates": ["viewer", "operator", "operator"],
