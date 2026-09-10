@@ -206,6 +206,26 @@ class ProductDeliverySchedulerTest(unittest.TestCase):
         self.assertEqual(changes, [])
         self.assertIn("目標保存", failures[0]["error"])
 
+    def test_large_due_set_is_bounded_and_continues_next_tick(self):
+        at = dt.datetime(2026, 9, 10, 1, tzinfo=UTC)
+        rows = [
+            {"id": "off-%d" % index, "itemCode": "item-%d" % index, "action": "OFF", "executeAt": at}
+            for index in range(5)
+        ]
+        state, changes, failures, completed = scheduler.process_due_reservations(
+            scheduler.default_state(), rows, at, set(), set(), set(), False,
+            "https://example.invalid", Path("/tmp/state"), Path("/tmp/wal"), Path("/tmp/audit"), 3)
+        self.assertEqual(len(changes), 3)
+        self.assertEqual(len(completed), 3)
+        self.assertEqual(failures, [])
+        self.assertEqual(len(state["reservationOff"]), 3)
+
+    def test_action_limit_is_bounded(self):
+        with patch.dict("os.environ", {"RPP_SCHEDULER_MAX_ACTIONS_PER_TICK": "99"}):
+            self.assertEqual(scheduler.max_actions_per_tick(), 20)
+        with patch.dict("os.environ", {"RPP_SCHEDULER_MAX_ACTIONS_PER_TICK": "0"}):
+            self.assertEqual(scheduler.max_actions_per_tick(), 1)
+
     def test_preexisting_exclusion_is_not_owned_or_released_by_recurring_end(self):
         with tempfile.TemporaryDirectory() as tmp:
             state, changes, failures = scheduler.reconcile_recurring(

@@ -102,9 +102,11 @@ async function loginAndUpload(csvPath, rows, finalSubmit, expectedBefore, walPat
   const missing = required.filter((key) => !process.env[key]);
   if (missing.length) throw new Error(`RMS credentials missing on server: ${missing.join(', ')}`);
 
-  const browser = await chromium.launch({ headless: true, args: ['--no-sandbox'] });
-  const context = await browser.newContext({ acceptDownloads: true, locale: 'ja-JP' });
-  const page = await context.newPage();
+  const profileDir = process.env.RPP_RMS_PROFILE_DIR || '/Users/nob/.hermes/rpp-rms-adapter-profile';
+  fs.mkdirSync(profileDir, { recursive: true, mode: 0o700 });
+  fs.chmodSync(profileDir, 0o700);
+  const context = await chromium.launchPersistentContext(profileDir, { headless: true, acceptDownloads: true, locale: 'ja-JP', args: ['--no-sandbox'] });
+  const page = context.pages()[0] || await context.newPage();
   try {
     page.on('dialog', async (dialog) => {
       await dialog.accept().catch(() => undefined);
@@ -229,7 +231,7 @@ async function loginAndUpload(csvPath, rows, finalSubmit, expectedBefore, walPat
     updateWalPhase(walPath, operationId, 'VERIFIED');
     return { fileSelected: true, finalSubmitClicked: true, pageTextSample, beforeReadback, readback, ...info };
   } finally {
-    await browser.close();
+    await context.close();
   }
 }
 
