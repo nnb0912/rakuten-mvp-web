@@ -60,6 +60,11 @@ class ProductDeliverySchedulerTest(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             scheduler.interval_active(now, "07:00", "07:00")
 
+    def test_state_version_is_migrated_to_current(self):
+        old = scheduler.default_state()
+        old["version"] = 2
+        self.assertEqual(scheduler.normalize_state(old)["version"], scheduler.STATE_VERSION)
+
     def test_legacy_night_pause_is_active_only_0130_to_0600(self):
         at_0200 = dt.datetime(2026, 9, 9, 17, 0, tzinfo=UTC)
         at_0600 = dt.datetime(2026, 9, 9, 21, 0, tzinfo=UTC)

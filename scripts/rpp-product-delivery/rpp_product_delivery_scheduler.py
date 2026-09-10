@@ -37,6 +37,7 @@ REFRESH_SCRIPT = Path(os.environ.get("RPP_SETTINGS_REFRESH_SCRIPT", str(PROJECT 
 JST = ZoneInfo("Asia/Tokyo")
 UTC = dt.timezone.utc
 PRODUCTION_CONFIRMATION = "RPP_PRODUCT_DELIVERY_SCHEDULER"
+STATE_VERSION = 3
 
 
 def max_actions_per_tick() -> int:
@@ -206,11 +207,18 @@ def acknowledge_reservation(reservation_id: str, claim_id: str, status: str, err
 
 
 def default_state() -> dict:
-    return {"version": 3, "updatedAt": iso_utc(dt.datetime(1970, 1, 1, tzinfo=UTC)),
-            "lastRmsSnapshotAt": iso_utc(dt.datetime(1970, 1, 1, tzinfo=UTC)),
-            "legacyLedgerMigrated": False, "owned": [], "preexisting": [],
-            "reservationOff": [], "overrideOn": [], "processedReservations": {},
-            "occurrenceQueue": []}
+    return {
+        "version": STATE_VERSION,
+        "updatedAt": iso_utc(dt.datetime(1970, 1, 1, tzinfo=UTC)),
+        "lastRmsSnapshotAt": iso_utc(dt.datetime(1970, 1, 1, tzinfo=UTC)),
+        "legacyLedgerMigrated": False,
+        "owned": [],
+        "preexisting": [],
+        "reservationOff": [],
+        "overrideOn": [],
+        "processedReservations": {},
+        "occurrenceQueue": [],
+    }
 
 
 def normalize_state(value: object) -> dict:
@@ -218,6 +226,7 @@ def normalize_state(value: object) -> dict:
         raise RuntimeError("scheduler state is invalid")
     state = default_state()
     state.update(copy.deepcopy(value))
+    state["version"] = STATE_VERSION
     for key in ("owned", "preexisting", "reservationOff", "overrideOn"):
         values = state.get(key)
         if not isinstance(values, list):
@@ -750,8 +759,17 @@ def run(args: argparse.Namespace) -> dict:
     action_limit = max_actions_per_tick()
     schedules, reservations, release_allowed, orphaned = fetch_delivery_schedules(args.api_base)
     legacy_codes = legacy.fetch_selection(args.api_base)
+    stored_version = None
+    if args.state.exists():
+        try:
+            stored_payload = json.loads(args.state.read_text(encoding="utf-8"))
+            stored_version = stored_payload.get("version") if isinstance(stored_payload, dict) else None
+        except (OSError, json.JSONDecodeError):
+            stored_version = None
     state = load_state(args.state)
     if args.execute:
+        if stored_version != STATE_VERSION:
+            save_state(state, args.state)
         state = migrate_legacy_ledger(state, args.state)
     raw_recurring = recurring_holds(at, schedules, legacy_codes)
     preview_state = copy.deepcopy(state)
