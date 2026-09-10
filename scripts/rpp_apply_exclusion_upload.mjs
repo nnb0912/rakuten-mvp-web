@@ -56,6 +56,25 @@ function parseCsv(csvPath) {
 }
 function emit(obj) { console.log(JSON.stringify(obj, null, 2)); }
 
+function updateWalPhase(walPath, operationId, phase) {
+  if (!walPath) return;
+  const payload = JSON.parse(fs.readFileSync(walPath, 'utf8'));
+  if (payload.operationId !== operationId) throw new Error('WAL operationId mismatch');
+  payload.phase = phase;
+  payload.phaseUpdatedAt = new Date().toISOString();
+  const temporary = `${walPath}.${process.pid}.tmp`;
+  const fd = fs.openSync(temporary, 'w', 0o600);
+  try {
+    fs.writeFileSync(fd, `${JSON.stringify(payload, null, 2)}\n`);
+    fs.fsyncSync(fd);
+  } finally {
+    fs.closeSync(fd);
+  }
+  fs.renameSync(temporary, walPath);
+  const dirFd = fs.openSync(path.dirname(walPath), 'r');
+  try { fs.fsyncSync(dirFd); } finally { fs.closeSync(dirFd); }
+}
+
 async function searchExclusionStatus(page, itemCode) {
   await page.goto('https://ad.rms.rakuten.co.jp/rpp/exclude', { waitUntil: 'domcontentloaded', timeout: 60000 });
   await page.waitForTimeout(1500);
@@ -78,7 +97,7 @@ async function searchExclusionStatus(page, itemCode) {
   return { itemCode, found, exactRows: status.exactRows.slice(0, 5), textSample: status.text.replace(/[\r\n]+/g, ' ').slice(0, 500) };
 }
 
-async function loginAndUpload(csvPath, rows, finalSubmit) {
+async function loginAndUpload(csvPath, rows, finalSubmit, expectedBefore, walPath, operationId) {
   const required = ['RMS_LOGIN_ID', 'RMS_LOGIN_PASS', 'RAKUTEN_EMAIL', 'RAKUTEN_EMAIL_PASS'];
   const missing = required.filter((key) => !process.env[key]);
   if (missing.length) throw new Error(`RMS credentials missing on server: ${missing.join(', ')}`);
@@ -128,6 +147,14 @@ async function loginAndUpload(csvPath, rows, finalSubmit) {
       throw new Error(`RMS login not completed; exclusion upload aborted; url=${page.url()}; title=${await page.title()}; body=${body.replace(/[\r\n]+/g, ' ').slice(0, 600)}`);
     }
 
+    const beforeReadback = [];
+    for (const row of rows) beforeReadback.push(await searchExclusionStatus(page, row.itemCode));
+    const expectedFound = expectedBefore === 'excluded';
+    const beforeFailures = beforeReadback.filter((row) => row.found !== expectedFound);
+    if (beforeFailures.length) {
+      throw new Error(`RMS precondition changed; upload aborted: ${beforeFailures.map((row) => `${row.itemCode} found=${row.found}`).join(' / ')}`);
+    }
+
     let openedBulkUpload = false;
     const bulkButton = page.locator('#btnBulkUploadExcludeItemOpenModal');
     if (await bulkButton.count()) { await bulkButton.first().click({ timeout: 5000 }); openedBulkUpload = true; await page.waitForTimeout(1500); }
@@ -155,6 +182,7 @@ async function loginAndUpload(csvPath, rows, finalSubmit) {
     if (!finalSubmit) return { fileSelected: true, finalSubmitSkipped: true, openedBulkUpload, ...info };
 
     let uploadClicked = false;
+    updateWalPhase(walPath, operationId, 'SUBMITTING');
     const primaryUpload = page.locator('#btnUploadFile').first();
     if (await primaryUpload.count()) {
       await primaryUpload.click({ timeout: 10000 });
@@ -175,6 +203,7 @@ async function loginAndUpload(csvPath, rows, finalSubmit) {
       }
     }
     if (!uploadClicked) throw new Error('RMS final upload button not found');
+    updateWalPhase(walPath, operationId, 'SUBMITTED');
     for (let step = 0; step < 3; step += 1) {
       await page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => undefined);
       await page.waitForTimeout(3000);
@@ -197,7 +226,8 @@ async function loginAndUpload(csvPath, rows, finalSubmit) {
     if (failureText.length || readbackFailures.length) {
       throw new Error(`RMS upload verification failed: ${[...failureText, ...readbackFailures.map((row) => `${row.itemCode} readback=${row.found}`)].join(' / ')}`);
     }
-    return { fileSelected: true, finalSubmitClicked: true, pageTextSample, readback, ...info };
+    updateWalPhase(walPath, operationId, 'VERIFIED');
+    return { fileSelected: true, finalSubmitClicked: true, pageTextSample, beforeReadback, readback, ...info };
   } finally {
     await browser.close();
   }
@@ -214,7 +244,12 @@ async function main() {
   if (process.env.RPP_ENABLE_RMS_EXCLUSION_UPLOAD !== '1') throw new Error('RPP_ENABLE_RMS_EXCLUSION_UPLOAD=1 is required');
   const finalSubmit = hasArg('--final-submit');
   if (finalSubmit && argValue('--confirm') !== 'RMS_EXCLUSION_UPLOAD') throw new Error('--confirm=RMS_EXCLUSION_UPLOAD is required for final submit');
-  const applied = await loginAndUpload(csvPath, rows, finalSubmit);
+  const expectedBefore = argValue('--expected-before');
+  if (finalSubmit && !['active', 'excluded'].includes(expectedBefore)) throw new Error('--expected-before=active|excluded is required for final submit');
+  const walPath = argValue('--wal-stage-file');
+  const operationId = argValue('--operation-id');
+  if (finalSubmit && Boolean(walPath) !== Boolean(operationId)) throw new Error('--wal-stage-file and --operation-id must be paired');
+  const applied = await loginAndUpload(csvPath, rows, finalSubmit, expectedBefore, walPath, operationId);
   emit({ ...base, productionChange: finalSubmit, applied });
 }
 main().catch((e) => { console.error(`❌ エラー: ${e?.message || e}`); process.exit(1); });

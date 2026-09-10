@@ -18,6 +18,7 @@ import type { RppExperimentRecord } from "@/lib/rppExperiments";
 import type { RppEditLock } from "@/lib/rppCollaboration";
 import { parseRppTargetDraft, rppTargetDraftKey } from "@/lib/rppTargetDraft";
 import { formatRppClicks, formatRppYen } from "@/lib/rppMetricDisplay";
+import type { RppDeliveryReservation, RppRecurringSchedule } from "@/lib/rppDeliverySchedules";
 
 import { RppInfoTip } from "./RppInfoTip";
 type Props = {
@@ -63,6 +64,7 @@ type FormState = {
 
 type EditSession = RppEditLock & { token: string; draftKey: string };
 type ActiveRppOperation = { id: string; status: "pending" | "running"; actorName: string; itemCodes: string[]; createdAt: string; updatedAt: string };
+const blankRecurringSchedule: RppRecurringSchedule = { enabled: false, startTime: "23:00", endTime: "07:00" };
 
 const blank: FormState = {
   itemCode: "",
@@ -237,6 +239,20 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
   const [draftStatus, setDraftStatus] = useState("");
   const [nightPauseItemCodes, setNightPauseItemCodes] = useState<Set<string>>(() => new Set(initialNightPauseItemCodes));
   const [nightPauseBusyItemCode, setNightPauseBusyItemCode] = useState<string | null>(null);
+  const [schedulePanelItemCode, setSchedulePanelItemCode] = useState<string | null>(null);
+  const [scheduleRecurring, setScheduleRecurring] = useState<RppRecurringSchedule>(blankRecurringSchedule);
+  const [scheduleReservations, setScheduleReservations] = useState<RppDeliveryReservation[]>([]);
+  const [scheduleReservationAction, setScheduleReservationAction] = useState<"ON" | "OFF">("OFF");
+  const [scheduleReservationAt, setScheduleReservationAt] = useState("");
+  const [scheduleBusy, setScheduleBusy] = useState(false);
+  useEffect(() => {
+    if (!schedulePanelItemCode) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setSchedulePanelItemCode(null);
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [schedulePanelItemCode]);
   const selectedModeBoundFields = modeBoundFields(form.optimizationMode);
   const selectedRoutineMode = ROUTINE_OPTIMIZATION_MODES.find((option) => option.value === form.optimizationMode);
   const formUsesAutomaticCpc = isAutomaticRppOptimizationMode(form.optimizationMode);
@@ -589,6 +605,93 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
       setError(reason instanceof Error ? reason.message : String(reason));
     } finally {
       setNightPauseBusyItemCode(null);
+    }
+  }
+
+  async function openSchedulePanel(itemCode: string) {
+    setScheduleBusy(true);
+    setError(null);
+    setMessage(null);
+    try {
+      const response = await fetch(`/api/rpp/delivery-schedules?itemCode=${encodeURIComponent(itemCode)}`, { cache: "no-store" });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error ?? "時間指定の取得に失敗しました");
+      const schedule = Array.isArray(data.schedules) ? data.schedules[0] : null;
+      setScheduleRecurring(schedule?.recurring ?? blankRecurringSchedule);
+      setScheduleReservations(Array.isArray(data.reservations) ? data.reservations : []);
+      setScheduleReservationAction("OFF");
+      setScheduleReservationAt("");
+      setSchedulePanelItemCode(itemCode);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setScheduleBusy(false);
+    }
+  }
+
+  async function saveRecurringSchedule(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!schedulePanelItemCode) return;
+    setScheduleBusy(true);
+    setError(null);
+    try {
+      const response = await fetch("/api/rpp/delivery-schedules", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ itemCode: schedulePanelItemCode, ...scheduleRecurring }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error ?? "毎日停止時間の保存に失敗しました");
+      setScheduleRecurring(data.schedule.recurring);
+      setMessage(`${schedulePanelItemCode} の毎日停止時間を保存しました。RMSはまだ変更していません。`);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setScheduleBusy(false);
+    }
+  }
+
+  async function addScheduleReservation(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!schedulePanelItemCode) return;
+    setScheduleBusy(true);
+    setError(null);
+    try {
+      const response = await fetch("/api/rpp/delivery-schedules", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ itemCode: schedulePanelItemCode, action: scheduleReservationAction, executeAt: scheduleReservationAt, timeZone: "Asia/Tokyo" }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error ?? "日時予約の登録に失敗しました");
+      setScheduleReservations((current) => [...current, data.reservation].sort((a, b) => a.executeAt.localeCompare(b.executeAt)));
+      setScheduleReservationAt("");
+      setMessage(`${schedulePanelItemCode} の${scheduleReservationAction}予約を登録しました。RMSはまだ変更していません。`);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setScheduleBusy(false);
+    }
+  }
+
+  async function cancelScheduleReservation(reservation: RppDeliveryReservation) {
+    if (!schedulePanelItemCode) return;
+    setScheduleBusy(true);
+    setError(null);
+    try {
+      const response = await fetch("/api/rpp/delivery-schedules", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reservationId: reservation.id, itemCode: schedulePanelItemCode }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error ?? "予約取消に失敗しました");
+      setScheduleReservations((current) => current.map((row) => row.id === data.reservation.id ? data.reservation : row));
+      setMessage(`${schedulePanelItemCode} の予約を取り消しました。`);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setScheduleBusy(false);
     }
   }
 
@@ -963,6 +1066,7 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
                         ? <button disabled={busy || row?.changeLocked === true || row?.protectionType === "BLOCK"} type="button" onClick={() => downloadCpcCsv(cfg)} title={row?.changeLocked || row?.protectionType === "BLOCK" ? "変更対象外です" : "RMS手動アップロード用のCPC変更CSVを出力します"}>CPC変更CSV</button>
                         : <span className="keyword-exclusion-na" title="設定したルールに従って自動調整します">自動管理</span>}
                       {productExclusionOperable ? <button className={currentExcluded ? "restore-button" : "danger-ghost"} disabled={busy || (currentExcluded && !canReleaseExclusion && !canUndoAccidentalExclusion)} type="button" onClick={() => toggleExcluded(cfg.itemCode, canReleaseExclusion)} title={currentExcluded && !canReleaseExclusion && !canUndoAccidentalExclusion ? "この商品に目標が1つ以上入るまで除外解除できません" : undefined}>{exclusionChangedForItem ? "戻す" : currentExcluded ? "再開" : "除外"}</button> : <span className="keyword-exclusion-na" title="広告除外は商品CPC行から操作します">商品単位</span>}
+                      {productExclusionOperable ? <button className="schedule-button" disabled={busy || scheduleBusy} type="button" onClick={() => openSchedulePanel(cfg.itemCode)}>時間指定</button> : null}
                       {productExclusionOperable ? <div className="night-pause-control"><RppInfoTip label="夜間停止" /><button className={nightPauseEnabled ? "restore-button" : ""} disabled={busy || nightPauseBusyItemCode !== null} type="button" aria-pressed={nightPauseEnabled} onClick={() => toggleNightPause(cfg.itemCode)}>{nightPauseBusyItemCode === cfg.itemCode ? "保存中…" : `夜間停止 ${nightPauseEnabled ? "ON" : "OFF"}`}</button><small>01:30 OFF / 06:00 ON</small></div> : null}
                     </td>
                   </tr>
@@ -1035,6 +1139,49 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
           </div>
         ) : <p className="experiment-empty">保存済みの実験履歴はありません。現在の4つの通常運用モードでは実験履歴を作成しません。</p>}
       </section> : null}
+
+      {schedulePanelItemCode ? <button className="rpp-drawer-backdrop" aria-label="時間指定を閉じる" type="button" onClick={() => setSchedulePanelItemCode(null)} /> : null}
+      {schedulePanelItemCode ? <aside className="rpp-schedule-drawer open" role="dialog" aria-modal="true" aria-labelledby="rpp-schedule-title">
+        <div className="rpp-drawer-head">
+          <div><small>PRODUCT DELIVERY SCHEDULE</small><h2 id="rpp-schedule-title">{schedulePanelItemCode} の時間指定</h2><p>時刻はすべて日本時間（JST）です。</p></div>
+          <button type="button" aria-label="閉じる" onClick={() => setSchedulePanelItemCode(null)}>×</button>
+        </div>
+        <div className="rpp-schedule-body">
+          <form className="rpp-schedule-section" onSubmit={saveRecurringSchedule}>
+            <div><h3>毎日停止</h3><p>毎日、指定した開始時刻に広告OFF、終了時刻に広告ONへ戻します。日付をまたぐ指定もできます。</p></div>
+            <label className="rpp-schedule-enabled"><input autoFocus type="checkbox" checked={scheduleRecurring.enabled} onChange={(event) => setScheduleRecurring((current) => ({ ...current, enabled: event.target.checked }))} />この時間帯停止を使う</label>
+            <div className="rpp-schedule-time-row">
+              <label>広告OFF<input required type="time" value={scheduleRecurring.startTime} onChange={(event) => setScheduleRecurring((current) => ({ ...current, startTime: event.target.value }))} /></label>
+              <span>→</span>
+              <label>広告ON<input required type="time" value={scheduleRecurring.endTime} onChange={(event) => setScheduleRecurring((current) => ({ ...current, endTime: event.target.value }))} /></label>
+            </div>
+            <button className="primary-button" disabled={scheduleBusy} type="submit">毎日停止を保存</button>
+          </form>
+
+          <form className="rpp-schedule-section" onSubmit={addScheduleReservation}>
+            <div><h3>1回限りのON/OFF予約</h3><p>時間帯ではなく、指定日時に1回だけ広告ONまたは広告OFFを実行します。</p></div>
+            <div className="rpp-schedule-reservation-row">
+              <label>動作<select value={scheduleReservationAction} onChange={(event) => setScheduleReservationAction(event.target.value as "ON" | "OFF")}><option value="OFF">広告OFF</option><option value="ON">広告ON</option></select></label>
+              <label>実行日時（JST）<input required type="datetime-local" value={scheduleReservationAt} onChange={(event) => setScheduleReservationAt(event.target.value)} /></label>
+            </div>
+            <button className="primary-button" disabled={scheduleBusy || !scheduleReservationAt} type="submit">予約を追加</button>
+            <small className="rpp-schedule-safe-note">予約の登録だけではRMSの配信状態は変わりません。指定時刻に商品単位で反映し、読戻し確認します。</small>
+          </form>
+
+          <section className="rpp-schedule-section">
+            <div><h3>予約一覧</h3><p>保留中の予約は実行前に取り消せます。</p></div>
+            <div className="rpp-schedule-reservations">
+              {scheduleReservations.length ? scheduleReservations.map((reservation) => (
+                <article key={reservation.id}>
+                  <div><b>{reservation.action === "ON" ? "広告ON" : "広告OFF"}</b><span>{new Date(reservation.executeAt).toLocaleString("ja-JP", { timeZone: "Asia/Tokyo", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })} JST</span></div>
+                  <small>{reservation.status === "PENDING" ? "実行待ち" : reservation.status === "SUCCEEDED" ? "実行済み" : reservation.status === "FAILED" ? `失敗：${reservation.error || "詳細なし"}` : "取消済み"}</small>
+                  {reservation.status === "PENDING" ? <button disabled={scheduleBusy} type="button" onClick={() => cancelScheduleReservation(reservation)}>取消</button> : null}
+                </article>
+              )) : <p>予約はありません。</p>}
+            </div>
+          </section>
+        </div>
+      </aside> : null}
 
       {formDrawerOpen ? <button className="rpp-drawer-backdrop" aria-label="設定を閉じる" type="button" onClick={() => closeTargetForm()} /> : null}
       <aside className={formDrawerOpen ? "rpp-target-drawer open" : "rpp-target-drawer"} id="rpp-target-form" aria-hidden={!formDrawerOpen}>
