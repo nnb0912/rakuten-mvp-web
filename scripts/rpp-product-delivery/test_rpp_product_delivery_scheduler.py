@@ -38,6 +38,14 @@ def verified_adapter(_csv_path, control, code, wal_path, operation_id):
 
 
 class ProductDeliverySchedulerTest(unittest.TestCase):
+    def setUp(self):
+        heartbeat = patch.object(scheduler, "heartbeat_reservation", return_value={"claimId": "test-claim"})
+        heartbeat.start()
+        self.addCleanup(heartbeat.stop)
+        release = patch.object(scheduler, "release_reservation_claim", return_value={"status": "PENDING", "claimId": None})
+        self.release_claim = release.start()
+        self.addCleanup(release.stop)
+
     def test_same_day_and_overnight_intervals_use_jst(self):
         noon_jst = dt.datetime(2026, 9, 10, 3, 0, tzinfo=UTC)
         midnight_jst = dt.datetime(2026, 9, 9, 15, 30, tzinfo=UTC)
@@ -72,10 +80,11 @@ class ProductDeliverySchedulerTest(unittest.TestCase):
             "reservations": [{"id": "one", "itemCode": "R0406", "action": "off", "executeAt": "2026-09-10T10:00:00+09:00", "status": "PENDING"}],
             "releaseAllowedItemCodes": ["R0406"],
         }
-        schedules, reservations, release_allowed = scheduler.normalize_schedule_payload(payload)
+        schedules, reservations, release_allowed, orphaned = scheduler.normalize_schedule_payload(payload)
         self.assertEqual(schedules[0]["itemCode"], "r0406")
         self.assertEqual(reservations[0]["action"], "OFF")
         self.assertEqual(release_allowed, {"r0406"})
+        self.assertEqual(orphaned, set())
         payload["schedules"].append(dict(payload["schedules"][0]))
         with self.assertRaises(RuntimeError):
             scheduler.normalize_schedule_payload(payload)
@@ -103,7 +112,10 @@ class ProductDeliverySchedulerTest(unittest.TestCase):
             self.assertNotIn("off-1", state_after["processedReservations"])
             self.assertEqual(completed, [])
             self.assertEqual(len(failures), 1)
-            self.assertTrue((Path(tmp) / "wal.json").exists())
+            self.assertTrue(failures[0]["retryable"])
+            self.assertTrue(failures[0]["claimReleased"])
+            self.release_claim.assert_called_once()
+            self.assertFalse((Path(tmp) / "wal.json").exists())
 
     def test_wal_recovery_commits_verified_rms_result(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -188,14 +200,17 @@ class ProductDeliverySchedulerTest(unittest.TestCase):
     def test_on_is_blocked_until_all_rpp_targets_are_saved(self):
         at = dt.datetime(2026, 9, 10, 1, tzinfo=UTC)
         row = {"id": "on-1", "itemCode": "r0406", "action": "ON", "executeAt": at}
-        with patch.object(scheduler, "claim_reservation") as claim:
+        with patch.object(scheduler, "claim_reservation", return_value=claimed(row, "claim-on")) as claim, \
+             patch.object(scheduler, "acknowledge_reservation", return_value={"ok": True}) as ack:
             _, changes, failures, completed = scheduler.process_due_reservations(
                 scheduler.default_state(), [row], at, set(), set(), {"r0406"}, True,
                 "https://example.invalid", Path("/tmp/state"), Path("/tmp/wal"), Path("/tmp/audit"))
-        claim.assert_not_called()
+        claim.assert_called_once()
+        ack.assert_called_once()
         self.assertEqual(changes, [])
         self.assertEqual(completed, [])
         self.assertIn("目標保存", failures[0]["error"])
+        self.assertTrue(failures[0]["terminal"])
 
         owned = scheduler.default_state()
         owned["owned"] = ["r0406"]
@@ -219,6 +234,126 @@ class ProductDeliverySchedulerTest(unittest.TestCase):
         self.assertEqual(len(completed), 3)
         self.assertEqual(failures, [])
         self.assertEqual(len(state["reservationOff"]), 3)
+
+    def test_capacity_is_checked_before_claim_and_does_not_overclaim(self):
+        at = dt.datetime(2026, 9, 10, 1, tzinfo=UTC)
+        rows = [{"id": f"off-{i}", "itemCode": f"item-{i}", "action": "OFF", "executeAt": at} for i in range(2)]
+        with tempfile.TemporaryDirectory() as tmp, \
+             patch.object(scheduler, "claim_reservation", side_effect=lambda rid, **_: claimed(next(r for r in rows if r["id"] == rid), f"claim-{rid}")) as claim, \
+             patch.object(scheduler, "_transition", return_value={"itemCode": "item-0", "action": "OFF", "productionChange": True}), \
+             patch.object(scheduler, "acknowledge_reservation", return_value={"ok": True}):
+            _, changes, _, completed = scheduler.process_due_reservations(
+                scheduler.default_state(), rows, at, set(), set(), set(), True, "https://example.invalid",
+                Path(tmp) / "state.json", Path(tmp) / "wal.json", Path(tmp) / "audit.jsonl", 1)
+        self.assertEqual(claim.call_count, 1)
+        self.assertEqual(len(changes), 1)
+        self.assertEqual(completed, ["off-0"])
+
+    def test_claim_failure_and_active_claim_do_not_block_later_reservation(self):
+        at = dt.datetime(2026, 9, 10, 1, tzinfo=UTC)
+        rows = [
+            {"id": "busy", "itemCode": "item-a", "action": "OFF", "executeAt": at, "claimId": "other", "claimExpiresAt": at + dt.timedelta(minutes=5), "attemptCount": 2, "nextAttemptAt": "later"},
+            {"id": "fails", "itemCode": "item-b", "action": "OFF", "executeAt": at},
+            {"id": "works", "itemCode": "item-c", "action": "OFF", "executeAt": at},
+        ]
+        def claim_side_effect(reservation_id, **_):
+            if reservation_id == "fails":
+                raise RuntimeError("lease conflict")
+            return claimed(rows[2], "claim-works")
+        with tempfile.TemporaryDirectory() as tmp, patch.object(scheduler, "claim_reservation", side_effect=claim_side_effect), \
+             patch.object(scheduler, "_transition", return_value={"itemCode": "item-c", "action": "OFF", "productionChange": True}), \
+             patch.object(scheduler, "acknowledge_reservation", return_value={"ok": True}):
+            _, changes, failures, completed = scheduler.process_due_reservations(
+                scheduler.default_state(), rows, at, set(), set(), set(), True, "https://example.invalid",
+                Path(tmp) / "state.json", Path(tmp) / "wal.json", Path(tmp) / "audit.jsonl")
+        self.assertEqual(completed, ["works"])
+        self.assertEqual(len(changes), 1)
+        self.assertEqual([f["reservationId"] for f in failures], ["busy", "fails"])
+        self.assertTrue(all(f["retryable"] for f in failures))
+
+    def test_nonretryable_on_guard_does_not_block_later_off_or_recurring(self):
+        at = dt.datetime(2026, 9, 10, 1, tzinfo=UTC)
+        rows = [
+            {"id": "bad-on", "itemCode": "item-a", "action": "ON", "executeAt": at},
+            {"id": "good-off", "itemCode": "item-b", "action": "OFF", "executeAt": at},
+        ]
+        with tempfile.TemporaryDirectory() as tmp, patch.object(scheduler, "claim_reservation", side_effect=lambda rid, **_: claimed(next(row for row in rows if row["id"] == rid), "claim-" + rid)), \
+             patch.object(scheduler, "_transition", return_value={"itemCode": "item-b", "action": "OFF", "productionChange": True}), \
+             patch.object(scheduler, "acknowledge_reservation", return_value={"ok": True}):
+            _, changes, failures, completed = scheduler.process_due_reservations(
+                scheduler.default_state(), rows, at, set(), set(), {"item-a"}, True, "https://example.invalid",
+                Path(tmp) / "state.json", Path(tmp) / "wal.json", Path(tmp) / "audit.jsonl")
+        self.assertEqual(completed, ["good-off"])
+        self.assertEqual(len(changes), 1)
+        self.assertFalse(failures[0]["retryable"])
+
+        owned = scheduler.default_state()
+        owned["owned"] = ["item-a", "item-b"]
+        with tempfile.TemporaryDirectory() as tmp, patch.object(scheduler, "_transition", return_value={"itemCode": "item-b", "action": "ON"}) as transition:
+            _, recurring_changes, recurring_failures = scheduler.reconcile_recurring(
+                owned, set(), {"item-b"}, {"item-a", "item-b"}, True, Path(tmp) / "state.json", Path(tmp) / "wal.json")
+        self.assertEqual(len(recurring_failures), 1)
+        self.assertEqual(len(recurring_changes), 1)
+        transition.assert_called_once()
+
+    def test_occurrence_queue_persists_backlog_and_marks_unstarted_off_missed(self):
+        schedules = [{"itemCode": "item-a", "enabled": True, "startTime": "10:00", "endTime": "10:10"}]
+        active = dt.datetime(2026, 9, 10, 1, 5, tzinfo=UTC)
+        state, warnings = scheduler.sync_occurrence_queue(scheduler.default_state(), schedules, active)
+        self.assertEqual(warnings, [])
+        self.assertEqual([(r["action"], r["status"]) for r in state["occurrenceQueue"]], [("OFF", "PENDING"), ("ON", "PENDING")])
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "state.json"
+            scheduler.save_state(state, path)
+            persisted = scheduler.load_state(path)
+            ended, warnings = scheduler.sync_occurrence_queue(persisted, schedules, active + dt.timedelta(minutes=6))
+        self.assertEqual([(r["action"], r["status"]) for r in ended["occurrenceQueue"]], [("OFF", "MISSED"), ("ON", "SKIPPED")])
+        self.assertTrue(any("MISSED" in warning for warning in warnings))
+
+    def test_owned_occurrence_is_restored_and_completed_after_interval(self):
+        schedules = [{"itemCode": "item-a", "enabled": True, "startTime": "10:00", "endTime": "10:10"}]
+        active = dt.datetime(2026, 9, 10, 1, 5, tzinfo=UTC)
+        state, _ = scheduler.sync_occurrence_queue(scheduler.default_state(), schedules, active)
+        state["owned"] = ["item-a"]
+        state = scheduler.settle_occurrence_queue(state, {"item-a"}, active)
+        self.assertEqual(state["occurrenceQueue"][0]["status"], "SUCCEEDED")
+        state["owned"] = []
+        ended = scheduler.settle_occurrence_queue(state, set(), active + dt.timedelta(minutes=6))
+        self.assertEqual(ended["occurrenceQueue"][1]["status"], "SUCCEEDED")
+
+    def test_submitted_wal_is_retained_uncertain_without_silent_off_ownership(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            state_path, wal_path, audit_path = Path(tmp) / "state.json", Path(tmp) / "wal.json", Path(tmp) / "audit.jsonl"
+            before = scheduler.default_state()
+            after = scheduler.default_state()
+            after["owned"] = ["item-a"]
+            scheduler.write_wal({"operationId": "op-u", "phase": "SUBMITTED", "itemCode": "item-a", "control": "n",
+                                 "beforeExcluded": False, "stateBefore": before, "stateAfter": after}, wal_path)
+            recovered, evidence = scheduler.recover_wal(after, set(), state_path, wal_path, audit_path)
+            self.assertEqual(evidence["status"], "uncertain")
+            self.assertEqual(recovered["owned"], [])
+            self.assertEqual(recovered["preexisting"], [])
+            self.assertEqual(scheduler.load_wal(wal_path)["phase"], "UNCERTAIN")
+
+    def test_submitted_wal_fresh_matching_transition_is_safely_committed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            state_path, wal_path, audit_path = Path(tmp) / "state.json", Path(tmp) / "wal.json", Path(tmp) / "audit.jsonl"
+            before = scheduler.default_state()
+            after = scheduler.default_state()
+            after["owned"] = ["item-a"]
+            scheduler.write_wal({"operationId": "op-r", "phase": "SUBMITTED", "submittedAt": "2026-09-10T01:00:00Z", "itemCode": "item-a", "control": "n",
+                                 "beforeExcluded": False, "stateBefore": before, "stateAfter": after}, wal_path)
+            with patch.object(scheduler, "refresh_exclusions"), \
+                 patch.object(scheduler.legacy, "read_current_exclusions", side_effect=[set(), {"item-a"}]), \
+                 patch.object(scheduler.time, "sleep"), \
+                 patch.dict("os.environ", {"RPP_WAL_RECOVERY_SECONDS": "180", "RPP_WAL_RECOVERY_POLL_SECONDS": "1"}):
+                recovered, evidence, current = scheduler.recover_wal_with_fresh_readback(
+                    before, set(), state_path, wal_path, audit_path, Path(tmp) / "exclude.csv")
+            self.assertEqual(evidence["status"], "recovered_committed")
+            self.assertTrue(evidence["freshReadback"])
+            self.assertEqual(current, {"item-a"})
+            self.assertEqual(recovered["owned"], ["item-a"])
+            self.assertFalse(wal_path.exists())
 
     def test_action_limit_is_bounded(self):
         with patch.dict("os.environ", {"RPP_SCHEDULER_MAX_ACTIONS_PER_TICK": "99"}):
@@ -266,8 +401,9 @@ class ProductDeliverySchedulerTest(unittest.TestCase):
         stable = scheduler.default_state()
         stable["legacyLedgerMigrated"] = True
         stable["owned"] = ["r0406"]
+        stable["lastRmsSnapshotAt"] = scheduler.iso_utc(scheduler.parse_iso(at))
         schedule = [{"itemCode": "r0406", "enabled": True, "startTime": "10:00", "endTime": "14:00"}]
-        with patch.object(scheduler, "fetch_delivery_schedules", return_value=(schedule, [], {"r0406"})), \
+        with patch.object(scheduler, "fetch_delivery_schedules", return_value=(schedule, [], {"r0406"}, set())), \
              patch.object(scheduler.legacy, "fetch_selection", return_value=[]), \
              patch.object(scheduler, "load_state", return_value=stable), \
              patch.object(scheduler.legacy, "read_current_exclusions", return_value={"r0406"}), \
@@ -276,7 +412,7 @@ class ProductDeliverySchedulerTest(unittest.TestCase):
             refresh_call.assert_not_called()
         new_state = scheduler.default_state()
         new_state["legacyLedgerMigrated"] = True
-        with patch.object(scheduler, "fetch_delivery_schedules", return_value=(schedule, [], {"r0406"})), \
+        with patch.object(scheduler, "fetch_delivery_schedules", return_value=(schedule, [], {"r0406"}, set())), \
              patch.object(scheduler.legacy, "fetch_selection", return_value=[]), \
              patch.object(scheduler, "load_state", return_value=new_state), \
              patch.object(scheduler.legacy, "read_current_exclusions", return_value={"r0406"}), \

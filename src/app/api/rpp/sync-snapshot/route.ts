@@ -1,8 +1,8 @@
 import { timingSafeEqual } from "crypto";
 import { readLatestRppDashboardSnapshot, saveRppDashboardSnapshot } from "@/lib/rppDashboardSnapshots";
-import { claimRppDeliveryReservation, markRppDeliveryReservation, readPendingRppDeliveryReservations, readRppDeliverySchedules } from "@/lib/rppDeliverySchedules";
+import { claimRppDeliveryReservation, heartbeatRppDeliveryReservation, markRppDeliveryReservation, readPendingRppDeliveryReservations, readRppDeliverySchedules, releaseRppDeliveryReservationClaim } from "@/lib/rppDeliverySchedules";
 import { readRppNightPauseProducts } from "@/lib/rppNightPause";
-import { readRppAlertTargets } from "@/lib/rppTargets";
+import { readRppAlertTargets, readRppProductCpcItemCodes } from "@/lib/rppTargets";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -29,9 +29,18 @@ export async function GET(request: Request) {
       return Response.json({ ok: true, itemCodes: data.itemCodes });
     }
     if (searchParams.get("resource") === "delivery-schedules") {
-      const data = await readRppDeliverySchedules();
+      const data = await readRppDeliverySchedules({ reservationLimitPerItem: 0 });
       const pendingReservations = await readPendingRppDeliveryReservations();
       const targetData = await readRppAlertTargets();
+      const validItemCodes = new Set(await readRppProductCpcItemCodes());
+      if (validItemCodes.size === 0 && (data.schedules.length > 0 || pendingReservations.length > 0)) {
+        throw new Error("authoritative RPP product list is unavailable; delivery scheduling is fail-closed");
+      }
+      const orphanedSchedules = data.schedules.filter((row) => !validItemCodes.has(row.itemCode));
+      const orphanedReservations = pendingReservations.filter((row) => !validItemCodes.has(row.itemCode));
+      const executableSchedules = data.schedules.filter((row) => validItemCodes.has(row.itemCode));
+      const executableReservations = pendingReservations.filter((row) => validItemCodes.has(row.itemCode));
+      const orphanedRestoreReservations = orphanedReservations.filter((row) => row.action === "ON").map((row) => ({ ...row, orphaned: true }));
       const savedIds = new Set(targetData.targets.map((row) => row.id));
       const byItem = new Map<string, { total: number; saved: number }>();
       for (const row of targetData.configuredTargets) {
@@ -40,18 +49,25 @@ export async function GET(request: Request) {
         if (savedIds.has(row.id)) current.saved += 1;
         byItem.set(row.itemCode, current);
       }
+      const normalReleaseAllowed = [...byItem.entries()].filter(([, count]) => count.total > 0 && count.saved === count.total).map(([itemCode]) => itemCode);
       return Response.json({
         ok: true,
         timeZone: "Asia/Tokyo",
-        schedules: data.schedules.map((row) => ({
+        schedules: executableSchedules.map((row) => ({
           itemCode: row.itemCode,
           enabled: row.recurring.enabled,
           startTime: row.recurring.startTime,
           endTime: row.recurring.endTime,
           updatedAt: row.updatedAt,
         })),
-        reservations: pendingReservations,
-        releaseAllowedItemCodes: [...byItem.entries()].filter(([, count]) => count.total > 0 && count.saved === count.total).map(([itemCode]) => itemCode).sort(),
+        reservations: [...executableReservations, ...orphanedRestoreReservations].sort((a, b) => a.executeAt.localeCompare(b.executeAt)),
+        orphanedSchedules,
+        orphanedReservations,
+        releaseAllowedItemCodes: [...new Set([
+          ...normalReleaseAllowed,
+          ...orphanedSchedules.map((row) => row.itemCode),
+          ...orphanedRestoreReservations.map((row) => row.itemCode),
+        ])].sort(),
       });
     }
     const snapshot = await readLatestRppDashboardSnapshot();
@@ -68,6 +84,14 @@ export async function POST(request: Request) {
     if (new URL(request.url).searchParams.get("resource") === "delivery-schedules") {
       if (body.operation === "CLAIM") {
         const { reservation } = await claimRppDeliveryReservation(body.reservationId);
+        return Response.json({ ok: true, reservation });
+      }
+      if (body.operation === "HEARTBEAT") {
+        const { reservation } = await heartbeatRppDeliveryReservation(body.reservationId, body.claimId);
+        return Response.json({ ok: true, reservation });
+      }
+      if (body.operation === "RELEASE") {
+        const { reservation } = await releaseRppDeliveryReservationClaim(body.reservationId, body.claimId, body.error);
         return Response.json({ ok: true, reservation });
       }
       const { reservation } = await markRppDeliveryReservation(body.reservationId, body.claimId, body.status, body.error);

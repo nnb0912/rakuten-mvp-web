@@ -14,6 +14,11 @@ test("商品CPC行だけに時間指定ボタンと行スコープのパネル�
   assert.match(component, /予約の登録だけではRMSの配信状態は変わりません/);
   assert.match(component, /role="dialog"/);
   assert.match(component, /aria-modal="true"/);
+  assert.match(component, /excludedProductToForm/);
+  assert.match(component, /openSchedulePanel\(row\.itemCode\)/);
+  assert.match(component, /実行中（取消不可）/);
+  assert.match(component, /expectedUpdatedAt: scheduleUpdatedAt/);
+  assert.match(component, /setInterval\(refreshRuntimeStatus, 15_000\)/);
 });
 
 test("UIはJSTのdatetime-localと毎日停止・予約・取消APIを使う", () => {
@@ -28,8 +33,7 @@ test("UIはJSTのdatetime-localと毎日停止・予約・取消APIを使う", (
 test("人向けAPIはviewer/operator権限とRPP商品存在確認を行う", () => {
   assert.match(route, /requireRppRole\("viewer"\)/);
   assert.equal((route.match(/requireRppRole\("operator"\)/g) ?? []).length, 3);
-  assert.match(route, /readRppConfiguredTargets\(\)/);
-  assert.match(route, /row\.source === "商品CPC"/);
+  assert.match(route, /readRppProductCpcItemCodes\(\)/);
   assert.match(route, /requireReleaseAllowed/);
   assert.match(route, /全RPP設定行への目標保存/);
 });
@@ -41,6 +45,12 @@ test("machine APIは指定payloadで保留予約だけを返しackする", () =>
   assert.match(machineRoute, /operation === "CLAIM"/);
   assert.match(machineRoute, /claimRppDeliveryReservation/);
   assert.match(machineRoute, /claimId/);
+  assert.match(machineRoute, /operation === "HEARTBEAT"/);
+  assert.match(machineRoute, /orphanedSchedules/);
+  assert.match(machineRoute, /validItemCodes/);
+  assert.match(machineRoute, /readRppProductCpcItemCodes/);
+  assert.match(machineRoute, /validItemCodes\.size === 0/);
+  assert.match(machineRoute, /delivery scheduling is fail-closed/);
   assert.match(machineRoute, /reservationId/);
   assert.match(machineRoute, /markRppDeliveryReservation/);
 });

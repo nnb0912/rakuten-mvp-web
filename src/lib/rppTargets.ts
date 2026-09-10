@@ -681,6 +681,20 @@ export async function readRppExclusionProducts(): Promise<RppExclusionProduct[]>
   }
 }
 
+export async function readRppProductCpcItemCodes(): Promise<string[]> {
+  const [configuredTargets, exclusionProducts] = await Promise.all([readRppConfiguredTargets(), readRppExclusionProducts()]);
+  const codes = new Set(
+    configuredTargets
+      .filter((row) => row.source === "商品CPC")
+      .map((row) => row.itemCode.trim().toLowerCase())
+      .filter(Boolean),
+  );
+  for (const row of exclusionProducts) {
+    if (row.itemCpc != null) codes.add(row.itemCode.trim().toLowerCase());
+  }
+  return [...codes].sort((a, b) => a.localeCompare(b, "ja"));
+}
+
 export async function readRppAlertTargets() {
   const [rawTargets, configuredTargets, exclusionProducts, strategy, ownerNames] = await Promise.all([readRawTargets(), readRppConfiguredTargets(), readRppExclusionProducts(), readRppStrategySettings(), readRppOwnerNames()]);
   const targets = rawTargets.map((row) => {
