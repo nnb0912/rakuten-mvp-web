@@ -38,6 +38,13 @@ UTC = dt.timezone.utc
 PRODUCTION_CONFIRMATION = "RPP_PRODUCT_DELIVERY_SCHEDULER"
 
 
+def max_actions_per_tick() -> int:
+    try:
+        return max(1, min(20, int(os.environ.get("RPP_SCHEDULER_MAX_ACTIONS_PER_TICK", "3"))))
+    except ValueError as exc:
+        raise RuntimeError("RPP_SCHEDULER_MAX_ACTIONS_PER_TICK must be an integer") from exc
+
+
 def now_utc() -> dt.datetime:
     return dt.datetime.now(UTC)
 
@@ -383,7 +390,7 @@ def _reservation_state_after(state: dict, reservation: dict, raw_recurring: Set[
 
 def process_due_reservations(state: dict, reservations: Iterable[dict], at: dt.datetime, raw_recurring: Set[str], release_allowed: Set[str],
                              current: Set[str], execute: bool, api_base: str, state_path: Path,
-                             wal_path: Path, audit_path: Path) -> Tuple[dict, List[dict], List[dict], List[str]]:
+                             wal_path: Path, audit_path: Path, max_actions: int = 999) -> Tuple[dict, List[dict], List[dict], List[str]]:
     changes: List[dict] = []
     failures: List[dict] = []
     completed: List[str] = []
@@ -416,6 +423,8 @@ def process_due_reservations(state: dict, reservations: Iterable[dict], at: dt.d
         next_state = _reservation_state_after(state, reservation, raw_recurring)
         want_off = code in desired_holds(next_state, raw_recurring)
         control = None if (code in current) == want_off else ("n" if want_off else "d")
+        if control and len(changes) >= max_actions:
+            break
         if control == "n":
             next_state["owned"] = sorted(set(next_state["owned"]) | {code})
             next_state["preexisting"] = sorted(set(next_state["preexisting"]) - {code})
@@ -443,7 +452,7 @@ def process_due_reservations(state: dict, reservations: Iterable[dict], at: dt.d
 
 
 def reconcile_recurring(state: dict, raw_recurring: Set[str], release_allowed: Set[str], current: Set[str], execute: bool,
-                        state_path: Path, wal_path: Path) -> Tuple[dict, List[dict], List[dict]]:
+                        state_path: Path, wal_path: Path, max_actions: int = 999) -> Tuple[dict, List[dict], List[dict]]:
     next_state = copy.deepcopy(state)
     override = set(next_state["overrideOn"])
     override.intersection_update(raw_recurring)
@@ -456,6 +465,8 @@ def reconcile_recurring(state: dict, raw_recurring: Set[str], release_allowed: S
         want_off = code in holds
         try:
             if want_off and code not in current:
+                if len(changes) >= max_actions:
+                    break
                 after = copy.deepcopy(next_state)
                 after["owned"] = sorted(owned | {code})
                 after["preexisting"] = sorted(preexisting - {code})
@@ -467,6 +478,8 @@ def reconcile_recurring(state: dict, raw_recurring: Set[str], release_allowed: S
                 if execute:
                     save_state(next_state, state_path)
             elif not want_off and code in owned and code in current:
+                if len(changes) >= max_actions:
+                    break
                 if code not in release_allowed:
                     failures.append({"itemCode": code, "error": "広告ONには全RPP設定行への目標保存が必要です"})
                     break
@@ -505,6 +518,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def run(args: argparse.Namespace) -> dict:
     at = parse_iso(args.now) if args.now else now_utc()
+    action_limit = max_actions_per_tick()
     schedules, reservations, release_allowed = fetch_delivery_schedules(args.api_base)
     legacy_codes = legacy.fetch_selection(args.api_base)
     state = load_state(args.state)
@@ -535,17 +549,24 @@ def run(args: argparse.Namespace) -> dict:
     if args.execute:
         state, recovery = recover_wal(state, current, args.state, args.wal, args.audit)
     state, reservation_changes, reservation_failures, completed = process_due_reservations(
-        state, reservations, at, raw_recurring, release_allowed, current, args.execute, args.api_base, args.state, args.wal, args.audit)
+        state, reservations, at, raw_recurring, release_allowed, current, args.execute, args.api_base, args.state, args.wal, args.audit, action_limit)
     recurring_changes: List[dict] = []
     recurring_failures: List[dict] = []
     if not any(item.get("itemCode") for item in reservation_failures) and (not args.execute or needs_snapshot):
         state, recurring_changes, recurring_failures = reconcile_recurring(
-            state, raw_recurring, release_allowed, current, args.execute, args.state, args.wal)
+            state, raw_recurring, release_allowed, current, args.execute, args.state, args.wal,
+            max(0, action_limit - len(reservation_changes)))
+    final_holds = desired_holds(state, raw_recurring)
+    deferred_reservations = len([row for row in unprocessed_due if row["id"] not in completed])
+    remaining_recurring = len((final_holds - current) | ((set(state["owned"]) - final_holds) & current))
+    queue_depth = deferred_reservations + remaining_recurring
+    warnings = (["処理待ち %d件。次回の1分実行で継続します" % queue_depth] if queue_depth else [])
     summary = {"ok": not reservation_failures and not recurring_failures, "dryRun": not args.execute,
-               "activeRecurring": sorted(raw_recurring), "desiredOff": sorted(desired_holds(state, raw_recurring)),
+               "activeRecurring": sorted(raw_recurring), "desiredOff": sorted(final_holds),
                "completedReservations": completed, "changes": reservation_changes + recurring_changes,
                "failures": reservation_failures + recurring_failures, "ownedAfter": state["owned"],
-               "preexistingAfter": state["preexisting"], "walRecovery": recovery}
+               "preexistingAfter": state["preexisting"], "walRecovery": recovery,
+               "maxActionsPerTick": action_limit, "queueDepth": queue_depth, "warnings": warnings}
     if args.execute and (summary["changes"] or summary["failures"] or completed or recovery.get("status") not in {"none", "not-applicable"}):
         append_audit({"timestamp": iso_utc(now_utc()), "kind": "tick", **summary}, args.audit)
     return summary
@@ -562,7 +583,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             return 0
     try:
         summary = run(args)
-        if not args.quiet and (not args.execute or summary["changes"] or summary["failures"] or summary["completedReservations"]):
+        if not args.quiet and (not args.execute or summary["changes"] or summary["failures"] or summary["completedReservations"] or summary["warnings"]):
             print(json.dumps(summary, ensure_ascii=False, sort_keys=True))
         return 0 if summary["ok"] else 1
     finally:
