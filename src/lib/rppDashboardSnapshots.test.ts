@@ -53,3 +53,23 @@ test("configuredTargetsの基準ワード別順位をRender保存時に保持す
   assert.equal(row?.rppPositionKeyword, "壁掛け時計");
   assert.deepEqual(row?.rppPositions, [{ keyword: "壁掛け時計", position: "PC 3位 / SP 2位" }]);
 });
+
+test("除外中を含む全設定行をON復帰判定用にRender保存する", () => {
+  const snapshot = normalizeRppDashboardSnapshot({
+    syncedAt: "2026-09-11T03:00:00Z",
+    recommendations: { summary: {}, recommendations: [] },
+    latestFiles: [],
+    rppData: {
+      configuredTargets: [],
+      allConfiguredTargets: [
+        { id: "r0406__item", itemCode: "r0406", itemName: "ゴミ箱", keyword: "商品CPC", itemCpc: 30, keywordCpc: null, source: "商品CPC", owner: "森下" },
+        { id: "r0406__kw", itemCode: "r0406", itemName: "ゴミ箱", keyword: "ゴミ カラスよけ", itemCpc: 30, keywordCpc: 40, source: "キーワードCPC", owner: "森下" },
+      ],
+      exclusionProducts: [{ itemCode: "r0406", itemName: "ゴミ箱", itemCpc: 30, excluded: true, owner: "森下" }],
+      owners: ["森下"],
+    },
+  });
+  assert.equal(snapshot.schemaVersion, 4);
+  assert.equal(snapshot.rppData?.configuredTargets.length, 0);
+  assert.deepEqual((snapshot.rppData?.allConfiguredTargets ?? []).map((row) => row.id), ["r0406__item", "r0406__kw"]);
+});

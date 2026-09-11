@@ -5,6 +5,7 @@ import test from "node:test";
 const component = readFileSync(new URL("../app/rpp/RppTargetSettings.tsx", import.meta.url), "utf8");
 const route = readFileSync(new URL("../app/api/rpp/delivery-schedules/route.ts", import.meta.url), "utf8");
 const machineRoute = readFileSync(new URL("../app/api/rpp/sync-snapshot/route.ts", import.meta.url), "utf8");
+const targetSource = readFileSync(new URL("./rppTargets.ts", import.meta.url), "utf8");
 
 test("商品CPC行だけに時間指定ボタンと行スコープのパネルを表示する", () => {
   assert.match(component, /productExclusionOperable \? <button className="schedule-button"[\s\S]*?>時間指定<\/button> : null/);
@@ -53,4 +54,11 @@ test("machine APIは指定payloadで保留予約だけを返しackする", () =>
   assert.match(machineRoute, /delivery scheduling is fail-closed/);
   assert.match(machineRoute, /reservationId/);
   assert.match(machineRoute, /markRppDeliveryReservation/);
+});
+
+test("ON許可判定は除外中の商品を含む全RPP設定行で行う", () => {
+  assert.match(machineRoute, /readRppConfiguredTargets\(\{ includeExcluded: true \}\)/);
+  assert.match(targetSource, /includeExcluded\?: boolean/);
+  assert.match(targetSource, /excluded && !includeExcluded/);
+  assert.match(targetSource, /snapshotData\?\.allConfiguredTargets/);
 });

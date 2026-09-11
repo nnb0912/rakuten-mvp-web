@@ -13,8 +13,9 @@ export function resolveKeywordTargetContext(input: {
   activeItem?: ActiveItem;
   ownerMap: Record<string, string>;
   excluded: boolean;
+  includeExcluded?: boolean;
 }): RppKeywordTargetContext | null {
-  if (!input.itemCode || input.excluded) return null;
+  if (!input.itemCode || (input.excluded && !input.includeExcluded)) return null;
   return {
     itemName: input.activeItem?.itemName || input.rowItemName,
     itemCpc: input.activeItem?.itemCpc ?? input.rowItemCpc,
