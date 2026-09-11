@@ -547,7 +547,8 @@ async function deleteRawTarget(id: string) {
   return result.rowCount ?? 0;
 }
 
-export async function readRppConfiguredTargets() {
+export async function readRppConfiguredTargets(options: { includeExcluded?: boolean } = {}) {
+  const includeExcluded = options.includeExcluded === true;
   const [itemRows, keywordRows, excludeRows, ownerMap, positionMap, exclusionOverrides] = await Promise.all([
     readCsv(ITEM_SETTINGS_PATH),
     readCsv(KEYWORD_SETTINGS_PATH),
@@ -563,10 +564,11 @@ export async function readRppConfiguredTargets() {
     const itemCpc = optionalNumber(row["商品CPC"]);
     const excluded = exclusionOverrides[itemCode] ?? (cleanText(row["除外登録済み商品"]).toLowerCase() === "yes");
     if (!itemCode || !itemCpc) continue;
-    if (excluded) {
+    if (excluded && !includeExcluded) {
       excludedItems.add(itemCode);
       continue;
     }
+    if (excluded) excludedItems.add(itemCode);
     activeItems.set(itemCode, { itemName: cleanText(row["商品名"]), itemCpc, owner: ownerMap[itemCode] || "担当未設定" });
   }
 
@@ -599,6 +601,7 @@ export async function readRppConfiguredTargets() {
       activeItem: item,
       ownerMap,
       excluded: excludedItems.has(itemCode) || exclusionOverrides[itemCode] === true,
+      includeExcluded,
     });
     if (!context || !keyword || !keywordCpc) continue;
     const id = targetId(itemCode, keyword);
@@ -618,21 +621,23 @@ export async function readRppConfiguredTargets() {
   const liveRows = [...configured.values()].sort((a, b) => a.itemCode.localeCompare(b.itemCode, "ja") || a.keyword.localeCompare(b.keyword, "ja"));
   if (liveRows.length) return liveRows;
   try {
-    const syncedRows = (await readLatestRppDashboardSnapshot())?.rppData?.configuredTargets ?? [];
+    const snapshotData = (await readLatestRppDashboardSnapshot())?.rppData;
+    const syncedRows = includeExcluded ? snapshotData?.allConfiguredTargets ?? [] : snapshotData?.configuredTargets ?? [];
     if (syncedRows.length) return syncedRows
-      .filter((row) => !exclusionOverrides[row.itemCode.trim().toLowerCase()])
+      .filter((row) => includeExcluded || !exclusionOverrides[row.itemCode.trim().toLowerCase()])
       .sort((a, b) => a.itemCode.localeCompare(b.itemCode, "ja") || a.keyword.localeCompare(b.keyword, "ja"));
+    if (includeExcluded && snapshotData) return [];
     const envTargets = process.env.RPP_CONFIGURED_TARGETS_JSON;
     if (envTargets) {
       const snapshot = JSON.parse(envTargets) as { targets?: RppConfiguredTarget[] } | RppConfiguredTarget[];
       const rows = Array.isArray(snapshot) ? snapshot : snapshot.targets ?? [];
       return rows
-        .filter((row) => !exclusionOverrides[row.itemCode.trim().toLowerCase()])
+        .filter((row) => includeExcluded || !exclusionOverrides[row.itemCode.trim().toLowerCase()])
         .sort((a, b) => a.itemCode.localeCompare(b.itemCode, "ja") || a.keyword.localeCompare(b.keyword, "ja"));
     }
     const snapshot = JSON.parse(await fs.readFile(SNAPSHOT_TARGETS_PATH, "utf8")) as { targets?: RppConfiguredTarget[] };
     return (snapshot.targets ?? [])
-      .filter((row) => !exclusionOverrides[row.itemCode.trim().toLowerCase()])
+      .filter((row) => includeExcluded || !exclusionOverrides[row.itemCode.trim().toLowerCase()])
       .sort((a, b) => a.itemCode.localeCompare(b.itemCode, "ja") || a.keyword.localeCompare(b.keyword, "ja"));
   } catch {
     return [];

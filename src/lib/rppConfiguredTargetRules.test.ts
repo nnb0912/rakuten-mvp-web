@@ -25,3 +25,18 @@ test("商品除外中の商品はKWCPC行も表示対象外にする", () => {
     excluded: true,
   }), null);
 });
+
+test("ON復帰判定では除外中でもKWCPC行を目標確認対象に含める", () => {
+  assert.deepEqual(resolveKeywordTargetContext({
+    itemCode: "r0406",
+    rowItemName: "ゴミ箱",
+    rowItemCpc: 30,
+    ownerMap: { r0406: "森下" },
+    excluded: true,
+    includeExcluded: true,
+  }), {
+    itemName: "ゴミ箱",
+    itemCpc: 30,
+    owner: "森下",
+  });
+});

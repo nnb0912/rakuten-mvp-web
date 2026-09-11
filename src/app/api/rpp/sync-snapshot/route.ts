@@ -2,7 +2,7 @@ import { timingSafeEqual } from "crypto";
 import { readLatestRppDashboardSnapshot, saveRppDashboardSnapshot } from "@/lib/rppDashboardSnapshots";
 import { claimRppDeliveryReservation, heartbeatRppDeliveryReservation, markRppDeliveryReservation, readPendingRppDeliveryReservations, readRppDeliverySchedules, releaseRppDeliveryReservationClaim } from "@/lib/rppDeliverySchedules";
 import { readRppNightPauseProducts } from "@/lib/rppNightPause";
-import { readRppAlertTargets, readRppProductCpcItemCodes } from "@/lib/rppTargets";
+import { readRppAlertTargets, readRppConfiguredTargets, readRppProductCpcItemCodes } from "@/lib/rppTargets";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -32,6 +32,7 @@ export async function GET(request: Request) {
       const data = await readRppDeliverySchedules({ reservationLimitPerItem: 0 });
       const pendingReservations = await readPendingRppDeliveryReservations();
       const targetData = await readRppAlertTargets();
+      const releaseConfiguredTargets = await readRppConfiguredTargets({ includeExcluded: true });
       const validItemCodes = new Set(await readRppProductCpcItemCodes());
       if (validItemCodes.size === 0 && (data.schedules.length > 0 || pendingReservations.length > 0)) {
         throw new Error("authoritative RPP product list is unavailable; delivery scheduling is fail-closed");
@@ -43,7 +44,7 @@ export async function GET(request: Request) {
       const orphanedRestoreReservations = orphanedReservations.filter((row) => row.action === "ON").map((row) => ({ ...row, orphaned: true }));
       const savedIds = new Set(targetData.targets.map((row) => row.id));
       const byItem = new Map<string, { total: number; saved: number }>();
-      for (const row of targetData.configuredTargets) {
+      for (const row of releaseConfiguredTargets) {
         const current = byItem.get(row.itemCode) ?? { total: 0, saved: 0 };
         current.total += 1;
         if (savedIds.has(row.id)) current.saved += 1;
