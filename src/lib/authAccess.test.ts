@@ -25,8 +25,9 @@ test("role hierarchy prevents viewers and operators from exceeding their permiss
   assert.equal(hasRppRole("admin", "admin"), true);
 });
 
-test("RPP role accounts can sign in and access only RPP routes", () => {
+test("RPP role accounts can sign in, pass through the root redirect, and access only RPP routes", () => {
   assert.equal(canSignIn("viewer@example.com", env), true);
+  assert.equal(decideAuthorization("/", "viewer@example.com", env), "allow");
   assert.equal(decideAuthorization("/rpp", "viewer@example.com", env), "allow");
   assert.equal(decideAuthorization("/rpp/settings", "operator@example.com", env), "allow");
   assert.equal(decideAuthorization("/api/rpp/targets", "operator@example.com", env), "allow");
