@@ -46,6 +46,10 @@ function isRppPath(pathname: string) {
 export function decideAuthorization(pathname: string, email?: string | null, env: NodeJS.ProcessEnv = process.env): AuthorizationDecision {
   if (pathname.startsWith("/login")) return "allow";
 
+  // The root page only redirects into RPP, so RPP-only accounts must be able to
+  // complete the post-login callback without gaining access to other screens.
+  if (pathname === "/" && getRppRoleForEmail(email, env)) return "allow";
+
   if (isRppPath(pathname)) {
     if (getRppRoleForEmail(email, env)) return "allow";
     return pathname.startsWith("/api/rpp/") ? "api-unauthorized" : "page-unauthorized";
