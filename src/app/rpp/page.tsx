@@ -241,7 +241,7 @@ export default async function RppPage({ searchParams }: { searchParams: Promise<
               const status = row.excluded ? { label: "除外中", className: "status-hold" } : rec?.action === "RAISE" ? { label: "上げ候補", className: "status-approved" } : rec?.action === "LOWER" ? { label: "下げ候補", className: "approval-rejected" } : { label: "維持", className: "status-hold" };
               return <tr key={`${row.itemCode}__${rec?.keyword || "status"}`}>
                 <td><b>{row.itemCode} / {rec?.keyword || "商品"}</b><br /><small title={rec?.itemName || row.configured?.itemName || row.product?.itemName || undefined}>{shortRppItemName(row.itemCode, rec?.itemName || row.configured?.itemName || row.product?.itemName || "")}</small></td>
-                <td><span className={`status-pill ${row.excluded ? "approval-rejected" : "status-approved"}`}>{row.excluded ? "広告OFF" : "広告ON"}</span></td>
+                <td><span className={`status-pill ${!row.product ? "status-hold" : row.excluded ? "approval-rejected" : "status-approved"}`}>{!row.product ? "未確認" : row.excluded ? "広告OFF" : "広告ON"}</span></td>
                 <td><b>{currentCpc == null ? "-" : `${currentCpc}円`}</b><br /><small>{row.target?.optimizationMode || "目標未設定"}</small></td>
                 <td><b>{fmtYen(rec?.spend)}</b><br /><small>{rec?.clicks == null ? "未取得" : `${rec.clicks} click`} / 売上 {fmtYen(rec?.salesAmount)} / ROAS {rec?.roas == null ? "未取得" : `${Math.round(rec.roas)}%`}</small></td>
                 <td><small>{rec?.rppPosition || (row.excluded ? "除外中" : "未測定")}</small></td>

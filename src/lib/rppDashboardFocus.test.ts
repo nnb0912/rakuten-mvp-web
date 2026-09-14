@@ -20,3 +20,7 @@ test("ダッシュボードは固定以外の選択モードを主表示する",
   assert.match(source, /excludedAutomaticProducts/);
   assert.doesNotMatch(source, /allowedItemCodes|自動調整を許可した商品|R0445・R0406だけが対象/);
 });
+
+test("商品観測がない自動モード商品は広告ONと表示しない", () => {
+  assert.match(source, /!row\.product \? "未確認"/);
+});

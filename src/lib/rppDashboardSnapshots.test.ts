@@ -27,6 +27,8 @@ test("RPP dashboard snapshot accepts validated single-day performance rows", () 
 test("古い実績は新しいobservedAtだけで上書きしない", () => {
   assert.match(snapshotSource, /where excluded\.source_mtime > \$\{PERFORMANCE_TABLE\}\.source_mtime/);
   assert.doesNotMatch(snapshotSource, /source_mtime[^`]+or excluded\.observed_at/i);
+  assert.match(snapshotSource, /performance daily source is older than persisted data/);
+  assert.ok(snapshotSource.indexOf("assertPersistedPerformanceMatches") < snapshotSource.lastIndexOf(`insert into \${TABLE}`));
 });
 
 test("RPP dashboard snapshot rejects missing recommendation rows", () => {

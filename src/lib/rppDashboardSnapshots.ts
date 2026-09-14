@@ -135,6 +135,29 @@ async function ensureTables(client: Pool | PoolClient | null = pool) {
   return true;
 }
 
+async function queryRppPerformanceDaily(client: Pool | PoolClient, date: string) {
+  const result = await client.query(`select item_code,clicks,spend,ctr,sales_12h,orders_12h,sales_720h,orders_720h,source_file,source_mtime from ${PERFORMANCE_TABLE} where performance_date=$1 and source_mtime=(select max(source_mtime) from ${PERFORMANCE_TABLE} where performance_date=$1) order by item_code`, [date]);
+  return result.rows.map((row) => ({
+    itemCode: String(row.item_code), clicks: Number(row.clicks), spend: Number(row.spend), ctr: row.ctr == null ? null : Number(row.ctr),
+    sales12h: Number(row.sales_12h), orders12h: Number(row.orders_12h), sales720h: Number(row.sales_720h), orders720h: Number(row.orders_720h),
+    source: String(row.source_file), sourceMtime: new Date(row.source_mtime).toISOString(),
+  }));
+}
+
+function assertPersistedPerformanceMatches(performance: RppPerformanceDaily, actualRows: Awaited<ReturnType<typeof queryRppPerformanceDaily>>) {
+  const expected = [...performance.rows].sort((a, b) => a.itemCode.localeCompare(b.itemCode));
+  if (actualRows.length !== expected.length) throw new Error("performance daily persistence row count mismatch");
+  const fields: Array<keyof RppPerformanceDailyRow> = ["clicks", "spend", "ctr", "sales12h", "orders12h", "sales720h", "orders720h"];
+  expected.forEach((row, index) => {
+    const actual = actualRows[index];
+    if (actual.itemCode !== row.itemCode) throw new Error("performance daily persistence item mismatch");
+    for (const field of fields) {
+      if (actual[field] !== row[field]) throw new Error(`performance daily persistence ${field} mismatch`);
+    }
+    if (actual.source !== performance.source || actual.sourceMtime !== performance.sourceMtime) throw new Error("performance daily persistence source mismatch");
+  });
+}
+
 export async function saveRppDashboardSnapshot(value: unknown) {
   const snapshot = normalizeRppDashboardSnapshot(value);
   if (!pool) throw new Error("DATABASE_URL is not configured");
@@ -142,10 +165,16 @@ export async function saveRppDashboardSnapshot(value: unknown) {
   try {
     await client.query("begin");
     await ensureTables(client);
-    await client.query(`insert into ${TABLE} (synced_at,payload) values($1,$2::jsonb)`, [snapshot.syncedAt, JSON.stringify(snapshot)]);
+    if (snapshot.performanceDaily) {
+      const latest = await client.query(`select max(source_mtime) as source_mtime from ${PERFORMANCE_TABLE} where performance_date=$1`, [snapshot.performanceDaily.date]);
+      const currentSourceMtime = latest.rows[0]?.source_mtime == null ? null : new Date(latest.rows[0].source_mtime);
+      if (currentSourceMtime && new Date(snapshot.performanceDaily.sourceMtime) < currentSourceMtime) throw new Error("performance daily source is older than persisted data");
+    }
     for (const row of snapshot.performanceDaily?.rows ?? []) {
       await client.query(`insert into ${PERFORMANCE_TABLE}(performance_date,item_code,clicks,spend,ctr,sales_12h,orders_12h,sales_720h,orders_720h,source_file,source_mtime,observed_at) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) on conflict(performance_date,item_code) do update set clicks=excluded.clicks,spend=excluded.spend,ctr=excluded.ctr,sales_12h=excluded.sales_12h,orders_12h=excluded.orders_12h,sales_720h=excluded.sales_720h,orders_720h=excluded.orders_720h,source_file=excluded.source_file,source_mtime=excluded.source_mtime,observed_at=excluded.observed_at where excluded.source_mtime > ${PERFORMANCE_TABLE}.source_mtime`, [snapshot.performanceDaily!.date,row.itemCode,row.clicks,row.spend,row.ctr,row.sales12h,row.orders12h,row.sales720h,row.orders720h,snapshot.performanceDaily!.source,snapshot.performanceDaily!.sourceMtime,snapshot.syncedAt]);
     }
+    if (snapshot.performanceDaily) assertPersistedPerformanceMatches(snapshot.performanceDaily, await queryRppPerformanceDaily(client, snapshot.performanceDaily.date));
+    await client.query(`insert into ${TABLE} (synced_at,payload) values($1,$2::jsonb)`, [snapshot.syncedAt, JSON.stringify(snapshot)]);
     await client.query(`delete from ${TABLE} where id not in (select id from ${TABLE} order by synced_at desc,id desc limit 90)`);
     await client.query(`delete from ${PERFORMANCE_TABLE} where performance_date < current_date - interval '800 days'`);
     await client.query("commit");
@@ -168,10 +197,5 @@ export async function readLatestRppDashboardSnapshot() {
 export async function readRppPerformanceDaily(date: string) {
   if (!dateOnly(date)) throw new Error("performance date must be YYYY-MM-DD");
   if (!(await ensureTables()) || !pool) return [];
-  const result = await pool.query(`select item_code,clicks,spend,ctr,sales_12h,orders_12h,sales_720h,orders_720h,source_file,source_mtime from ${PERFORMANCE_TABLE} where performance_date=$1 and source_mtime=(select max(source_mtime) from ${PERFORMANCE_TABLE} where performance_date=$1) order by item_code`, [date]);
-  return result.rows.map((row) => ({
-    itemCode: String(row.item_code), clicks: Number(row.clicks), spend: Number(row.spend), ctr: row.ctr == null ? null : Number(row.ctr),
-    sales12h: Number(row.sales_12h), orders12h: Number(row.orders_12h), sales720h: Number(row.sales_720h), orders720h: Number(row.orders_720h),
-    source: String(row.source_file), sourceMtime: new Date(row.source_mtime).toISOString(),
-  }));
+  return queryRppPerformanceDaily(pool, date);
 }
