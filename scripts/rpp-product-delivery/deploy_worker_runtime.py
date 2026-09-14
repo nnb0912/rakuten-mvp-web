@@ -17,11 +17,19 @@ PROJECT = Path(os.environ.get("RPP_PROJECT_DIR", "/Users/nob/Projects/rpp-8am-no
 ARTIFACTS = {
     "scheduler": (REPO / "scripts" / "rpp-product-delivery" / "rpp_product_delivery_scheduler.py", PROJECT / "rpp_product_delivery_scheduler.py"),
     "schedulerTests": (REPO / "scripts" / "rpp-product-delivery" / "test_rpp_product_delivery_scheduler.py", PROJECT / "test_rpp_product_delivery_scheduler.py"),
+    "nightPause": (REPO / "scripts" / "rpp-product-delivery" / "rpp_product_night_pause.py", PROJECT / "rpp_product_night_pause.py"),
+    "nightPauseTests": (REPO / "scripts" / "rpp-product-delivery" / "test_rpp_product_night_pause.py", PROJECT / "test_rpp_product_night_pause.py"),
+    "settingsRefresh": (REPO / "scripts" / "rpp-product-delivery" / "scripts_refresh_rpp_settings_csvs.py", PROJECT / "scripts_refresh_rpp_settings_csvs.py"),
     "snapshotSender": (REPO / "scripts" / "rpp-product-delivery" / "rpp_push_dashboard_snapshot.py", Path("/Users/nob/.hermes/scripts/rpp_push_dashboard_snapshot.py")),
     "snapshotSenderTests": (REPO / "scripts" / "rpp-product-delivery" / "test_rpp_push_dashboard_snapshot.py", Path("/Users/nob/.hermes/scripts/test_rpp_push_dashboard_snapshot.py")),
     "productReportDownloader": (REPO / "scripts" / "rpp-product-delivery" / "scripts_refresh_rpp_product_report.py", PROJECT / "scripts_refresh_rpp_product_report.py"),
     "productReportDownloaderTests": (REPO / "scripts" / "rpp-product-delivery" / "test_scripts_refresh_rpp_product_report.py", PROJECT / "test_scripts_refresh_rpp_product_report.py"),
     "rmsLoginHelper": (REPO / "scripts" / "rpp-product-delivery" / "scripts_refresh_rpp_keyword_report.py", PROJECT / "scripts_refresh_rpp_keyword_report.py"),
+    "performanceContract": (REPO / "scripts" / "rpp-product-delivery" / "rpp_performance_contract.py", PROJECT / "rpp_performance_contract.py"),
+    "snapshotPerformanceContract": (REPO / "scripts" / "rpp-product-delivery" / "rpp_performance_contract.py", Path("/Users/nob/.hermes/scripts/rpp_performance_contract.py")),
+    "schedulerWrapper": (REPO / "scripts" / "rpp-product-delivery" / "rpp_product_delivery_scheduler_tick.sh", Path("/Users/nob/.hermes/scripts/rpp_product_delivery_scheduler_tick.sh")),
+    "runtimeManifestTests": (REPO / "scripts" / "rpp-product-delivery" / "test_rpp_runtime_manifest.py", PROJECT / "test_rpp_runtime_manifest.py"),
+    "deployVerifier": (REPO / "scripts" / "rpp-product-delivery" / "deploy_worker_runtime.py", PROJECT / "deploy_worker_runtime.py"),
 }
 BACKUP_DIR = PROJECT / "rpp_apply_logs" / "worker_backups"
 MANIFEST = PROJECT / "rpp_apply_logs" / "rpp_product_delivery_scheduler_deploy.json"
@@ -77,7 +85,10 @@ def deploy() -> dict:
         raise RuntimeError("worker deploy requires HEAD to equal origin/main")
     source_hashes = {}
     for name, (source, _) in ARTIFACTS.items():
-        compile(source.read_text(encoding="utf-8"), str(source), "exec")
+        if source.suffix == ".py":
+            compile(source.read_text(encoding="utf-8"), str(source), "exec")
+        elif source.suffix == ".sh":
+            subprocess.run(["/bin/bash", "-n", str(source)], check=True, capture_output=True, text=True)
         source_hashes[name] = sha256(source)
     PROJECT.mkdir(parents=True, exist_ok=True)
     BACKUP_DIR.mkdir(parents=True, exist_ok=True)

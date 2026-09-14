@@ -17,6 +17,11 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
+from rpp_performance_contract import parse_performance_csv, parse_receipt_times, receipt_message as performance_receipt_message, rows_sha256
+
 PROJECT = Path(os.environ.get("RPP_PROJECT_DIR", "/Users/nob/Projects/rpp-8am-notify"))
 OWNER_MAP_PATH = Path(os.environ.get("RPP_OWNER_MAP_PATH", "/Users/nob/Projects/rakuten-mvp-web/src/data/rpp_owner_map.json"))
 API_BASE = os.environ.get("RPP_DASHBOARD_URL", "https://rakuten-mvp-web.onrender.com").rstrip("/")
@@ -55,10 +60,6 @@ def performance_receipt_key() -> bytes:
         raise RuntimeError("RPP performance receipt HMAC key is not configured")
     return value.encode()
 
-
-def performance_receipt_message(receipt: dict) -> bytes:
-    fields = ("version", "output_sha256", "start_date", "end_date", "actual_count", "request_started_at", "history_created_at", "history_row_sha256", "source_archive_sha256")
-    return "\n".join(str(receipt.get(field, "")) for field in fields).encode()
 
 
 def latest_recommendation() -> tuple[Path, dict]:
@@ -190,53 +191,22 @@ def performance_daily(path: Path | None = None) -> dict | None:
     path = path or (PROJECT / "rpp_item_reports.csv")
     if not path.exists():
         return None
-    with path.open("r", encoding="cp932", errors="strict", newline="") as handle:
-        records = list(csv.DictReader(handle))
-    if not records:
-        return None
-    ranges = {str(row.get("日付") or "").strip() for row in records}
-    if len(ranges) != 1:
-        raise RuntimeError(f"item daily report contains multiple date ranges: {sorted(ranges)}")
-    label = next(iter(ranges))
-    match = re.fullmatch(r"(\d{4})年(\d{2})月(\d{2})日～(\d{4})年(\d{2})月(\d{2})日", label)
-    if not match or match.group(1, 2, 3) != match.group(4, 5, 6):
-        raise RuntimeError(f"item report is not a single-day report: {label}")
-    report_date = dt.date.fromisoformat(f"{match.group(1)}-{match.group(2)}-{match.group(3)}")
-    today_jst = dt.datetime.now(dt.timezone(dt.timedelta(hours=9))).date()
-    if report_date > today_jst:
-        raise RuntimeError(f"item daily report date is in the future: {report_date.isoformat()}")
-    rows = []
-    item_codes: set[str] = set()
-    for row in records:
-        item_code = str(row.get("商品管理番号") or "").strip().lower()
-        if not item_code:
-            continue
-        if item_code in item_codes:
-            raise RuntimeError(f"item daily report contains duplicate item: {item_code}")
-        item_codes.add(item_code)
-        rows.append({
-            "itemCode": item_code,
-            "ctr": _number(row.get("CTR(%)")),
-            "clicks": round(_number(row.get("クリック数(合計)"))),
-            "spend": round(_number(row.get("実績額(合計)"))),
-            "sales12h": round(_number(row.get("売上金額(合計12時間)"))),
-            "orders12h": round(_number(row.get("売上件数(合計12時間)"))),
-            "sales720h": round(_number(row.get("売上金額(合計720時間)"))),
-            "orders720h": round(_number(row.get("売上件数(合計720時間)"))),
-        })
-    receipt = performance_receipt(path, report_date.isoformat(), len(rows))
+    report_date, rows = parse_performance_csv(path)
+    receipt = performance_receipt(path, report_date, rows)
     return {
-        "source": path.name,
-        "sourceMtime": dt.datetime.fromtimestamp(path.stat().st_mtime, dt.timezone.utc).isoformat().replace("+00:00", "Z"),
-        "date": report_date.isoformat(),
+        "source": receipt["source"],
+        "sourceMtime": receipt["sourceMtime"],
+        "date": report_date,
         "attribution": {"sales12h": True, "sales720h": True},
         "rows": rows,
         "receipt": receipt,
     }
 
 
-def performance_receipt(path: Path, report_date: str, row_count: int) -> dict:
+def performance_receipt(path: Path, report_date: str, rows: list[dict]) -> dict:
     digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    row_count = len(rows)
+    source_mtime = dt.datetime.fromtimestamp(path.stat().st_mtime, dt.timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
     for receipt_path in sorted((PROJECT / "rpp_logs").glob("rpp_product_report_refresh_*.json"), reverse=True):
         try:
             receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
@@ -249,10 +219,12 @@ def performance_receipt(path: Path, report_date: str, row_count: int) -> dict:
             dates_match = receipt.get("start_date") == receipt.get("end_date") == report_date
             hash_matches = receipt.get("output_sha256") == digest
             fresh = receipt_path.stat().st_mtime >= path.stat().st_mtime
-            evidence_valid = receipt.get("version") == 1 and len(str(receipt.get("history_row_sha256") or "")) == 64 and len(str(receipt.get("source_archive_sha256") or "")) == 64 and bool(receipt.get("request_started_at")) and bool(receipt.get("history_created_at"))
+            provider_manifest_valid = isinstance(receipt.get("source_archive_bytes"), int) and receipt["source_archive_bytes"] > 0 and isinstance(receipt.get("source_csv_compressed_bytes"), int) and receipt["source_csv_compressed_bytes"] > 0 and isinstance(receipt.get("source_csv_uncompressed_bytes"), int) and receipt["source_csv_uncompressed_bytes"] > 0 and bool(re.fullmatch(r"[a-f0-9]{8}", str(receipt.get("source_csv_crc32") or ""))) and len(str(receipt.get("source_csv_name_sha256") or "")) == 64
+            evidence_valid = receipt.get("version") == 1 and len(str(receipt.get("history_row_sha256") or "")) == 64 and len(str(receipt.get("source_archive_sha256") or "")) == 64 and receipt.get("source") == path.name and receipt.get("source_mtime") == source_mtime and receipt.get("rows_sha256") == rows_sha256(rows) and provider_manifest_valid
+            parse_receipt_times(receipt)
             if output == path.resolve() and complete and counts_match and dates_match and hash_matches and fresh and signature_valid and evidence_valid:
-                completed_at = dt.datetime.fromisoformat(str(receipt.get("completed_at") or "").replace("Z", "+00:00")).astimezone(dt.timezone.utc).isoformat().replace("+00:00", "Z")
-                return {"version": 1, "file": receipt_path.name, "completedAt": completed_at, "sha256": digest, "actualCount": row_count, "requestStartedAt": receipt["request_started_at"], "historyCreatedAt": receipt["history_created_at"], "historyRowSha256": receipt["history_row_sha256"], "sourceArchiveSha256": receipt["source_archive_sha256"], "signature": signature, "complete": True}
+                completed_at = str(receipt.get("completed_at") or "")
+                return {"version": 1, "file": receipt_path.name, "completedAt": completed_at, "sha256": digest, "actualCount": row_count, "requestStartedAt": receipt["request_started_at"], "historyCreatedAt": receipt["history_created_at"], "historyRowSha256": receipt["history_row_sha256"], "sourceArchiveSha256": receipt["source_archive_sha256"], "sourceArchiveBytes": receipt["source_archive_bytes"], "sourceCsvCrc32": receipt["source_csv_crc32"], "sourceCsvCompressedBytes": receipt["source_csv_compressed_bytes"], "sourceCsvUncompressedBytes": receipt["source_csv_uncompressed_bytes"], "sourceCsvNameSha256": receipt["source_csv_name_sha256"], "source": path.name, "sourceMtime": source_mtime, "rowsSha256": receipt["rows_sha256"], "signature": signature, "complete": True}
         except (OSError, ValueError, json.JSONDecodeError):
             continue
     raise RuntimeError("verified product report download receipt was not found")

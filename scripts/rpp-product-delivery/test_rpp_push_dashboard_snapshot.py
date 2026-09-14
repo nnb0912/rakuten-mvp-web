@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import csv
+import datetime as dt
 import hashlib
 import importlib.util
 import json
@@ -144,11 +145,19 @@ class OperationalDataTest(unittest.TestCase):
     def _write_performance_receipt(root: Path, output: Path, date: str, rows: int) -> None:
         logs = root / 'rpp_logs'
         logs.mkdir(exist_ok=True)
+        now = dt.datetime.now(dt.timezone.utc)
+        request = now - dt.timedelta(seconds=2)
+        history = (now - dt.timedelta(seconds=1)).astimezone(dt.timezone(dt.timedelta(hours=9))).strftime('%Y-%m-%d %H:%M:%S')
+        source_mtime = dt.datetime.fromtimestamp(output.stat().st_mtime, dt.timezone.utc).isoformat(timespec='milliseconds').replace('+00:00', 'Z')
+        normalized_rows = module.parse_performance_csv(output)[1]
         receipt = {
             'version': 1, 'ok': True, 'download_complete': True, 'start_date': date, 'end_date': date,
             'output': str(output), 'actual_count': rows, 'output_sha256': hashlib.sha256(output.read_bytes()).hexdigest(),
-            'completed_at': '2026-09-02T00:00:00+09:00', 'request_started_at': '2026-09-02T00:00:00+09:00',
-            'history_created_at': '2026-09-02 00:00:01', 'history_row_sha256': 'b' * 64, 'source_archive_sha256': 'c' * 64,
+            'completed_at': now.isoformat(), 'request_started_at': request.isoformat(), 'history_created_at': history,
+            'history_row_sha256': 'b' * 64, 'source_archive_sha256': 'c' * 64, 'source_archive_bytes': 1000,
+            'source_csv_crc32': 'deadbeef', 'source_csv_compressed_bytes': 800, 'source_csv_uncompressed_bytes': output.stat().st_size,
+            'source_csv_name_sha256': 'd' * 64, 'source': output.name, 'source_mtime': source_mtime,
+            'rows_sha256': module.rows_sha256(normalized_rows),
         }
         receipt['signature'] = hmac.new(os.environ['RPP_PERFORMANCE_RECEIPT_HMAC_KEY'].encode(), module.performance_receipt_message(receipt), hashlib.sha256).hexdigest()
         (logs / 'rpp_product_report_refresh_20260902_000000.json').write_text(json.dumps(receipt), encoding='utf-8')

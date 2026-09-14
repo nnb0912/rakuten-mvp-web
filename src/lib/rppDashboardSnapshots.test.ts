@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { createHmac } from "node:crypto";
+import { createHash, createHmac } from "node:crypto";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import { normalizeRppDashboardSnapshot } from "./rppDashboardSnapshots.ts";
@@ -7,9 +7,11 @@ import { normalizeRppDashboardSnapshot } from "./rppDashboardSnapshots.ts";
 const snapshotSource = readFileSync(new URL("./rppDashboardSnapshots.ts", import.meta.url), "utf8");
 const receiptKey = "test-only-rpp-performance-receipt-key-123456";
 process.env.RPP_PERFORMANCE_RECEIPT_HMAC_KEY = receiptKey;
-function signedReceipt(date: string, count: number) {
-  const receipt = { version: 1 as const, file: "receipt.json", completedAt: "2026-08-31T05:01:00Z", sha256: "a".repeat(64), actualCount: count, requestStartedAt: "2026-08-31T13:59:00+09:00", historyCreatedAt: "2026-08-31 14:00:00", historyRowSha256: "b".repeat(64), sourceArchiveSha256: "c".repeat(64), complete: true as const };
-  const message = [receipt.version, receipt.sha256, date, date, receipt.actualCount, receipt.requestStartedAt, receipt.historyCreatedAt, receipt.historyRowSha256, receipt.sourceArchiveSha256].join("\n");
+function signedReceipt(date: string, count: number, overrides: Record<string, unknown> = {}) {
+  const rowBody = "r0579\t1.200000\t10.000000\t300.000000\t500.000000\t1.000000\t700.000000\t2.000000";
+  const base = { version: 1 as const, file: "receipt.json", completedAt: "2026-08-31T05:01:00Z", sha256: "a".repeat(64), actualCount: count, requestStartedAt: "2026-08-31T13:59:00+09:00", historyCreatedAt: "2026-08-31 14:00:00", historyRowSha256: "b".repeat(64), sourceArchiveSha256: "c".repeat(64), sourceArchiveBytes: 1000, sourceCsvCrc32: "deadbeef", sourceCsvCompressedBytes: 800, sourceCsvUncompressedBytes: 1200, sourceCsvNameSha256: "d".repeat(64), source: "rpp_item_reports.csv", sourceMtime: "2026-08-31T05:00:00.000Z", rowsSha256: createHash("sha256").update(rowBody).digest("hex"), complete: true as const };
+  const receipt = { ...base, ...overrides } as typeof base;
+  const message = [receipt.version, receipt.sha256, date, date, receipt.actualCount, receipt.requestStartedAt, receipt.historyCreatedAt, receipt.historyRowSha256, receipt.sourceArchiveSha256, receipt.sourceArchiveBytes, receipt.sourceCsvCrc32, receipt.sourceCsvCompressedBytes, receipt.sourceCsvUncompressedBytes, receipt.sourceCsvNameSha256, receipt.source, receipt.sourceMtime, receipt.completedAt, receipt.rowsSha256].join("\n");
   return { ...receipt, signature: createHmac("sha256", receiptKey).update(message).digest("hex") };
 }
 
@@ -35,6 +37,16 @@ test("RPP dashboard snapshot accepts validated single-day performance rows", () 
 test("RPP dashboard snapshot rejects a forged performance receipt", () => {
   const receipt = { ...signedReceipt("2026-08-30", 1), signature: "0".repeat(64) };
   assert.throws(() => normalizeRppDashboardSnapshot({ schemaVersion: 2, syncedAt: "2026-08-31T06:00:00Z", recommendations: { summary: {}, recommendations: [] }, latestFiles: [], performanceDaily: { source: "rpp_item_reports.csv", sourceMtime: "2026-08-31T05:00:00Z", date: "2026-08-30", attribution: { sales12h: true, sales720h: true }, rows: [{ itemCode: "R0579", ctr: 1.2, clicks: 10, spend: 300, sales12h: 500, orders12h: 1, sales720h: 700, orders720h: 2 }], receipt } }), /verified receipt is invalid/);
+});
+
+test("RPP dashboard snapshot rejects tampered rows and impossible receipt times", () => {
+  const receipt = signedReceipt("2026-08-30", 1);
+  const row = { itemCode: "R0579", ctr: 1.2, clicks: 10, spend: 300, sales12h: 500, orders12h: 1, sales720h: 700, orders720h: 2 };
+  const performanceDaily = { source: "rpp_item_reports.csv", sourceMtime: "2026-08-31T05:00:00Z", date: "2026-08-30", attribution: { sales12h: true, sales720h: true }, rows: [{ ...row, clicks: 999999 }], receipt };
+  const base = { schemaVersion: 2, syncedAt: "2026-08-31T06:00:00Z", recommendations: { summary: {}, recommendations: [] }, latestFiles: [], performanceDaily };
+  assert.throws(() => normalizeRppDashboardSnapshot(base), /verified receipt is invalid/);
+  const impossible = signedReceipt("2026-08-30", 1, { requestStartedAt: "2026-09-01T00:00:00+09:00" });
+  assert.throws(() => normalizeRppDashboardSnapshot({ ...base, performanceDaily: { ...performanceDaily, rows: [row], receipt: impossible } }), /verified receipt is invalid/);
 });
 
 test("古い実績は新しいobservedAtだけで上書きしない", () => {

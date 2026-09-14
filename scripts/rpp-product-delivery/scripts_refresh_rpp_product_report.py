@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import csv
+from contextlib import contextmanager
 import fcntl
 import hashlib
 import hmac
@@ -16,10 +17,17 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 import time
 import zipfile
-from datetime import date, datetime, timedelta
+import zlib
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
+from rpp_performance_contract import parse_performance_csv, parse_receipt_times, receipt_message, rows_sha256
 
 PROJECT = Path(os.environ.get('RPP_PROJECT_DIR', '/Users/nob/Projects/rpp-8am-notify'))
 RAKUTEN_MARKETING = Path('/Users/nob/Projects/rakuten-marketing')
@@ -41,9 +49,28 @@ def receipt_key() -> bytes:
     return value.encode()
 
 
-def receipt_message(receipt: dict) -> bytes:
-    fields = ('version', 'output_sha256', 'start_date', 'end_date', 'actual_count', 'request_started_at', 'history_created_at', 'history_row_sha256', 'source_archive_sha256')
-    return '\n'.join(str(receipt.get(field, '')) for field in fields).encode()
+@contextmanager
+def exclusive_refresh_lock(path: Path):
+    handle = path.open('a+')
+    try:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError as exc:
+        handle.close()
+        raise RuntimeError('RPP product report refresh is already running') from exc
+    try:
+        yield
+    finally:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        handle.close()
+
+
+def select_history_row(rows: list[dict], start_jp: str, end_jp: str, not_before: str, existing_rows: list[str]) -> int:
+    for row in rows:
+        text = str(row.get('text') or '').strip()
+        created_at = str(row.get('createdAt') or '').strip()
+        if 'パフォーマンスレポート' in text and ('全商品レポートダウンロード' in text or '商品レポートダウンロード' in text) and '完了' in text and start_jp in text and end_jp in text and created_at >= not_before and text not in existing_rows:
+            return int(row['index'])
+    return -1
 
 
 def load_env(path: Path) -> None:
@@ -66,17 +93,22 @@ def decode_text(raw: bytes) -> str:
     return raw.decode('utf-8', 'replace')
 
 
-def extract_csv(download_path: Path) -> tuple[str, list[list[str]], Path]:
+def extract_csv(download_path: Path) -> tuple[str, list[list[str]], Path, dict]:
     if zipfile.is_zipfile(download_path):
         with zipfile.ZipFile(download_path) as zf:
             names = [n for n in zf.namelist() if n.lower().endswith('.csv')]
-            if not names:
+            if len(names) != 1:
                 raise RuntimeError(f'CSV not found in zip: {download_path}')
+            if zf.testzip() is not None:
+                raise RuntimeError('RPP item report zip CRC validation failed')
+            info = zf.getinfo(names[0])
             raw = zf.read(names[0])
             source_name = names[0]
+            manifest = {'source_csv_crc32': f'{info.CRC:08x}', 'source_csv_compressed_bytes': info.compress_size, 'source_csv_uncompressed_bytes': info.file_size, 'source_csv_name_sha256': hashlib.sha256(source_name.encode()).hexdigest()}
     else:
         raw = download_path.read_bytes()
         source_name = download_path.name
+        manifest = {'source_csv_crc32': f'{zlib.crc32(raw) & 0xffffffff:08x}', 'source_csv_compressed_bytes': len(raw), 'source_csv_uncompressed_bytes': len(raw), 'source_csv_name_sha256': hashlib.sha256(source_name.encode()).hexdigest()}
 
     text = decode_text(raw)
     lines = text.splitlines()
@@ -95,7 +127,9 @@ def extract_csv(download_path: Path) -> tuple[str, list[list[str]], Path]:
     normalized = '\r\n'.join(body) + '\r\n'
     tmp = DOWNLOADS / f'item_report_extracted_{time.time_ns()}.csv'
     tmp.write_bytes(normalized.encode('cp932', errors='replace'))
-    return source_name, rows, tmp
+    if len(raw) != manifest['source_csv_uncompressed_bytes']:
+        raise RuntimeError('RPP item report provider manifest size mismatch')
+    return source_name, rows, tmp, manifest
 
 
 async def click_radio(page, radio_id: str, label_text: str) -> None:
@@ -169,27 +203,17 @@ async def download_item_report(start: date, end: date) -> tuple[Path, dict]:
         await page.goto('https://ad.rms.rakuten.co.jp/rpp/download', timeout=60000)
         await page.wait_for_load_state('networkidle', timeout=60000)
         await page.wait_for_timeout(3000)
-        def row_js():
-            return '''args => {
-              const {startJp, endJp, notBefore, existingRows} = args;
-              const rows = [...document.querySelectorAll('tr')];
-              return rows.findIndex(r => r.innerText.includes('パフォーマンスレポート')
-                && (r.innerText.includes('全商品レポートダウンロード') || r.innerText.includes('商品レポートダウンロード'))
-                && r.innerText.includes('完了')
-                && r.innerText.includes(startJp)
-                && r.innerText.includes(endJp)
-                && (r.querySelector('td:first-child')?.innerText || '').trim() >= notBefore
-                && !existingRows.includes(r.innerText.trim()));
-            }'''
-        row_args = {'startJp': start_jp, 'endJp': end_jp, 'notBefore': not_before, 'existingRows': existing_rows}
-        row_index = await page.evaluate(row_js(), row_args)
+        async def current_row_index() -> int:
+            rows = await page.evaluate('''() => [...document.querySelectorAll('tr')].map((r, index) => ({index, text:r.innerText.trim(), createdAt:(r.querySelector('td:first-child')?.innerText || '').trim()}))''')
+            return select_history_row(rows, start_jp, end_jp, not_before, existing_rows)
+        row_index = await current_row_index()
         if row_index < 0:
             for _ in range(6):
                 refresh = page.locator('#btnDownloadHistoryRefresh')
                 if await refresh.count() > 0:
                     await refresh.first.click()
                 await page.wait_for_timeout(5000)
-                row_index = await page.evaluate(row_js(), row_args)
+                row_index = await current_row_index()
                 if row_index >= 0:
                     break
         if row_index < 0:
@@ -231,21 +255,22 @@ def main() -> int:
     load_env(PROJECT / '.env')
     load_env(RAKUTEN_MARKETING / '.env')
     before_mtime = out_path.stat().st_mtime if out_path.exists() else None
-    lock_handle = LOCK.open('a+')
-    try:
-        fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except BlockingIOError as exc:
-        lock_handle.close()
-        raise RuntimeError('RPP product report refresh is already running') from exc
+    lock_context = exclusive_refresh_lock(LOCK)
+    lock_context.__enter__()
     try:
         downloaded, request_evidence = asyncio.run(download_item_report(start, end))
-        source_name, rows, extracted = extract_csv(downloaded)
+        source_name, rows, extracted, provider_manifest = extract_csv(downloaded)
         backup = None
         if out_path.exists():
             backup = DOWNLOADS / f'{out_path.stem}_backup_{time.time_ns()}.csv'
             shutil.copy2(out_path, backup)
         shutil.copy2(extracted, out_path)
         after_mtime = out_path.stat().st_mtime
+        report_date, normalized_rows = parse_performance_csv(out_path)
+        if report_date != start.isoformat() or report_date != end.isoformat() or len(normalized_rows) != len(rows) - 1:
+            raise RuntimeError('RPP item report normalized row manifest mismatch')
+        completed_at = datetime.now().astimezone().isoformat()
+        source_mtime = datetime.fromtimestamp(out_path.stat().st_mtime, timezone.utc).isoformat(timespec='milliseconds').replace('+00:00', 'Z')
         receipt = {
             'version': 1,
             'ok': True,
@@ -259,14 +284,20 @@ def main() -> int:
             'backup': str(backup) if backup else None,
             'rows_including_header': len(rows),
             'data_rows': max(0, len(rows) - 1),
-            'actual_count': max(0, len(rows) - 1),
+            'actual_count': len(normalized_rows),
             'output_sha256': hashlib.sha256(out_path.read_bytes()).hexdigest(),
             'source_archive_sha256': hashlib.sha256(downloaded.read_bytes()).hexdigest(),
-            'completed_at': datetime.now().astimezone().isoformat(),
+            'source_archive_bytes': downloaded.stat().st_size,
+            **provider_manifest,
+            'source': out_path.name,
+            'source_mtime': source_mtime,
+            'rows_sha256': rows_sha256(normalized_rows),
+            'completed_at': completed_at,
             **request_evidence,
             'mtime_changed': before_mtime != after_mtime,
             'header_sample': rows[0][:8] if rows else [],
         }
+        parse_receipt_times(receipt)
         receipt['signature'] = hmac.new(receipt_key(), receipt_message(receipt), hashlib.sha256).hexdigest()
         receipt_path = LOGS / f'rpp_product_report_refresh_{time.time_ns()}.json'
         receipt_tmp = receipt_path.with_suffix('.json.tmp')
@@ -276,10 +307,8 @@ def main() -> int:
         print(json.dumps(receipt, ensure_ascii=False, indent=2))
         return 0
     finally:
-        fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
-        lock_handle.close()
+        lock_context.__exit__(*sys.exc_info())
 
 
 if __name__ == '__main__':
     raise SystemExit(main())
-
