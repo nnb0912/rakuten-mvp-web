@@ -210,9 +210,9 @@ export default async function RppPage({ searchParams }: { searchParams: Promise<
           <div className="card"><span>現在稼働</span><strong>{activeAutomaticProducts}</strong></div>
           <div className="card"><span>除外中</span><strong>{excludedAutomaticProducts}</strong></div>
           <div className={`card ${unknownAutomaticProducts ? "status-hold" : ""}`}><span>未確認</span><strong>{unknownAutomaticProducts}</strong></div>
-          <div className="card"><span>前日広告費</span><strong>{fmtYen(dashboardSpend)}</strong></div>
-          <div className="card"><span>前日売上</span><strong>{fmtYen(dashboardSales)}</strong></div>
-          <div className="card"><span>前日ROAS</span><strong>{dashboardRoas == null ? "未取得" : `${Math.round(dashboardRoas)}%`}</strong></div>
+          <div className="card"><span>自動 前日広告費</span><strong>{fmtYen(dashboardSpend)}</strong></div>
+          <div className="card"><span>自動 前日売上</span><strong>{fmtYen(dashboardSales)}</strong></div>
+          <div className="card"><span>自動 前日ROAS</span><strong>{dashboardRoas == null ? "未取得" : `${Math.round(dashboardRoas)}%`}</strong></div>
           <div className={`card ${anomalyData.anomalies.length ? "approval-rejected" : "status-approved"}`}><span>異常チェック</span><strong>{anomalyData.anomalies.length ? `${anomalyData.anomalies.length}件` : "異常なし"}</strong></div>
         </section>
         <RppDashboardCharts daily={dashboardDailyMetrics} active={activeAutomaticProducts} excluded={excludedAutomaticProducts} unknown={unknownAutomaticProducts} />

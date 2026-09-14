@@ -7,6 +7,7 @@ import csv
 import datetime as dt
 import json
 import os
+import re
 import subprocess
 import sys
 import urllib.error
@@ -168,6 +169,53 @@ def _number(value: object) -> float:
         return 0.0
 
 
+def performance_daily(path: Path | None = None) -> dict | None:
+    path = path or (PROJECT / "rpp_item_reports.csv")
+    if not path.exists():
+        return None
+    with path.open("r", encoding="cp932", errors="strict", newline="") as handle:
+        records = list(csv.DictReader(handle))
+    if not records:
+        return None
+    ranges = {str(row.get("日付") or "").strip() for row in records}
+    if len(ranges) != 1:
+        raise RuntimeError(f"item daily report contains multiple date ranges: {sorted(ranges)}")
+    label = next(iter(ranges))
+    match = re.fullmatch(r"(\d{4})年(\d{2})月(\d{2})日～(\d{4})年(\d{2})月(\d{2})日", label)
+    if not match or match.group(1, 2, 3) != match.group(4, 5, 6):
+        raise RuntimeError(f"item report is not a single-day report: {label}")
+    report_date = dt.date.fromisoformat(f"{match.group(1)}-{match.group(2)}-{match.group(3)}")
+    today_jst = dt.datetime.now(dt.timezone(dt.timedelta(hours=9))).date()
+    if report_date > today_jst:
+        raise RuntimeError(f"item daily report date is in the future: {report_date.isoformat()}")
+    rows = []
+    item_codes: set[str] = set()
+    for row in records:
+        item_code = str(row.get("商品管理番号") or "").strip().lower()
+        if not item_code:
+            continue
+        if item_code in item_codes:
+            raise RuntimeError(f"item daily report contains duplicate item: {item_code}")
+        item_codes.add(item_code)
+        rows.append({
+            "itemCode": item_code,
+            "ctr": _number(row.get("CTR(%)")),
+            "clicks": round(_number(row.get("クリック数(合計)"))),
+            "spend": round(_number(row.get("実績額(合計)"))),
+            "sales12h": round(_number(row.get("売上金額(合計12時間)"))),
+            "orders12h": round(_number(row.get("売上件数(合計12時間)"))),
+            "sales720h": round(_number(row.get("売上金額(合計720時間)"))),
+            "orders720h": round(_number(row.get("売上件数(合計720時間)"))),
+        })
+    return {
+        "source": path.name,
+        "sourceMtime": dt.datetime.fromtimestamp(path.stat().st_mtime, dt.timezone.utc).isoformat().replace("+00:00", "Z"),
+        "date": report_date.isoformat(),
+        "attribution": {"sales12h": True, "sales720h": True},
+        "rows": rows,
+    }
+
+
 def budget_metrics() -> dict | None:
     path = PROJECT / "rpp_item_reports_7d.csv"
     if not path.exists():
@@ -269,6 +317,13 @@ def validate_snapshot_readback(payload: dict, snapshot: dict, read_status: int) 
         raise RuntimeError("snapshot rppData readback mismatch: allConfiguredTargets IDs")
     if actual_rpp_data.get("exclusionObservation") != expected_rpp_data.get("exclusionObservation"):
         raise RuntimeError("snapshot rppData readback mismatch: exclusionObservation")
+    expected_performance = payload.get("performanceDaily")
+    actual_performance = snapshot.get("performanceDaily")
+    if expected_performance is None:
+        if actual_performance is not None:
+            raise RuntimeError("snapshot performanceDaily readback mismatch")
+    elif not isinstance(actual_performance, dict) or actual_performance.get("date") != expected_performance["date"] or len(actual_performance.get("rows") or []) != len(expected_performance["rows"]):
+        raise RuntimeError("snapshot performanceDaily readback mismatch")
 
 
 def main() -> int:
@@ -285,9 +340,10 @@ def main() -> int:
         "recommendations": recommendations,
         "latestFiles": file_rows(),
         "cronStatus": cron_status(),
+        "performanceDaily": performance_daily(),
         "rppData": rpp_data,
     }
-    summary = {"source": source.name, "recommendations": len(recommendations["recommendations"]), "files": len(payload["latestFiles"]), "configuredTargets": len(rpp_data["configuredTargets"]), "allConfiguredTargets": len(rpp_data["allConfiguredTargets"]), "exclusionProducts": len(rpp_data["exclusionProducts"]), "owners": len(rpp_data["owners"]), "dryRun": args.dry_run}
+    summary = {"source": source.name, "recommendations": len(recommendations["recommendations"]), "files": len(payload["latestFiles"]), "performanceDate": payload["performanceDaily"]["date"] if payload["performanceDaily"] else None, "performanceRows": len(payload["performanceDaily"]["rows"]) if payload["performanceDaily"] else 0, "configuredTargets": len(rpp_data["configuredTargets"]), "allConfiguredTargets": len(rpp_data["allConfiguredTargets"]), "exclusionProducts": len(rpp_data["exclusionProducts"]), "owners": len(rpp_data["owners"]), "dryRun": args.dry_run}
     if args.dry_run:
         print(json.dumps(summary, ensure_ascii=False))
         return 0

@@ -29,12 +29,12 @@ export default function RppDashboardCharts({
   return <section className="rpp-dashboard-charts" aria-label="RPP実績グラフ">
     <article className="panel rpp-chart-card rpp-chart-wide">
       <div className="rpp-chart-heading">
-        <div><p className="eyebrow">PERFORMANCE</p><h2>広告費・売上推移</h2></div>
+        <div><p className="eyebrow">ALL RPP PERFORMANCE</p><h2>全RPP 広告費・売上推移</h2></div>
         <div className="rpp-chart-legend"><span className="is-spend">広告費</span><span className="is-sales">売上（720h）</span></div>
       </div>
       {rows.length ? <>
-        <div className="rpp-chart-summary"><b>{rows.length}日分</b><span>最新 広告費 {yen(latest?.spend ?? 0)}</span><span>売上 {yen(latest?.sales ?? 0)}</span></div>
-        <svg className="rpp-line-chart" viewBox="0 0 560 180" role="img" aria-label="日別の広告費と売上推移">
+        <div className="rpp-chart-summary"><b>全RPP実績・{rows.length}日分</b><span>最新 広告費 {yen(latest?.spend ?? 0)}</span><span>売上 {yen(latest?.sales ?? 0)}</span></div>
+        <svg className="rpp-line-chart" viewBox="0 0 560 180" role="img" aria-label="全RPPの日別広告費と売上推移">
           <g className="rpp-chart-grid"><line x1="22" y1="22" x2="538" y2="22"/><line x1="22" y1="90" x2="538" y2="90"/><line x1="22" y1="158" x2="538" y2="158"/></g>
           {spendPoints.map((points, index) => <polyline className="rpp-chart-line spend" points={points} key={`spend-${index}`}/>)}
           {salesPoints.map((points, index) => <polyline className="rpp-chart-line sales" points={points} key={`sales-${index}`}/>)}
@@ -53,7 +53,7 @@ export default function RppDashboardCharts({
     </article>
 
     <article className="panel rpp-chart-card">
-      <div className="rpp-chart-heading"><div><p className="eyebrow">EFFICIENCY</p><h2>ROAS推移（720h）</h2></div><strong className="rpp-chart-value">{latest?.roas == null ? "未取得" : `${Math.round(latest.roas)}%`}</strong></div>
+      <div className="rpp-chart-heading"><div><p className="eyebrow">ALL RPP EFFICIENCY</p><h2>全RPP ROAS推移（720h）</h2></div><strong className="rpp-chart-value">{latest?.roas == null ? "未取得" : `${Math.round(latest.roas)}%`}</strong></div>
       {roasPoints.length ? <svg className="rpp-line-chart rpp-roas-chart" viewBox="0 0 560 180" role="img" aria-label="日別ROAS推移（売上720h帰属）">
         <g className="rpp-chart-grid"><line x1="22" y1="22" x2="538" y2="22"/><line x1="22" y1="90" x2="538" y2="90"/><line x1="22" y1="158" x2="538" y2="158"/></g>
         {roasPoints.map((points, index) => <polyline className="rpp-chart-line roas" points={points} key={`roas-${index}`}/>)}
