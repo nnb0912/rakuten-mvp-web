@@ -5,6 +5,8 @@ import {
   normalizeRppDeliveryItemCode,
   RppDeliveryScheduleConflictError,
   readRppDeliverySchedules,
+  rppDeliveryStorageStatus,
+  rppRmsEffectiveStateObservation,
   summarizeRppDeliverySchedule,
   withRppDeliveryReservationRuntimeStatus,
   writeRppRecurringSchedule,
@@ -18,6 +20,7 @@ import { appendRppAuditEvent } from "@/lib/rppAuditLog";
 import { requireRppRole } from "@/lib/rppRouteAuth";
 import { readRppAlertTargets, readRppProductCpcItemCodes } from "@/lib/rppTargets";
 import { readRppNightPauseProducts } from "@/lib/rppNightPause";
+import { readLatestRppDashboardSnapshot } from "@/lib/rppDashboardSnapshots";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -89,18 +92,31 @@ export async function GET(request: Request) {
   const access = await requireRppRole("viewer");
   if (!access.ok) return access.response;
   const itemCode = normalizeRppDeliveryItemCode(new URL(request.url).searchParams.get("itemCode"));
-  const data = await readRppDeliverySchedules({ itemCode: itemCode || undefined, reservationLimitPerItem: 100 });
+  const [data, snapshot] = await Promise.all([
+    readRppDeliverySchedules({ itemCode: itemCode || undefined, reservationLimitPerItem: 100 }),
+    readLatestRppDashboardSnapshot(),
+  ]);
+  const storage = rppDeliveryStorageStatus(data.source);
+  if (process.env.NODE_ENV === "production" && !storage.durable) throw new Error("RPP delivery schedule storage is not PostgreSQL");
   const now = new Date();
   const reservations = data.reservations.map((row) => withRppDeliveryReservationRuntimeStatus(row, now));
   const itemCodes = new Set([...data.schedules.map((row) => row.itemCode), ...data.reservations.map((row) => row.itemCode)]);
-  const statuses = [...itemCodes].map((code) => summarizeRppDeliverySchedule(data.schedules.find((row) => row.itemCode === code), data.reservations.filter((row) => row.itemCode === code), now));
+  if (itemCode) itemCodes.add(itemCode);
+  const statuses = [...itemCodes].map((code) => summarizeRppDeliverySchedule(
+    data.schedules.find((row) => row.itemCode === code),
+    data.reservations.filter((row) => row.itemCode === code),
+    now,
+    rppRmsEffectiveStateObservation(code, snapshot?.rppData?.exclusionProducts, snapshot?.rppData?.exclusionObservation, now),
+    code,
+  ));
   const warnings = itemCode
     ? warningMessages(await assessReservations(itemCode, data.schedules.find((row) => row.itemCode === itemCode)?.recurring, reservations))
     : [];
-  if (!itemCode) return Response.json({ ok: true, ...data, reservations, statuses, warnings, historyLimitPerItem: 100 });
+  if (!itemCode) return Response.json({ ok: true, ...data, storage, reservations, statuses, warnings, historyLimitPerItem: 100 });
   return Response.json({
     ok: true,
     ...data,
+    storage,
     reservations,
     statuses,
     warnings,

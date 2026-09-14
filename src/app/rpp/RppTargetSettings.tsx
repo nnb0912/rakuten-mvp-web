@@ -1231,6 +1231,7 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
         </div>
         <div className="rpp-schedule-body">
           {scheduleStatus ? <div className="rpp-schedule-runtime-status" aria-live="polite">
+            <span>RMS実測 <b>{scheduleStatus.effectiveState === "UNKNOWN" ? "未確認" : `広告${scheduleStatus.effectiveState}`}</b></span>
             <span>時間帯判定 <b>{scheduleStatus.recurringActive ? "停止時間内" : "停止時間外"}</b></span>
             <span>実行中 <b>{scheduleStatus.running}件</b></span>
             <span>待ち <b>{scheduleStatus.backlog}件</b></span>

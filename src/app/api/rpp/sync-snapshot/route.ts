@@ -1,6 +1,6 @@
 import { timingSafeEqual } from "crypto";
 import { readLatestRppDashboardSnapshot, saveRppDashboardSnapshot } from "@/lib/rppDashboardSnapshots";
-import { claimRppDeliveryReservation, heartbeatRppDeliveryReservation, markRppDeliveryReservation, readPendingRppDeliveryReservations, readRppDeliverySchedules, releaseRppDeliveryReservationClaim } from "@/lib/rppDeliverySchedules";
+import { claimRppDeliveryReservation, heartbeatRppDeliveryReservation, markRppDeliveryReservation, readPendingRppDeliveryReservations, readRppDeliverySchedules, releaseRppDeliveryReservationClaim, rppDeliveryStorageStatus } from "@/lib/rppDeliverySchedules";
 import { readRppNightPauseProducts } from "@/lib/rppNightPause";
 import { readRppAlertTargets, readRppConfiguredTargets, readRppProductCpcItemCodes } from "@/lib/rppTargets";
 
@@ -30,6 +30,8 @@ export async function GET(request: Request) {
     }
     if (searchParams.get("resource") === "delivery-schedules") {
       const data = await readRppDeliverySchedules({ reservationLimitPerItem: 0 });
+      const storage = rppDeliveryStorageStatus(data.source);
+      if (process.env.NODE_ENV === "production" && !storage.durable) throw new Error("RPP delivery schedule storage is not PostgreSQL");
       const pendingReservations = await readPendingRppDeliveryReservations();
       const targetData = await readRppAlertTargets();
       const releaseConfiguredTargets = await readRppConfiguredTargets({ includeExcluded: true });
@@ -53,6 +55,7 @@ export async function GET(request: Request) {
       const normalReleaseAllowed = [...byItem.entries()].filter(([, count]) => count.total > 0 && count.saved === count.total).map(([itemCode]) => itemCode);
       return Response.json({
         ok: true,
+        storage,
         timeZone: "Asia/Tokyo",
         schedules: executableSchedules.map((row) => ({
           itemCode: row.itemCode,

@@ -20,6 +20,10 @@ class OperationalDataTest(unittest.TestCase):
             self._write_csv(root / 'rpp_item_settings.csv', ['商品管理番号', '商品名', '商品CPC', '除外登録済み商品'], [['r0406', 'ゴミ箱', '30', 'yes']])
             self._write_csv(root / 'rpp_keyword_settings.csv', ['商品管理番号', '商品名', '商品CPC', 'キーワード', 'キーワードCPC'], [['r0406', 'ゴミ箱', '30', 'ゴミ カラスよけ', '40']])
             self._write_csv(root / 'rpp_exclude_items.csv', ['商品管理番号'], [['r0406']])
+            (root / 'rpp_logs').mkdir()
+            (root / 'rpp_logs' / 'rpp_settings_refresh_20300101_000000.json').write_text(json.dumps({
+                'exclude': {'output': str(root / 'rpp_exclude_items.csv'), 'rows': 1, 'expected_count': 1}
+            }), encoding='utf-8')
             owner_path = root / 'owners.json'
             owner_path.write_text(json.dumps({'owners': {'r0406': '森下'}}, ensure_ascii=False), encoding='utf-8')
             old_project, old_owner = module.PROJECT, module.OWNER_MAP_PATH
@@ -31,6 +35,9 @@ class OperationalDataTest(unittest.TestCase):
             self.assertEqual(result['configuredTargets'], [])
             self.assertEqual([row['keyword'] for row in result['allConfiguredTargets']], ['ゴミ カラスよけ', '商品CPC'])
             self.assertTrue(result['exclusionProducts'][0]['excluded'])
+            self.assertEqual(result['exclusionObservation']['expectedCount'], 1)
+            self.assertEqual(result['exclusionObservation']['actualCount'], 1)
+            self.assertTrue(result['exclusionObservation']['complete'])
 
     def test_readback_requires_schema_v4_and_exact_all_target_ids(self):
         payload = {
@@ -39,6 +46,7 @@ class OperationalDataTest(unittest.TestCase):
                 'configuredTargets': [],
                 'allConfiguredTargets': [{'id': 'r0406__item'}, {'id': 'r0406__kw'}],
                 'exclusionProducts': [{'itemCode': 'r0406'}],
+                'exclusionObservation': {'observedAt': '2026-09-11T02:59:00Z', 'expectedCount': 1, 'actualCount': 1, 'complete': True},
                 'owners': ['森下'],
             },
         }
@@ -50,6 +58,10 @@ class OperationalDataTest(unittest.TestCase):
         changed['rppData']['allConfiguredTargets'][1]['id'] = 'different-id'
         with self.assertRaisesRegex(RuntimeError, 'allConfiguredTargets IDs'):
             module.validate_snapshot_readback(payload, changed, 200)
+        changed_observation = json.loads(json.dumps(snapshot))
+        changed_observation['rppData']['exclusionObservation']['actualCount'] = 0
+        with self.assertRaisesRegex(RuntimeError, 'exclusionObservation'):
+            module.validate_snapshot_readback(payload, changed_observation, 200)
 
     @staticmethod
     def _write_csv(path: Path, fieldnames: list[str], rows: list[list[str]]) -> None:

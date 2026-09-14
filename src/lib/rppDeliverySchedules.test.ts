@@ -15,6 +15,8 @@ const {
   markRppDeliveryReservation,
   readRppDeliverySchedules,
   releaseRppDeliveryReservationClaim,
+  rppDeliveryStorageStatus,
+  rppRmsEffectiveStateObservation,
   summarizeRppDeliverySchedule,
   withRppDeliveryReservationRuntimeStatus,
   writeRppRecurringSchedule,
@@ -111,11 +113,37 @@ test("同一商品・同一日時の予約は冪等で、反対動作との競�
   await assert.rejects(() => createRppDeliveryReservation("item-d", "ON", "2032-01-02T12:00", "Asia/Tokyo", now), /同時登録/);
 });
 
-test("実効状態・次回切替・待ち件数を要約する", async () => {
+test("RMS実測状態・次回切替・待ち件数を要約する", async () => {
   const data = await readRppDeliverySchedules({ itemCode: "item-a" });
-  const status = summarizeRppDeliverySchedule(data.schedules[0], data.reservations, new Date("2030-01-01T14:30:00.000Z"));
+  const now = new Date("2030-01-01T14:30:00.000Z");
+  const observation = rppRmsEffectiveStateObservation("item-a", [{ itemCode: "item-a", excluded: true }], { observedAt: "2030-01-01T14:00:00.000Z", expectedCount: 1, actualCount: 1, complete: true }, now);
+  const status = summarizeRppDeliverySchedule(data.schedules[0], data.reservations, now, observation);
   assert.equal(status.itemCode, "item-a");
   assert.equal(status.recurringActive, true);
   assert.equal(status.effectiveState, "OFF");
+  assert.equal(status.effectiveStateSource, "RMS_SNAPSHOT");
+  assert.equal(status.effectiveStateObservedAt, "2030-01-01T14:00:00.000Z");
   assert.equal(status.nextTransition?.action, "OFF");
+});
+
+test("RMS snapshot欠損・期限切れでは状態を推測せずUNKNOWNにする", () => {
+  const now = new Date("2030-01-01T14:30:00.000Z");
+  assert.equal(rppRmsEffectiveStateObservation("item-a", [{ itemCode: "item-a", excluded: false }], { observedAt: "2030-01-01T11:00:00.000Z", expectedCount: 1, actualCount: 1, complete: true }, now), null);
+  assert.equal(rppRmsEffectiveStateObservation("item-a", [{ itemCode: "item-a", excluded: false }], { observedAt: "2030-01-01T14:00:00.000Z", expectedCount: 2, actualCount: 1, complete: true }, now), null);
+  const status = summarizeRppDeliverySchedule(undefined, [], now, null);
+  assert.equal(status.effectiveState, "UNKNOWN");
+  assert.equal(status.effectiveStateSource, "UNAVAILABLE");
+  assert.equal(status.effectiveStateObservedAt, null);
+});
+
+test("履歴のない初回商品でも要求商品コードをstatusへ保持する", () => {
+  const status = summarizeRppDeliverySchedule(undefined, [], new Date("2030-01-01T00:00:00Z"),
+    { excluded: false, observedAt: "2030-01-01T00:00:00Z" }, "ITEM-NEW");
+  assert.equal(status.itemCode, "item-new");
+  assert.equal(status.effectiveState, "ON");
+});
+
+test("予約保存先のPostgreSQL耐久性を明示する", () => {
+  assert.deepEqual(rppDeliveryStorageStatus("db:rpp_product_delivery_schedules,rpp_product_delivery_reservations"), { source: "postgres", durable: true });
+  assert.deepEqual(rppDeliveryStorageStatus("/tmp/rpp_delivery_schedules.json"), { source: "fallback", durable: false });
 });

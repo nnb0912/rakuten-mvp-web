@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import copy
 import datetime as dt
+import fcntl
 import hashlib
 import json
 import math
@@ -37,6 +38,7 @@ WAL_PATH = PROJECT / "rpp_apply_logs" / "rpp_product_delivery_scheduler_wal.json
 AUDIT_PATH = PROJECT / "rpp_apply_logs" / "rpp_product_delivery_scheduler_audit.jsonl"
 CIRCUIT_PATH = PROJECT / "rpp_apply_logs" / "rpp_product_delivery_scheduler_circuit.json"
 ON_GUARD_ALERT_PATH = PROJECT / "rpp_apply_logs" / "rpp_product_delivery_scheduler_on_guard.json"
+LOCK_BUSY_ALERT_PATH = PROJECT / "rpp_apply_logs" / "rpp_product_delivery_scheduler_lock_busy.json"
 EXCLUDE_CSV = PROJECT / "rpp_exclude_items.csv"
 REFRESH_SCRIPT = Path(os.environ.get("RPP_SETTINGS_REFRESH_SCRIPT", str(PROJECT / "scripts_refresh_rpp_settings_csvs.py")))
 JST = ZoneInfo("Asia/Tokyo")
@@ -45,6 +47,7 @@ PRODUCTION_CONFIRMATION = "RPP_PRODUCT_DELIVERY_SCHEDULER"
 CIRCUIT_RESET_CONFIRMATION = "RPP_CIRCUIT_RESET"
 CIRCUIT_PROBE_CONFIRMATION = "RPP_CIRCUIT_PROBE"
 STATE_VERSION = 3
+AUDIT_MAX_BYTES = 10 * 1024 * 1024
 
 
 def max_actions_per_tick() -> int:
@@ -145,6 +148,12 @@ def normalize_schedule_payload(payload: object) -> Tuple[List[dict], List[dict],
     return schedules, reservations, release_allowed, orphaned
 
 
+def require_durable_schedule_storage(payload: object) -> None:
+    storage = payload.get("storage") if isinstance(payload, dict) else None
+    if not isinstance(storage, dict) or storage.get("source") != "postgres" or storage.get("durable") is not True:
+        raise RuntimeError("delivery-schedules response storage is not durable PostgreSQL")
+
+
 def fetch_json(url: str, method: str = "GET", body: Optional[dict] = None) -> dict:
     data = None if body is None else json.dumps(body, ensure_ascii=False).encode("utf-8")
     request = urllib.request.Request(url, data=data, method=method, headers={
@@ -167,7 +176,9 @@ def fetch_json(url: str, method: str = "GET", body: Optional[dict] = None) -> di
 
 def fetch_delivery_schedules(api_base: str = API_BASE) -> Tuple[List[dict], List[dict], Set[str], Set[str]]:
     query = urllib.parse.urlencode({"resource": "delivery-schedules"})
-    return normalize_schedule_payload(fetch_json("%s/api/rpp/sync-snapshot?%s" % (api_base.rstrip("/"), query)))
+    payload = fetch_json("%s/api/rpp/sync-snapshot?%s" % (api_base.rstrip("/"), query))
+    require_durable_schedule_storage(payload)
+    return normalize_schedule_payload(payload)
 
 
 def claim_reservation(reservation_id: str, api_base: str = API_BASE) -> dict:
@@ -273,6 +284,29 @@ def normalize_state(value: object) -> dict:
 
 def load_state(path: Path = STATE_PATH) -> dict:
     return normalize_state(json.loads(path.read_text(encoding="utf-8"))) if path.exists() else default_state()
+
+
+def prune_state_history(state: dict, reservations: Iterable[dict], at: dt.datetime, retention_days: int = 30) -> dict:
+    next_state = copy.deepcopy(state)
+    cutoff = at.astimezone(UTC) - dt.timedelta(days=retention_days)
+    pending_ids = {str(row.get("id") or "") for row in reservations}
+    retained_processed = {}
+    for reservation_id, row in next_state["processedReservations"].items():
+        if reservation_id in pending_ids:
+            retained_processed[reservation_id] = row
+            continue
+        try:
+            if parse_iso(row.get("processedAt")) >= cutoff:
+                retained_processed[reservation_id] = row
+        except (AttributeError, RuntimeError, ValueError):
+            retained_processed[reservation_id] = row
+    next_state["processedReservations"] = retained_processed
+    terminal = {"SUCCEEDED", "PREEXISTING", "MISSED", "SKIPPED"}
+    next_state["occurrenceQueue"] = [
+        row for row in next_state["occurrenceQueue"]
+        if row.get("status") not in terminal or parse_iso(row.get("dueAt")) >= cutoff
+    ]
+    return next_state
 
 
 def _fsync_parent(path: Path) -> None:
@@ -561,12 +595,26 @@ def settle_occurrence_queue(state: dict, current: Set[str], at: dt.datetime) -> 
     return next_state
 
 
-def append_audit(entry: dict, path: Path = AUDIT_PATH) -> None:
+def append_audit(entry: dict, path: Path = AUDIT_PATH, max_bytes: int = AUDIT_MAX_BYTES, keep: int = 7) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps(entry, ensure_ascii=False, separators=(",", ":")) + "\n")
-        handle.flush()
-        os.fsync(handle.fileno())
+    lock_path = path.with_name(path.name + ".lock")
+    with lock_path.open("a", encoding="utf-8") as lock_handle:
+        fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX)
+        try:
+            if path.exists() and path.stat().st_size >= max_bytes:
+                stamp = now_utc().strftime("%Y%m%dT%H%M%S")
+                rotated = path.with_name("%s.%s-%s.jsonl" % (path.stem, stamp, uuid.uuid4().hex[:8]))
+                os.replace(path, rotated)
+                _fsync_parent(path)
+                backups = sorted(path.parent.glob(path.stem + ".*-*.jsonl"), key=lambda item: item.stat().st_mtime, reverse=True)
+                for old in backups[max(1, keep):]:
+                    old.unlink()
+            with path.open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(entry, ensure_ascii=False, separators=(",", ":")) + "\n")
+                handle.flush()
+                os.fsync(handle.fileno())
+        finally:
+            fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
 
 
 def require_gate(execute: bool, confirmation: Optional[str], environ: Mapping[str, str]) -> None:
@@ -955,6 +1003,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--audit", type=Path, default=AUDIT_PATH)
     parser.add_argument("--circuit", type=Path, default=CIRCUIT_PATH)
     parser.add_argument("--on-guard-alert", type=Path, default=ON_GUARD_ALERT_PATH)
+    parser.add_argument("--lock-busy-alert", type=Path, default=LOCK_BUSY_ALERT_PATH)
     parser.add_argument("--exclude-csv", type=Path, default=EXCLUDE_CSV)
     parser.add_argument("--now", help="test-only ISO datetime override")
     parser.add_argument("--quiet", action="store_true")
@@ -996,6 +1045,49 @@ def emit_compact_cli_failure(args: argparse.Namespace, error_code: str, tick_id:
         summary["auditWriteFailed"] = True
     # --quiet suppresses routine/no-change ticks only. Safety failures are never hidden.
     print(json.dumps(summary, ensure_ascii=False, sort_keys=True))
+
+
+def lock_busy_notification_due(path: Path, at: Optional[dt.datetime] = None, interval_seconds: int = 600) -> bool:
+    observed_at = (at or now_utc()).astimezone(UTC)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lock_path = path.with_name(path.name + ".lock")
+    with lock_path.open("a", encoding="utf-8") as lock_handle:
+        fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX)
+        try:
+            if path.exists():
+                try:
+                    previous = json.loads(path.read_text(encoding="utf-8"))
+                    last_notified = parse_iso(previous.get("lastNotifiedAt"))
+                    if 0 <= (observed_at - last_notified).total_seconds() < interval_seconds:
+                        return False
+                except (OSError, ValueError, RuntimeError, json.JSONDecodeError):
+                    pass
+            atomic_json_write({"lastNotifiedAt": iso_utc(observed_at)}, path)
+            return True
+        finally:
+            fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
+
+
+def clear_lock_busy_alert(path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    lock_path = path.with_name(path.name + ".lock")
+    with lock_path.open("a", encoding="utf-8") as lock_handle:
+        fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX)
+        try:
+            if path.exists():
+                path.unlink()
+                _fsync_parent(path)
+        finally:
+            fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
+
+
+def handle_lock_busy(args: argparse.Namespace) -> int:
+    if lock_busy_notification_due(args.lock_busy_alert):
+        emit_compact_cli_failure(args, "LOCK_BUSY", args.tick_id)
+        return 1
+    append_audit({"timestamp": iso_utc(now_utc()), "event": "scheduler-lock-busy-suppressed",
+                  "tickId": args.tick_id, "errorCode": "LOCK_BUSY"}, args.audit)
+    return 0
 
 
 def probe_rms_adapter_dom(item_code: str, currently_excluded: bool, directory: Path) -> dict:
@@ -1116,6 +1208,11 @@ def run(args: argparse.Namespace) -> dict:
                        "queueDepth": 1, "blocked": True, "estimatedTicksRemaining": None,
                        "estimatedCompletionMinutes": None, "guardBlockedItems": [], "warnings": [warning]}
             return summary
+    if args.execute and not args.wal.exists():
+        pruned_state = prune_state_history(state, reservations, at)
+        if pruned_state != state:
+            state = pruned_state
+            save_state(state, args.state)
     state_before_queue = copy.deepcopy(state)
     queue_schedules = list(schedules) + [
         {"itemCode": legacy.normalize_code(code), "enabled": True, "startTime": "01:30", "endTime": "06:00"}
@@ -1193,8 +1290,8 @@ def main(argv: Optional[List[str]] = None) -> int:
             raise RuntimeError("WAL exists; dependency probe is prohibited until WAL recovery completes")
         probe_lock = legacy.acquire_global_lock()
         if probe_lock is None:
-            emit_compact_cli_failure(args, "LOCK_BUSY", args.tick_id)
-            return 1
+            return handle_lock_busy(args)
+        clear_lock_busy_alert(args.lock_busy_alert)
         try:
             result = probe_external_dependencies(args)
             reset_circuit(args.circuit)
@@ -1210,8 +1307,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     if args.execute:
         lock_fd = legacy.acquire_global_lock()
         if lock_fd is None:
-            emit_compact_cli_failure(args, "LOCK_BUSY", args.tick_id)
-            return 1
+            return handle_lock_busy(args)
+        clear_lock_busy_alert(args.lock_busy_alert)
     try:
         if args.execute and load_circuit(args.circuit).get("open") is True:
             if args.wal.exists():

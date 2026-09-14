@@ -87,6 +87,27 @@ def _target_id(item_code: str, keyword: str) -> str:
     return "__".join(urllib.parse.quote(part, safe=safe) for part in (item_code.lower(), keyword))
 
 
+def exclusion_observation() -> dict | None:
+    output = PROJECT / "rpp_exclude_items.csv"
+    if not output.is_file():
+        return None
+    for receipt in sorted((PROJECT / "rpp_logs").glob("rpp_settings_refresh_*.json"), reverse=True):
+        try:
+            payload = json.loads(receipt.read_text(encoding="utf-8"))
+            exclude = payload.get("exclude") if isinstance(payload, dict) else None
+            expected = exclude.get("expected_count") if isinstance(exclude, dict) else None
+            actual = exclude.get("rows") if isinstance(exclude, dict) else None
+            receipt_output = Path(str(exclude.get("output") or "")).resolve() if isinstance(exclude, dict) else None
+            if receipt_output != output.resolve() or not isinstance(expected, int) or not isinstance(actual, int):
+                continue
+            observed_at = dt.datetime.fromtimestamp(output.stat().st_mtime, dt.timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+            return {"observedAt": observed_at, "expectedCount": expected, "actualCount": actual,
+                    "complete": expected == actual and receipt.stat().st_mtime >= output.stat().st_mtime}
+        except (OSError, ValueError, json.JSONDecodeError):
+            continue
+    return None
+
+
 def operational_data() -> dict:
     raw_owner_map = json.loads(OWNER_MAP_PATH.read_text(encoding="utf-8"))
     owner_map = {str(code).strip().lower(): str(owner).strip() for code, owner in (raw_owner_map.get("owners") or raw_owner_map).items()}
@@ -133,7 +154,11 @@ def operational_data() -> dict:
     all_configured.sort(key=lambda row: (row["itemCode"], row["keyword"]))
     products = sorted(product_map.values(), key=lambda row: row["itemCode"])
     owners = sorted({owner for owner in owner_map.values() if owner and owner != "なし"})
-    return {"configuredTargets": configured, "allConfiguredTargets": all_configured, "exclusionProducts": products, "owners": owners}
+    result = {"configuredTargets": configured, "allConfiguredTargets": all_configured, "exclusionProducts": products, "owners": owners}
+    observation = exclusion_observation()
+    if observation is not None:
+        result["exclusionObservation"] = observation
+    return result
 
 
 def _number(value: object) -> float:
@@ -242,6 +267,8 @@ def validate_snapshot_readback(payload: dict, snapshot: dict, read_status: int) 
     actual_ids = {str(row.get("id") or "") for row in actual_rpp_data["allConfiguredTargets"]}
     if actual_ids != expected_ids:
         raise RuntimeError("snapshot rppData readback mismatch: allConfiguredTargets IDs")
+    if actual_rpp_data.get("exclusionObservation") != expected_rpp_data.get("exclusionObservation"):
+        raise RuntimeError("snapshot rppData readback mismatch: exclusionObservation")
 
 
 def main() -> int:
