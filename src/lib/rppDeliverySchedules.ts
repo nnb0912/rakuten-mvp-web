@@ -47,11 +47,18 @@ export type RppDeliverySchedulesData = {
 export type RppDeliveryScheduleActor = { email: string; name: string };
 export type RppDeliveryScheduleStatus = {
   itemCode: string;
-  effectiveState: "ON" | "OFF";
+  effectiveState: "ON" | "OFF" | "UNKNOWN";
+  effectiveStateSource: "RMS_SNAPSHOT" | "UNAVAILABLE";
+  effectiveStateObservedAt: string | null;
   recurringActive: boolean;
   nextTransition: { action: RppDeliveryReservationAction; at: string; source: "recurring" | "reservation" } | null;
   backlog: number;
   running: number;
+};
+
+export type RppDeliveryStorageStatus = {
+  source: "postgres" | "fallback";
+  durable: boolean;
 };
 
 export class RppDeliveryScheduleConflictError extends Error {
@@ -152,7 +159,13 @@ function jstTransitionIso(now: Date, time: string, dayOffset: number) {
   return new Date(base.getTime() + dayOffset * 86_400_000 + hour * 3_600_000 + minute * 60_000).toISOString();
 }
 
-export function summarizeRppDeliverySchedule(schedule: RppProductDeliverySchedule | undefined, reservations: RppDeliveryReservation[], now = new Date()): RppDeliveryScheduleStatus {
+export function summarizeRppDeliverySchedule(
+  schedule: RppProductDeliverySchedule | undefined,
+  reservations: RppDeliveryReservation[],
+  now = new Date(),
+  rmsObservation: { excluded: boolean; observedAt: string } | null = null,
+  itemCodeInput?: string,
+): RppDeliveryScheduleStatus {
   const parts = jstParts(now);
   const currentTime = `${parts.hour}:${parts.minute}`;
   const recurring = schedule?.recurring;
@@ -170,13 +183,37 @@ export function summarizeRppDeliverySchedule(schedule: RppProductDeliverySchedul
     if (reservation.status === "PENDING" && Date.parse(reservation.executeAt) > now.getTime()) transitions.push({ action: reservation.action, at: reservation.executeAt, source: "reservation" });
   }
   return {
-    itemCode: schedule?.itemCode ?? reservations[0]?.itemCode ?? "",
-    effectiveState: recurringActive ? "OFF" : "ON",
+    itemCode: normalizeRppDeliveryItemCode(itemCodeInput ?? schedule?.itemCode ?? reservations[0]?.itemCode ?? ""),
+    effectiveState: rmsObservation ? (rmsObservation.excluded ? "OFF" : "ON") : "UNKNOWN",
+    effectiveStateSource: rmsObservation ? "RMS_SNAPSHOT" : "UNAVAILABLE",
+    effectiveStateObservedAt: rmsObservation?.observedAt ?? null,
     recurringActive,
     nextTransition: transitions.sort((a, b) => a.at.localeCompare(b.at))[0] ?? null,
     backlog: reservations.filter((row) => row.status === "PENDING" && !isRppDeliveryReservationRunning(row, now) && Date.parse(row.executeAt) <= now.getTime()).length,
     running: reservations.filter((row) => isRppDeliveryReservationRunning(row, now)).length,
   };
+}
+
+export function rppDeliveryStorageStatus(source: string): RppDeliveryStorageStatus {
+  const postgres = source.startsWith("db:");
+  return { source: postgres ? "postgres" : "fallback", durable: postgres };
+}
+
+export function rppRmsEffectiveStateObservation(
+  itemCodeInput: string,
+  exclusionProducts: { itemCode: string; excluded: boolean }[] | undefined,
+  observation: { observedAt: string; expectedCount: number; actualCount: number; complete: boolean } | undefined,
+  now = new Date(),
+  maxAgeMs = 2 * 60 * 60 * 1000,
+) {
+  if (!observation?.complete || observation.expectedCount !== observation.actualCount) return null;
+  const observedAt = String(observation.observedAt ?? "");
+  const observedTime = Date.parse(observedAt);
+  const age = now.getTime() - observedTime;
+  if (!Array.isArray(exclusionProducts) || !Number.isFinite(observedTime) || age < 0 || age > maxAgeMs) return null;
+  const itemCode = normalizeRppDeliveryItemCode(itemCodeInput);
+  const product = exclusionProducts.find((row) => normalizeRppDeliveryItemCode(row.itemCode) === itemCode);
+  return product ? { excluded: product.excluded === true, observedAt: new Date(observedTime).toISOString() } : null;
 }
 
 function normalizeReservation(value: Partial<RppDeliveryReservation>): RppDeliveryReservation | null {

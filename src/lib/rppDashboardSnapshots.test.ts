@@ -66,10 +66,21 @@ test("除外中を含む全設定行をON復帰判定用にRender保存する", 
         { id: "r0406__kw", itemCode: "r0406", itemName: "ゴミ箱", keyword: "ゴミ カラスよけ", itemCpc: 30, keywordCpc: 40, source: "キーワードCPC", owner: "森下" },
       ],
       exclusionProducts: [{ itemCode: "r0406", itemName: "ゴミ箱", itemCpc: 30, excluded: true, owner: "森下" }],
+      exclusionObservation: { observedAt: "2026-09-11T02:59:00Z", expectedCount: 767, actualCount: 767, complete: true },
       owners: ["森下"],
     },
   });
   assert.equal(snapshot.schemaVersion, 4);
   assert.equal(snapshot.rppData?.configuredTargets.length, 0);
   assert.deepEqual((snapshot.rppData?.allConfiguredTargets ?? []).map((row) => row.id), ["r0406__item", "r0406__kw"]);
+  assert.deepEqual(snapshot.rppData?.exclusionObservation, { observedAt: "2026-09-11T02:59:00.000Z", expectedCount: 767, actualCount: 767, complete: true });
+});
+
+test("RMS除外観測は表示件数と収集件数が不一致ならcompleteにならない", () => {
+  const snapshot = normalizeRppDashboardSnapshot({
+    syncedAt: "2026-09-11T03:00:00Z", recommendations: { summary: {}, recommendations: [] }, latestFiles: [],
+    rppData: { configuredTargets: [], exclusionProducts: [], owners: [],
+      exclusionObservation: { observedAt: "2026-09-11T02:59:00Z", expectedCount: 10, actualCount: 9, complete: true } },
+  });
+  assert.equal(snapshot.rppData?.exclusionObservation?.complete, false);
 });

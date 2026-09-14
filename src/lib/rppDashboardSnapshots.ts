@@ -6,7 +6,8 @@ export type RppPerformanceDailyRow = { itemCode: string; ctr: number | null; cli
 export type RppPerformanceDaily = { source: string; sourceMtime: string; date: string; attribution: { sales12h: true; sales720h: true }; rows: RppPerformanceDailyRow[] };
 export type RppSnapshotConfiguredTarget = { id: string; itemCode: string; itemName: string; keyword: string; itemCpc: number | null; keywordCpc: number | null; source: "商品CPC" | "キーワードCPC"; owner?: string; rppPosition?: string; rppPositionKeyword?: string; rppPositions?: { keyword: string; position: string }[] };
 export type RppSnapshotExclusionProduct = { itemCode: string; itemName: string; itemCpc: number | null; excluded: boolean; owner?: string };
-export type RppSnapshotOperationalData = { configuredTargets: RppSnapshotConfiguredTarget[]; allConfiguredTargets?: RppSnapshotConfiguredTarget[]; exclusionProducts: RppSnapshotExclusionProduct[]; owners: string[] };
+export type RppExclusionObservation = { observedAt: string; expectedCount: number; actualCount: number; complete: boolean };
+export type RppSnapshotOperationalData = { configuredTargets: RppSnapshotConfiguredTarget[]; allConfiguredTargets?: RppSnapshotConfiguredTarget[]; exclusionProducts: RppSnapshotExclusionProduct[]; exclusionObservation?: RppExclusionObservation; owners: string[] };
 export type RppDashboardSnapshot = {
   schemaVersion: 1 | 2 | 3 | 4;
   syncedAt: string;
@@ -80,7 +81,16 @@ function normalizeOperationalData(value: unknown): RppSnapshotOperationalData | 
     return { itemCode, itemName: String(raw.itemName ?? "").trim(), itemCpc: nullablePositiveNumber(raw.itemCpc), excluded: raw.excluded === true, owner: String(raw.owner ?? "").trim() || "担当未設定" };
   });
   const owners = [...new Set(input.owners.map((owner) => String(owner ?? "").trim()).filter((owner) => owner && owner !== "なし"))];
-  return { configuredTargets, allConfiguredTargets, exclusionProducts, owners };
+  let exclusionObservation: RppExclusionObservation | undefined;
+  if (input.exclusionObservation != null) {
+    const raw = input.exclusionObservation;
+    const observedAt = typeof raw.observedAt === "string" ? new Date(raw.observedAt) : new Date(NaN);
+    const expectedCount = Number(raw.expectedCount);
+    const actualCount = Number(raw.actualCount);
+    if (Number.isNaN(observedAt.getTime()) || !Number.isInteger(expectedCount) || expectedCount < 0 || !Number.isInteger(actualCount) || actualCount < 0) throw new Error("rppData exclusion observation is invalid");
+    exclusionObservation = { observedAt: observedAt.toISOString(), expectedCount, actualCount, complete: raw.complete === true && expectedCount === actualCount };
+  }
+  return { configuredTargets, allConfiguredTargets, exclusionProducts, exclusionObservation, owners };
 }
 
 function normalizeRecommendationRows(value: unknown) {

@@ -2,6 +2,8 @@ import datetime as dt
 import contextlib
 import io
 import json
+import subprocess
+import sys
 import tempfile
 import unittest
 from argparse import Namespace
@@ -95,6 +97,13 @@ class ProductDeliverySchedulerTest(unittest.TestCase):
         payload["schedules"].append(dict(payload["schedules"][0]))
         with self.assertRaises(RuntimeError):
             scheduler.normalize_schedule_payload(payload)
+
+    def test_delivery_schedule_api_requires_durable_postgres_storage(self):
+        scheduler.require_durable_schedule_storage({"storage": {"source": "postgres", "durable": True}})
+        for payload in ({}, {"storage": {"source": "fallback", "durable": False}},
+                        {"storage": {"source": "postgres", "durable": False}}):
+            with self.assertRaisesRegex(RuntimeError, "durable PostgreSQL"):
+                scheduler.require_durable_schedule_storage(payload)
 
     def test_exclusion_snapshot_requires_exact_count_and_accepts_zero(self):
         refresh.validate_exclude_collection([], {"expected_count": 0})
@@ -250,21 +259,82 @@ class ProductDeliverySchedulerTest(unittest.TestCase):
             self.assertEqual(payload["errorCode"], "VALUEERROR")
             self.assertNotIn("unknown-secret", output.getvalue())
 
-    def test_execute_lock_contention_emits_compact_blocked_json(self):
+    def test_execute_lock_contention_emits_once_then_suppresses_for_ten_minutes(self):
         with tempfile.TemporaryDirectory() as tmp, \
              patch.object(scheduler.legacy, "load_env_file"), \
              patch.object(scheduler, "require_gate"), \
              patch.object(scheduler.legacy, "acquire_global_lock", return_value=None):
             output = io.StringIO()
             audit = Path(tmp) / "audit.jsonl"
+            lock_alert = Path(tmp) / "lock-busy.json"
+            argv = ["--execute", "--quiet", "--audit", str(audit),
+                    "--circuit", str(Path(tmp) / "circuit.json"),
+                    "--lock-busy-alert", str(lock_alert)]
             with contextlib.redirect_stdout(output):
-                result = scheduler.main(["--execute", "--quiet", "--audit", str(audit),
-                                         "--circuit", str(Path(tmp) / "circuit.json")])
+                result = scheduler.main(argv)
             payload = json.loads(output.getvalue())
             self.assertEqual(result, 1)
             self.assertEqual(payload["errorCode"], "LOCK_BUSY")
             self.assertTrue(payload["blocked"])
             self.assertEqual(payload["audit"]["tickId"], payload["tickId"])
+
+            repeated_output = io.StringIO()
+            with contextlib.redirect_stdout(repeated_output):
+                repeated_result = scheduler.main(argv)
+            self.assertEqual(repeated_result, 0)
+            self.assertEqual(repeated_output.getvalue(), "")
+            records = [json.loads(line) for line in audit.read_text(encoding="utf-8").splitlines()]
+            self.assertEqual(records[-1]["event"], "scheduler-lock-busy-suppressed")
+
+    def test_lock_busy_alert_is_due_again_after_interval_and_cleared_after_success(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "lock-busy.json"
+            first = dt.datetime(2030, 1, 1, 0, 0, tzinfo=scheduler.UTC)
+            self.assertTrue(scheduler.lock_busy_notification_due(path, first))
+            self.assertFalse(scheduler.lock_busy_notification_due(path, first + dt.timedelta(minutes=9)))
+            self.assertTrue(scheduler.lock_busy_notification_due(path, first + dt.timedelta(minutes=10)))
+            scheduler.clear_lock_busy_alert(path)
+            self.assertFalse(path.exists())
+
+    def test_lock_busy_alert_allows_only_one_concurrent_process_to_notify(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "lock-busy.json"
+            module_dir = Path(__file__).resolve().parent
+            code = (
+                "import sys; from pathlib import Path; "
+                f"sys.path.insert(0, {str(module_dir)!r}); "
+                "import rpp_product_delivery_scheduler as s; "
+                f"print(int(s.lock_busy_notification_due(Path({str(path)!r}), s.parse_iso('2030-01-01T00:00:00Z'))))"
+            )
+            processes = [subprocess.Popen([sys.executable, "-c", code], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True) for _ in range(16)]
+            results = [process.communicate(timeout=30) + (process.returncode,) for process in processes]
+            self.assertTrue(all(returncode == 0 and stderr == "" for stdout, stderr, returncode in results))
+            self.assertEqual(sum(int(stdout.strip()) for stdout, stderr, returncode in results), 1)
+
+    def test_audit_rotates_at_size_limit_and_keeps_bounded_generations(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "audit.jsonl"
+            for index in range(6):
+                scheduler.append_audit({"index": index, "payload": "x" * 80}, path, max_bytes=1, keep=3)
+            backups = list(path.parent.glob("audit.*-*.jsonl"))
+            self.assertEqual(len(backups), 3)
+            self.assertEqual(json.loads(path.read_text(encoding="utf-8"))["index"], 5)
+
+    def test_state_history_prunes_only_old_terminal_rows_not_pending_api_ids(self):
+        at = dt.datetime(2030, 2, 1, tzinfo=scheduler.UTC)
+        state = scheduler.default_state()
+        state["processedReservations"] = {
+            "old-acked": {"status": "SUCCEEDED", "processedAt": "2029-01-01T00:00:00Z"},
+            "old-pending-api": {"status": "SUCCEEDED", "processedAt": "2029-01-01T00:00:00Z"},
+            "recent": {"status": "SUCCEEDED", "processedAt": "2030-01-15T00:00:00Z"},
+        }
+        state["occurrenceQueue"] = [
+            {"occurrenceId": "old", "itemCode": "r1", "action": "OFF", "dueAt": "2029-01-01T00:00:00Z", "status": "SUCCEEDED"},
+            {"occurrenceId": "pending", "itemCode": "r1", "action": "ON", "dueAt": "2029-01-01T01:00:00Z", "status": "PENDING"},
+        ]
+        pruned = scheduler.prune_state_history(state, [{"id": "old-pending-api"}], at)
+        self.assertEqual(set(pruned["processedReservations"]), {"old-pending-api", "recent"})
+        self.assertEqual([row["occurrenceId"] for row in pruned["occurrenceQueue"]], ["pending"])
 
     def test_on_is_blocked_until_all_rpp_targets_are_saved(self):
         at = dt.datetime(2026, 9, 10, 1, tzinfo=UTC)
@@ -673,12 +743,16 @@ class ProductDeliverySchedulerTest(unittest.TestCase):
 
     def test_execute_acquires_lock_before_run_reads_state_or_api(self):
         events = []
-        with patch.dict("os.environ", {"RPP_ENABLE_PRODUCT_DELIVERY_SCHEDULER": "1"}), \
+        with tempfile.TemporaryDirectory() as tmp, \
+             patch.dict("os.environ", {"RPP_ENABLE_PRODUCT_DELIVERY_SCHEDULER": "1"}), \
              patch.object(scheduler.legacy, "load_env_file"), \
              patch.object(scheduler.legacy, "acquire_global_lock", side_effect=lambda: events.append("lock") or 7), \
              patch.object(scheduler.legacy, "release_global_lock"), \
              patch.object(scheduler, "run", side_effect=lambda args: events.append("run") or {"ok": True, "changes": [], "failures": [], "completedReservations": []}):
-            code = scheduler.main(["--execute", "--confirm=" + scheduler.PRODUCTION_CONFIRMATION, "--quiet"])
+            root = Path(tmp)
+            code = scheduler.main(["--execute", "--confirm=" + scheduler.PRODUCTION_CONFIRMATION, "--quiet",
+                                   "--circuit", str(root / "circuit.json"),
+                                   "--lock-busy-alert", str(root / "lock-busy.json")])
         self.assertEqual(code, 0)
         self.assertEqual(events, ["lock", "run"])
 
