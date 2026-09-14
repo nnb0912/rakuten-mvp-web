@@ -18,7 +18,7 @@ ARTIFACTS = {
     "scheduler": (REPO / "scripts" / "rpp-product-delivery" / "rpp_product_delivery_scheduler.py", PROJECT / "rpp_product_delivery_scheduler.py"),
     "schedulerTests": (REPO / "scripts" / "rpp-product-delivery" / "test_rpp_product_delivery_scheduler.py", PROJECT / "test_rpp_product_delivery_scheduler.py"),
     "snapshotSender": (REPO / "scripts" / "rpp-product-delivery" / "rpp_push_dashboard_snapshot.py", Path("/Users/nob/.hermes/scripts/rpp_push_dashboard_snapshot.py")),
-    "snapshotSenderTests": (REPO / "scripts" / "rpp-product-delivery" / "test_rpp_push_dashboard_snapshot.py", PROJECT / "test_rpp_push_dashboard_snapshot.py"),
+    "snapshotSenderTests": (REPO / "scripts" / "rpp-product-delivery" / "test_rpp_push_dashboard_snapshot.py", Path("/Users/nob/.hermes/scripts/test_rpp_push_dashboard_snapshot.py")),
 }
 BACKUP_DIR = PROJECT / "rpp_apply_logs" / "worker_backups"
 MANIFEST = PROJECT / "rpp_apply_logs" / "rpp_product_delivery_scheduler_deploy.json"
