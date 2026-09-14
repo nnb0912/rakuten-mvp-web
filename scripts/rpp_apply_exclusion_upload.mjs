@@ -208,8 +208,15 @@ async function loginAndUpload(csvPath, rows, finalSubmit, expectedBefore, walPat
     await page.goto('https://ad.rms.rakuten.co.jp/rpp/exclude', { waitUntil: 'domcontentloaded', timeout: 60000 });
     await page.waitForTimeout(3000);
     const body = await page.evaluate(() => document.body.innerText.slice(0, 2000));
+    if (/captcha|画像認証|本人確認|追加認証/i.test(body)) {
+      const error = new Error(`RMS CAPTCHA or identity challenge detected; url=${page.url()}`);
+      error.stage = 'login';
+      throw error;
+    }
     if (body.includes('システムエラー') || (body.includes('ログイン') && !body.includes('除外'))) {
-      throw new Error(`RMS login not completed; exclusion upload aborted; url=${page.url()}; title=${await page.title()}; body=${body.replace(/[\r\n]+/g, ' ').slice(0, 600)}`);
+      const error = new Error(`RMS login not completed; exclusion upload aborted; url=${page.url()}; title=${await page.title()}; body=${body.replace(/[\r\n]+/g, ' ').slice(0, 600)}`);
+      error.stage = 'login';
+      throw error;
     }
 
     const beforeReadback = [];
@@ -244,11 +251,14 @@ async function loginAndUpload(csvPath, rows, finalSubmit, expectedBefore, walPat
         .filter(Boolean)
         .slice(0, 35),
     }));
-    if (!finalSubmit) return { fileSelected: true, finalSubmitSkipped: true, openedBulkUpload, ...info };
+    const primaryUpload = page.locator('#btnUploadFile').first();
+    const finalUploadButtonPresent = (await primaryUpload.count()) > 0
+      || info.buttons.some((label) => ['アップロード', '登録', '反映', '実行'].some((word) => label.includes(word)));
+    if (!finalUploadButtonPresent) throw new Error('RMS final upload button not found');
+    if (!finalSubmit) return { fileSelected: true, finalSubmitSkipped: true, finalUploadButtonPresent, openedBulkUpload, beforeReadback, ...info };
 
     let uploadClicked = false;
     updateWalPhase(walPath, operationId, 'SUBMITTING');
-    const primaryUpload = page.locator('#btnUploadFile').first();
     if (await primaryUpload.count()) {
       await primaryUpload.click({ timeout: 10000 });
       uploadClicked = true;
@@ -317,6 +327,22 @@ async function main() {
   const applied = await loginAndUpload(csvPath, rows, finalSubmit, expectedBefore, walPath, operationId);
   emit({ ...base, productionChange: finalSubmit, applied });
 }
+
+export function classifyAdapterError(error) {
+  const message = String(error?.message || error || '');
+  const normalized = message.toLowerCase();
+  if (/captcha|challenge|mfa|本人確認|画像認証/.test(normalized)) return 'RMS_CHALLENGE';
+  if (/login not completed|credentials missing|401|403|ログイン|認証/.test(normalized)) return 'RMS_AUTH_REQUIRED';
+  if (/input not found|button not found|column not found|header invalid|selector/.test(normalized)) return 'RMS_DOM_DRIFT';
+  if (/precondition changed/.test(normalized)) return 'RMS_PRECONDITION_CHANGED';
+  if (/readback|verified wal stage/.test(normalized)) return 'RMS_READBACK_UNCERTAIN';
+  if (/timeout|timed out|econn|enotfound|network|navigation/.test(normalized)) return 'RMS_NETWORK';
+  return 'RMS_ADAPTER_ERROR';
+}
+
 if (import.meta.url === pathToFileURL(process.argv[1]).href) {
-  main().catch((e) => { console.error(`❌ エラー: ${e?.message || e}`); process.exit(1); });
+  main().catch((e) => {
+    console.error(JSON.stringify({ ok: false, errorCode: classifyAdapterError(e), stage: e?.stage || 'adapter', message: String(e?.message || e).slice(-1500) }));
+    process.exit(1);
+  });
 }

@@ -19,6 +19,7 @@ import type { RppEditLock } from "@/lib/rppCollaboration";
 import { parseRppTargetDraft, rppTargetDraftKey } from "@/lib/rppTargetDraft";
 import { formatRppClicks, formatRppYen } from "@/lib/rppMetricDisplay";
 import type { RppDeliveryReservation, RppDeliveryScheduleStatus, RppRecurringSchedule } from "@/lib/rppDeliverySchedules";
+import { assessRppDeliveryReservation, rppDeliveryScheduleWarnings } from "@/lib/rppDeliveryScheduleWarnings";
 
 import { RppInfoTip } from "./RppInfoTip";
 type Props = {
@@ -244,6 +245,9 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
   const [scheduleUpdatedAt, setScheduleUpdatedAt] = useState<string | null>(null);
   const [scheduleStatus, setScheduleStatus] = useState<RppDeliveryScheduleStatus | null>(null);
   const [scheduleReservations, setScheduleReservations] = useState<RppDeliveryReservation[]>([]);
+  const [scheduleWarnings, setScheduleWarnings] = useState<string[]>([]);
+  const [scheduleBlockedMessages, setScheduleBlockedMessages] = useState<string[]>([]);
+  const [scheduleAcknowledgedWarningKeys, setScheduleAcknowledgedWarningKeys] = useState<string[]>([]);
   const [scheduleReservationAction, setScheduleReservationAction] = useState<"ON" | "OFF">("OFF");
   const [scheduleReservationAt, setScheduleReservationAt] = useState("");
   const [scheduleBusy, setScheduleBusy] = useState(false);
@@ -264,6 +268,7 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
         const data = await response.json();
         setScheduleReservations(Array.isArray(data.reservations) ? data.reservations : []);
         setScheduleStatus(Array.isArray(data.statuses) ? data.statuses.find((row: RppDeliveryScheduleStatus) => row.itemCode === schedulePanelItemCode) ?? null : null);
+        setScheduleWarnings(Array.isArray(data.warnings) ? data.warnings : []);
       } catch {
         // Keep the editable form available; the next poll retries status only.
       }
@@ -271,6 +276,30 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
     const timer = window.setInterval(refreshRuntimeStatus, 15_000);
     return () => window.clearInterval(timer);
   }, [schedulePanelItemCode]);
+  const pendingReservationAssessment = useMemo(() => {
+    if (!scheduleReservationAt) return { blocked: null, warnings: [] };
+    try {
+      return assessRppDeliveryReservation(scheduleRecurring, {
+        action: scheduleReservationAction,
+        executeAt: new Date(`${scheduleReservationAt}:00+09:00`).toISOString(),
+      });
+    } catch {
+      return { blocked: null, warnings: [] };
+    }
+  }, [scheduleRecurring, scheduleReservationAction, scheduleReservationAt]);
+  const pendingReservationWarnings = pendingReservationAssessment.warnings.map((row) => row.message);
+  const pendingScheduleWarnings = useMemo(
+    () => rppDeliveryScheduleWarnings(scheduleRecurring, scheduleReservations),
+    [scheduleRecurring, scheduleReservations],
+  );
+  const visibleScheduleWarnings = useMemo(
+    () => [...new Set([...scheduleWarnings, ...pendingScheduleWarnings, ...pendingReservationWarnings])],
+    [scheduleWarnings, pendingScheduleWarnings, pendingReservationWarnings],
+  );
+  const visibleScheduleBlocks = useMemo(
+    () => [...new Set([...scheduleBlockedMessages, ...(pendingReservationAssessment.blocked ? [pendingReservationAssessment.blocked.message] : [])])],
+    [scheduleBlockedMessages, pendingReservationAssessment.blocked],
+  );
   const selectedModeBoundFields = modeBoundFields(form.optimizationMode);
   const selectedRoutineMode = ROUTINE_OPTIMIZATION_MODES.find((option) => option.value === form.optimizationMode);
   const formUsesAutomaticCpc = isAutomaticRppOptimizationMode(form.optimizationMode);
@@ -639,6 +668,8 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
       setScheduleUpdatedAt(schedule?.updatedAt ?? null);
       setScheduleStatus(Array.isArray(data.statuses) ? data.statuses.find((row: RppDeliveryScheduleStatus) => row.itemCode === itemCode) ?? null : null);
       setScheduleReservations(Array.isArray(data.reservations) ? data.reservations : []);
+      setScheduleWarnings(Array.isArray(data.warnings) ? data.warnings : []);
+      setScheduleAcknowledgedWarningKeys([]); setScheduleBlockedMessages([]);
       setScheduleReservationAction("OFF");
       setScheduleReservationAt("");
       setSchedulePanelItemCode(itemCode);
@@ -658,12 +689,25 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
       const response = await fetch("/api/rpp/delivery-schedules", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ itemCode: schedulePanelItemCode, ...scheduleRecurring, expectedUpdatedAt: scheduleUpdatedAt }),
+        body: JSON.stringify({ itemCode: schedulePanelItemCode, ...scheduleRecurring, expectedUpdatedAt: scheduleUpdatedAt, acknowledgedWarningKeys: scheduleAcknowledgedWarningKeys }),
       });
       const data = await response.json();
+      if (response.status === 409 && data.code === "OVERLAP_BLOCKED") {
+        const blockedRows = Array.isArray(data.warnings) ? data.warnings : [];
+        setScheduleBlockedMessages(blockedRows.map((row: { message?: unknown }) => String(row.message ?? "")).filter(Boolean));
+        throw new Error(data.error ?? "毎日停止の切替時刻と正反対の予約は保存できません。");
+      }
+      if (response.status === 409 && data.code === "OVERLAP_CONFIRMATION_REQUIRED") {
+        const warningRows = Array.isArray(data.warnings) ? data.warnings : [];
+        setScheduleWarnings(warningRows.map((row: { message?: unknown }) => String(row.message ?? "")).filter(Boolean));
+        setScheduleAcknowledgedWarningKeys(warningRows.map((row: { key?: unknown }) => String(row.key ?? "")).filter(Boolean));
+        throw new Error("警告内容を確認しました。内容に問題なければ、もう一度保存してください。");
+      }
       if (!response.ok) throw new Error(data.error ?? "毎日停止時間の保存に失敗しました");
       setScheduleRecurring(data.schedule.recurring);
       setScheduleUpdatedAt(data.schedule.updatedAt);
+      setScheduleWarnings(Array.isArray(data.warnings) ? data.warnings : []);
+      setScheduleAcknowledgedWarningKeys([]); setScheduleBlockedMessages([]);
       setMessage(`${schedulePanelItemCode} の毎日停止時間を保存しました。RMSはまだ変更していません。`);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
@@ -681,11 +725,24 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
       const response = await fetch("/api/rpp/delivery-schedules", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ itemCode: schedulePanelItemCode, action: scheduleReservationAction, executeAt: scheduleReservationAt, timeZone: "Asia/Tokyo" }),
+        body: JSON.stringify({ itemCode: schedulePanelItemCode, action: scheduleReservationAction, executeAt: scheduleReservationAt, timeZone: "Asia/Tokyo", acknowledgedWarningKeys: scheduleAcknowledgedWarningKeys }),
       });
       const data = await response.json();
+      if (response.status === 409 && data.code === "OVERLAP_BLOCKED") {
+        const blockedRows = Array.isArray(data.warnings) ? data.warnings : [];
+        setScheduleBlockedMessages(blockedRows.map((row: { message?: unknown }) => String(row.message ?? "")).filter(Boolean));
+        throw new Error(data.error ?? "毎日停止の切替時刻と正反対の予約は保存できません。");
+      }
+      if (response.status === 409 && data.code === "OVERLAP_CONFIRMATION_REQUIRED") {
+        const warningRows = Array.isArray(data.warnings) ? data.warnings : [];
+        setScheduleWarnings(warningRows.map((row: { message?: unknown }) => String(row.message ?? "")).filter(Boolean));
+        setScheduleAcknowledgedWarningKeys(warningRows.map((row: { key?: unknown }) => String(row.key ?? "")).filter(Boolean));
+        throw new Error("警告内容を確認しました。内容に問題なければ、もう一度予約を追加してください。");
+      }
       if (!response.ok) throw new Error(data.error ?? "日時予約の登録に失敗しました");
       setScheduleReservations((current) => [...current.filter((row) => row.id !== data.reservation.id), data.reservation].sort((a, b) => a.executeAt.localeCompare(b.executeAt)));
+      setScheduleWarnings(Array.isArray(data.warnings) ? data.warnings : []);
+      setScheduleAcknowledgedWarningKeys([]); setScheduleBlockedMessages([]);
       setScheduleReservationAt("");
       setMessage(`${schedulePanelItemCode} の${scheduleReservationAction}予約を登録しました。RMSはまだ変更していません。`);
     } catch (reason) {
@@ -707,7 +764,11 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error ?? "予約取消に失敗しました");
-      setScheduleReservations((current) => current.map((row) => row.id === data.reservation.id ? data.reservation : row));
+      setScheduleReservations((current) => {
+        const next = current.map((row) => row.id === data.reservation.id ? data.reservation : row);
+        setScheduleWarnings(rppDeliveryScheduleWarnings(scheduleRecurring, next));
+        return next;
+      });
       setMessage(`${schedulePanelItemCode} の予約を取り消しました。`);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
@@ -1175,24 +1236,33 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
             <span>待ち <b>{scheduleStatus.backlog}件</b></span>
             <span>次回 <b>{scheduleStatus.nextTransition ? `${scheduleStatus.nextTransition.action} ${new Date(scheduleStatus.nextTransition.at).toLocaleString("ja-JP", { timeZone: "Asia/Tokyo", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" })}` : "なし"}</b></span>
           </div> : null}
+          <small className="rpp-schedule-safe-note">本番は安全のため1分ごとに最大3商品の段階反映です。10商品なら最短4回で処理し、残件と完了見込みを通知します。複数商品は、最初に1商品だけ予約し、実行履歴とRMS readbackの正常確認後に残りを予約してください。</small>
+          {visibleScheduleBlocks.length ? <div className="rpp-schedule-blocked" role="alert">
+            <b>保存できない時間指定</b>
+            <ul>{visibleScheduleBlocks.map((message) => <li key={message}>{message}</li>)}</ul>
+          </div> : null}
+          {visibleScheduleWarnings.length ? <div className="rpp-schedule-warning" role="alert">
+            <b>時間指定の重複・継続状態を確認</b>
+            <ul>{visibleScheduleWarnings.map((warning) => <li key={warning}>{warning}</li>)}</ul>
+          </div> : null}
           <form className="rpp-schedule-section" onSubmit={saveRecurringSchedule}>
             <div><h3>毎日停止</h3><p>毎日、指定した開始時刻に広告OFF、終了時刻に広告ONへ戻します。日付をまたぐ指定もできます。</p></div>
-            <label className="rpp-schedule-enabled"><input autoFocus type="checkbox" checked={scheduleRecurring.enabled} onChange={(event) => setScheduleRecurring((current) => ({ ...current, enabled: event.target.checked }))} />この時間帯停止を使う</label>
+            <label className="rpp-schedule-enabled"><input autoFocus type="checkbox" checked={scheduleRecurring.enabled} onChange={(event) => { setScheduleRecurring((current) => ({ ...current, enabled: event.target.checked })); setScheduleAcknowledgedWarningKeys([]); setScheduleBlockedMessages([]); }} />この時間帯停止を使う</label>
             <div className="rpp-schedule-time-row">
-              <label>広告OFF<input required type="time" value={scheduleRecurring.startTime} onChange={(event) => setScheduleRecurring((current) => ({ ...current, startTime: event.target.value }))} /></label>
+              <label>広告OFF<input required type="time" value={scheduleRecurring.startTime} onChange={(event) => { setScheduleRecurring((current) => ({ ...current, startTime: event.target.value })); setScheduleAcknowledgedWarningKeys([]); setScheduleBlockedMessages([]); }} /></label>
               <span>→</span>
-              <label>広告ON<input required type="time" value={scheduleRecurring.endTime} onChange={(event) => setScheduleRecurring((current) => ({ ...current, endTime: event.target.value }))} /></label>
+              <label>広告ON<input required type="time" value={scheduleRecurring.endTime} onChange={(event) => { setScheduleRecurring((current) => ({ ...current, endTime: event.target.value })); setScheduleAcknowledgedWarningKeys([]); setScheduleBlockedMessages([]); }} /></label>
             </div>
-            <button className="primary-button" disabled={scheduleBusy} type="submit">毎日停止を保存</button>
+            <button className="primary-button" disabled={scheduleBusy} type="submit">{scheduleAcknowledgedWarningKeys.length ? "警告を確認して保存" : "毎日停止を保存"}</button>
           </form>
 
           <form className="rpp-schedule-section" onSubmit={addScheduleReservation}>
             <div><h3>1回限りのON/OFF予約</h3><p>時間帯ではなく、指定日時に1回だけ広告ONまたは広告OFFを実行します。</p></div>
             <div className="rpp-schedule-reservation-row">
-              <label>動作<select value={scheduleReservationAction} onChange={(event) => setScheduleReservationAction(event.target.value as "ON" | "OFF")}><option value="OFF">広告OFF</option><option value="ON">広告ON</option></select></label>
-              <label>実行日時（JST）<input required type="datetime-local" value={scheduleReservationAt} onChange={(event) => setScheduleReservationAt(event.target.value)} /></label>
+              <label>動作<select value={scheduleReservationAction} onChange={(event) => { setScheduleReservationAction(event.target.value as "ON" | "OFF"); setScheduleAcknowledgedWarningKeys([]); setScheduleBlockedMessages([]); }}><option value="OFF">広告OFF</option><option value="ON">広告ON</option></select></label>
+              <label>実行日時（JST）<input required type="datetime-local" value={scheduleReservationAt} onChange={(event) => { setScheduleReservationAt(event.target.value); setScheduleAcknowledgedWarningKeys([]); setScheduleBlockedMessages([]); }} /></label>
             </div>
-            <button className="primary-button" disabled={scheduleBusy || !scheduleReservationAt} type="submit">予約を追加</button>
+            <button className="primary-button" disabled={scheduleBusy || !scheduleReservationAt || Boolean(pendingReservationAssessment.blocked)} type="submit">{scheduleAcknowledgedWarningKeys.length ? "警告を確認して予約" : "予約を追加"}</button>
             <small className="rpp-schedule-safe-note">予約の登録だけではRMSの配信状態は変わりません。指定時刻以降に商品単位で順次反映し、読戻し確認します。</small>
           </form>
 

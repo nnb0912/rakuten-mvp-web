@@ -1,4 +1,6 @@
 import datetime as dt
+import contextlib
+import io
 import json
 import tempfile
 import unittest
@@ -202,20 +204,83 @@ class ProductDeliverySchedulerTest(unittest.TestCase):
             ack.assert_called_once()
             transition.assert_not_called()
 
+    def test_claim_auth_failure_stops_remaining_reservations_same_tick(self):
+        at = dt.datetime(2026, 9, 14, 4, 0, tzinfo=UTC)
+        rows = [{"id": f"off-{index}", "itemCode": f"r{index:04d}", "action": "OFF", "executeAt": at}
+                for index in range(5)]
+        with tempfile.TemporaryDirectory() as tmp, \
+             patch.object(scheduler, "claim_reservation", side_effect=RuntimeError("401 Unauthorized")) as claim:
+            _, changes, failures, _ = scheduler.process_due_reservations(
+                scheduler.default_state(), rows, at, set(), set(), set(), True, "https://example.invalid",
+                Path(tmp) / "state.json", Path(tmp) / "wal.json", Path(tmp) / "audit.jsonl", max_actions=3)
+            self.assertEqual(claim.call_count, 1)
+            self.assertEqual(changes, [])
+            self.assertEqual(len(failures), 1)
+            self.assertTrue(failures[0]["blocksRms"])
+            self.assertTrue(failures[0]["circuitTrip"])
+
+    def test_cli_outer_failure_emits_compact_linked_json(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+             patch.object(scheduler, "main", side_effect=RuntimeError("401 Unauthorized secret response")):
+            output = io.StringIO()
+            audit = Path(tmp) / "audit.jsonl"
+            with contextlib.redirect_stdout(output):
+                result = scheduler.cli(["--quiet", "--audit", str(audit), "--circuit", str(Path(tmp) / "circuit.json")])
+            payload = json.loads(output.getvalue())
+            self.assertEqual(result, 1)
+            self.assertEqual(payload["schemaVersion"], 1)
+            self.assertEqual(payload["kind"], "rppDeliveryTick")
+            self.assertTrue(payload["blocked"])
+            self.assertIsNone(payload["estimatedTicksRemaining"])
+            self.assertEqual(payload["audit"]["tickId"], payload["tickId"])
+            self.assertNotIn("secret response", output.getvalue())
+            self.assertIn(payload["tickId"], audit.read_text(encoding="utf-8"))
+
+    def test_unknown_argument_is_redacted_compact_json_without_stderr(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            output = io.StringIO()
+            errors = io.StringIO()
+            audit = Path(tmp) / "audit.jsonl"
+            with contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors):
+                result = scheduler.cli(["--audit", str(audit), "--circuit", str(Path(tmp) / "circuit.json"),
+                                        "--unknown-secret=value"])
+            payload = json.loads(output.getvalue())
+            self.assertEqual(result, 1)
+            self.assertEqual(errors.getvalue(), "")
+            self.assertEqual(payload["errorCode"], "VALUEERROR")
+            self.assertNotIn("unknown-secret", output.getvalue())
+
+    def test_execute_lock_contention_emits_compact_blocked_json(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+             patch.object(scheduler.legacy, "load_env_file"), \
+             patch.object(scheduler, "require_gate"), \
+             patch.object(scheduler.legacy, "acquire_global_lock", return_value=None):
+            output = io.StringIO()
+            audit = Path(tmp) / "audit.jsonl"
+            with contextlib.redirect_stdout(output):
+                result = scheduler.main(["--execute", "--quiet", "--audit", str(audit),
+                                         "--circuit", str(Path(tmp) / "circuit.json")])
+            payload = json.loads(output.getvalue())
+            self.assertEqual(result, 1)
+            self.assertEqual(payload["errorCode"], "LOCK_BUSY")
+            self.assertTrue(payload["blocked"])
+            self.assertEqual(payload["audit"]["tickId"], payload["tickId"])
+
     def test_on_is_blocked_until_all_rpp_targets_are_saved(self):
         at = dt.datetime(2026, 9, 10, 1, tzinfo=UTC)
         row = {"id": "on-1", "itemCode": "r0406", "action": "ON", "executeAt": at}
-        with patch.object(scheduler, "claim_reservation", return_value=claimed(row, "claim-on")) as claim, \
-             patch.object(scheduler, "acknowledge_reservation", return_value={"ok": True}) as ack:
+        with patch.object(scheduler, "claim_reservation") as claim, \
+             patch.object(scheduler, "release_reservation_claim") as release:
             _, changes, failures, completed = scheduler.process_due_reservations(
                 scheduler.default_state(), [row], at, set(), set(), {"r0406"}, True,
                 "https://example.invalid", Path("/tmp/state"), Path("/tmp/wal"), Path("/tmp/audit"))
-        claim.assert_called_once()
-        ack.assert_called_once()
+        claim.assert_not_called()
+        release.assert_not_called()
         self.assertEqual(changes, [])
         self.assertEqual(completed, [])
         self.assertIn("目標保存", failures[0]["error"])
-        self.assertTrue(failures[0]["terminal"])
+        self.assertTrue(failures[0]["retryable"])
+        self.assertTrue(failures[0]["onGuardBlocked"])
 
         owned = scheduler.default_state()
         owned["owned"] = ["r0406"]
@@ -416,7 +481,7 @@ class ProductDeliverySchedulerTest(unittest.TestCase):
         self.assertEqual([f["reservationId"] for f in failures], ["busy", "fails"])
         self.assertTrue(all(f["retryable"] for f in failures))
 
-    def test_nonretryable_on_guard_does_not_block_later_off_or_recurring(self):
+    def test_retryable_on_guard_does_not_block_later_off_or_recurring(self):
         at = dt.datetime(2026, 9, 10, 1, tzinfo=UTC)
         rows = [
             {"id": "bad-on", "itemCode": "item-a", "action": "ON", "executeAt": at},
@@ -430,7 +495,8 @@ class ProductDeliverySchedulerTest(unittest.TestCase):
                 Path(tmp) / "state.json", Path(tmp) / "wal.json", Path(tmp) / "audit.jsonl")
         self.assertEqual(completed, ["good-off"])
         self.assertEqual(len(changes), 1)
-        self.assertFalse(failures[0]["retryable"])
+        self.assertTrue(failures[0]["retryable"])
+        self.assertTrue(failures[0]["onGuardBlocked"])
 
         owned = scheduler.default_state()
         owned["owned"] = ["item-a", "item-b"]
@@ -502,9 +568,88 @@ class ProductDeliverySchedulerTest(unittest.TestCase):
 
     def test_action_limit_is_bounded(self):
         with patch.dict("os.environ", {"RPP_SCHEDULER_MAX_ACTIONS_PER_TICK": "99"}):
-            self.assertEqual(scheduler.max_actions_per_tick(), 20)
+            self.assertEqual(scheduler.max_actions_per_tick(), 3)
         with patch.dict("os.environ", {"RPP_SCHEDULER_MAX_ACTIONS_PER_TICK": "0"}):
             self.assertEqual(scheduler.max_actions_per_tick(), 1)
+
+    def test_notification_summary_is_compact_and_reports_bounded_rollout_eta(self):
+        summary = {
+            "tickId": "tick-1",
+            "observedAt": "2026-09-14T02:36:06Z",
+            "ok": True,
+            "dryRun": False,
+            "changes": [{"itemCode": "item-a", "action": "OFF", "productionChange": True,
+                         "readback": [{"textSample": "x" * 5000}]}],
+            "failures": [],
+            "completedReservations": ["reservation-secret-id"],
+            "activeRecurring": ["item-a"],
+            "desiredOff": ["item-a"],
+            "ownedAfter": ["item-a"],
+            "preexistingAfter": [],
+            "queueDepth": 7,
+            "maxActionsPerTick": 3,
+            "warnings": [],
+            "walRecovery": {"status": "none"},
+        }
+        compact = scheduler.notification_summary(summary, Path("/tmp/full-audit.jsonl"))
+        self.assertNotIn("readback", compact["changes"][0])
+        self.assertNotIn("completedReservations", compact)
+        self.assertEqual(compact["completedReservationCount"], 1)
+        self.assertEqual(compact["rolloutPolicy"]["mode"], "BOUNDED_CANARY")
+        self.assertEqual(compact["estimatedTicksRemaining"], 3)
+        self.assertEqual(compact["estimatedCompletionMinutes"], 3)
+        self.assertEqual(compact["schemaVersion"], 1)
+        self.assertEqual(compact["tickId"], "tick-1")
+        self.assertEqual(compact["earliestCompletionAt"], "2026-09-14T02:39:06Z")
+        self.assertEqual(compact["audit"], {"path": "/tmp/full-audit.jsonl", "tickId": "tick-1"})
+        self.assertLess(len(json.dumps(compact, ensure_ascii=False)), 1500)
+
+    def test_repeated_external_failure_opens_circuit_and_only_opener_notifies(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "circuit.json"
+            first = scheduler.record_external_failure(RuntimeError("schedule API failed: timed out after 45 seconds"), path, threshold=3)
+            second = scheduler.record_external_failure(RuntimeError("schedule API failed: timed out after 99 seconds"), path, threshold=3)
+            third = scheduler.record_external_failure(RuntimeError("schedule API failed: timed out after 12 seconds"), path, threshold=3)
+            fourth = scheduler.record_external_failure(RuntimeError("schedule API failed: timed out after 88 seconds"), path, threshold=3)
+            self.assertEqual([first["consecutive"], second["consecutive"], third["consecutive"]], [1, 2, 3])
+            self.assertFalse(first["open"])
+            self.assertFalse(second["open"])
+            self.assertTrue(third["open"])
+            self.assertTrue(third["notify"])
+            self.assertTrue(fourth["open"])
+            self.assertFalse(fourth["notify"])
+            self.assertTrue(scheduler.load_circuit(path)["open"])
+
+    def test_captcha_opens_circuit_immediately_and_reset_requires_explicit_command(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "circuit.json"
+            opened = scheduler.record_external_failure(RuntimeError("RMS CAPTCHA challenge detected"), path, threshold=3)
+            self.assertTrue(opened["open"])
+            self.assertEqual(opened["category"], "CAPTCHA")
+            self.assertTrue(opened["notify"])
+            scheduler.reset_circuit(path)
+            self.assertFalse(scheduler.load_circuit(path)["open"])
+
+    def test_non_external_business_guard_does_not_open_circuit(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "circuit.json"
+            result = scheduler.record_external_failure(RuntimeError("広告ONには全RPP設定行への目標保存が必要です"), path)
+            self.assertEqual(result["status"], "ignored")
+            self.assertFalse(path.exists())
+
+    def test_on_guard_alert_notifies_once_until_resolved(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "guard.json"
+            first = scheduler.update_on_guard_alerts({"item-a"}, path)
+            repeated = scheduler.update_on_guard_alerts({"item-a"}, path)
+            expanded = scheduler.update_on_guard_alerts({"item-a", "item-b"}, path)
+            resolved = scheduler.update_on_guard_alerts(set(), path)
+            self.assertTrue(first["notify"])
+            self.assertFalse(repeated["notify"])
+            self.assertTrue(expanded["notify"])
+            self.assertEqual(expanded["newItemCodes"], ["item-b"])
+            self.assertTrue(resolved["resolved"])
+            self.assertFalse(path.exists())
 
     def test_preexisting_exclusion_is_not_owned_or_released_by_recurring_end(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -537,6 +682,44 @@ class ProductDeliverySchedulerTest(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertEqual(events, ["lock", "run"])
 
+    def test_open_circuit_skips_run_but_prioritizes_existing_wal_recovery(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            circuit = root / "circuit.json"
+            wal = root / "wal.json"
+            scheduler.atomic_json_write({"open": True, "category": "AUTH", "signature": "auth", "consecutive": 1}, circuit)
+            wal.write_text("{}", encoding="utf-8")
+            with patch.dict("os.environ", {"RPP_ENABLE_PRODUCT_DELIVERY_SCHEDULER": "1"}), \
+                 patch.object(scheduler.legacy, "load_env_file"), \
+                 patch.object(scheduler.legacy, "acquire_global_lock", return_value=7), \
+                 patch.object(scheduler.legacy, "release_global_lock"), \
+                 patch.object(scheduler, "recover_wal_while_circuit_open", return_value={"status": "uncertain"}) as recover, \
+                 patch.object(scheduler, "run") as run_call:
+                code = scheduler.main(["--execute", "--confirm=" + scheduler.PRODUCTION_CONFIRMATION,
+                                       "--circuit", str(circuit), "--wal", str(wal),
+                                       "--audit", str(root / "audit.jsonl"), "--quiet"])
+            self.assertEqual(code, 0)
+            recover.assert_called_once()
+            run_call.assert_not_called()
+
+    def test_circuit_probe_is_read_only_and_clears_open_state(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            circuit = root / "circuit.json"
+            scheduler.atomic_json_write({"open": True, "category": "NETWORK", "signature": "net", "consecutive": 3}, circuit)
+            with patch.dict("os.environ", {"RPP_ENABLE_PRODUCT_DELIVERY_SCHEDULER": "1"}), \
+                 patch.object(scheduler.legacy, "load_env_file"), \
+                 patch.object(scheduler.legacy, "acquire_global_lock", return_value=7), \
+                 patch.object(scheduler.legacy, "release_global_lock"), \
+                 patch.object(scheduler, "probe_external_dependencies", return_value={"exclusionCount": 10}) as probe, \
+                 patch.object(scheduler, "run") as run_call:
+                code = scheduler.main(["--circuit-probe", "--confirm=" + scheduler.CIRCUIT_PROBE_CONFIRMATION,
+                                       "--circuit", str(circuit), "--wal", str(root / "wal.json"), "--quiet"])
+            self.assertEqual(code, 0)
+            probe.assert_called_once()
+            run_call.assert_not_called()
+            self.assertFalse(circuit.exists())
+
     def test_execute_refreshes_rms_only_when_transition_or_due_action_exists(self):
         at = "2026-09-10T12:00:00+09:00"
         args = Namespace(execute=True, api_base="https://example.invalid", now=at,
@@ -565,6 +748,63 @@ class ProductDeliverySchedulerTest(unittest.TestCase):
              patch.object(scheduler, "save_state"):
             scheduler.run(args)
             refresh_call.assert_called_once_with(args.exclude_csv)
+
+    def test_open_circuit_prepared_wal_rolls_back_without_external_readback(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            state_path, wal_path, audit_path = root / "state.json", root / "wal.json", root / "audit.jsonl"
+            before = scheduler.default_state()
+            after = scheduler.default_state()
+            after["owned"] = ["item-a"]
+            scheduler.save_state(after, state_path)
+            scheduler.write_wal({"version": 3, "operationId": "op-1", "phase": "PREPARED",
+                                 "createdAt": "2026-09-14T00:00:00Z", "itemCode": "item-a", "control": "n",
+                                 "beforeExcluded": False, "reservationId": None,
+                                 "stateBefore": before, "stateAfter": after}, wal_path)
+            args = Namespace(state=state_path, wal=wal_path, audit=audit_path, exclude_csv=root / "exclude.csv")
+            with patch.object(scheduler, "refresh_exclusions") as refresh_call:
+                evidence = scheduler.recover_wal_while_circuit_open(args)
+            self.assertEqual(evidence["status"], "rolled_back")
+            self.assertFalse(wal_path.exists())
+            self.assertEqual(scheduler.load_state(state_path)["owned"], [])
+            refresh_call.assert_not_called()
+
+    def test_auth_or_challenge_stops_remaining_reservations_in_same_tick(self):
+        at = dt.datetime(2026, 9, 14, 0, 0, tzinfo=UTC)
+        reservations = [{"id": f"res-{index}", "itemCode": f"item-{index}", "action": "OFF",
+                         "executeAt": at, "attemptCount": 0, "nextAttemptAt": None}
+                        for index in range(5)]
+        state = scheduler.default_state()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            def claimed(reservation_id, api_base=None):
+                row = next(item for item in reservations if item["id"] == reservation_id)
+                return {**row, "executeAt": scheduler.iso_utc(row["executeAt"]), "claimId": "claim-" + reservation_id}
+            with patch.object(scheduler, "claim_reservation", side_effect=claimed), \
+                 patch.object(scheduler, "heartbeat_reservation"), \
+                 patch.object(scheduler, "release_reservation_claim"), \
+                 patch.object(scheduler, "_transition", side_effect=RuntimeError('{"errorCode":"RMS_CHALLENGE"}')) as transition:
+                _, _, failures, _ = scheduler.process_due_reservations(
+                    state, reservations, at, set(), set(), set(), True, "https://example.invalid",
+                    root / "state.json", root / "wal.json", root / "audit.jsonl", 3)
+            self.assertEqual(transition.call_count, 1)
+            self.assertEqual(len(failures), 1)
+            self.assertTrue(failures[0]["blocksRms"])
+            self.assertTrue(failures[0]["circuitTrip"])
+
+    def test_adapter_probe_uses_non_submitting_dom_path(self):
+        result = {"ok": True, "productionChange": False,
+                  "applied": {"finalSubmitSkipped": True, "finalUploadButtonPresent": True,
+                              "beforeReadback": [{"itemCode": "item-a", "found": False}]}}
+        with tempfile.TemporaryDirectory() as tmp, \
+             patch.object(scheduler.legacy, "write_one_row_csv"), \
+             patch.object(scheduler.subprocess, "run", return_value=Namespace(returncode=0, stdout=json.dumps(result), stderr="")) as run_call:
+            evidence = scheduler.probe_rms_adapter_dom("item-a", False, Path(tmp))
+        command = run_call.call_args.args[0]
+        self.assertIn("--execute", command)
+        self.assertNotIn("--final-submit", command)
+        self.assertTrue(evidence["uploadDomVerified"])
+        self.assertFalse(evidence["productionChange"])
 
 
 if __name__ == "__main__":
