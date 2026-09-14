@@ -32,3 +32,13 @@ test("ROAS欠損日は前後を補間せず線を分割する", () => {
   assert.equal(segments[0].split(" ").length, 1);
   assert.equal(segments[1].split(" ").length, 1);
 });
+
+test("実績がない暦日をnullで補い、線を接続しない", () => {
+  const rows = buildRppDashboardChartSeries([
+    { date: "2026-09-11", spend: 100, sales: 200, clicks: 1 },
+    { date: "2026-09-13", spend: 300, sales: 600, clicks: 2 },
+  ]);
+  assert.deepEqual(rows.map((row) => row.date), ["2026-09-11", "2026-09-12", "2026-09-13"]);
+  assert.equal(rows[1].spend, null);
+  assert.equal(chartPolyline(rows.map((row) => row.spend)).length, 2);
+});

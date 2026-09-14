@@ -5,13 +5,16 @@ export type RppDashboardDailyMetric = {
   clicks: number;
 };
 
-export type RppDashboardChartPoint = RppDashboardDailyMetric & {
+export type RppDashboardChartPoint = Omit<RppDashboardDailyMetric, "spend" | "sales" | "clicks"> & {
+  spend: number | null;
+  sales: number | null;
+  clicks: number | null;
   label: string;
   roas: number | null;
 };
 
 export function buildRppDashboardChartSeries(rows: RppDashboardDailyMetric[]): RppDashboardChartPoint[] {
-  return rows
+  const observed = rows
     .filter((row) => /^\d{4}-\d{2}-\d{2}$/.test(row.date))
     .map((row) => ({
       date: row.date,
@@ -24,6 +27,17 @@ export function buildRppDashboardChartSeries(rows: RppDashboardDailyMetric[]): R
         : null,
     }))
     .sort((a, b) => a.date.localeCompare(b.date));
+  if (observed.length < 2) return observed;
+  const byDate = new Map(observed.map((row) => [row.date, row]));
+  const filled: RppDashboardChartPoint[] = [];
+  const cursor = new Date(`${observed[0].date}T00:00:00Z`);
+  const end = new Date(`${observed.at(-1)!.date}T00:00:00Z`);
+  while (cursor <= end) {
+    const date = cursor.toISOString().slice(0, 10);
+    filled.push(byDate.get(date) ?? { date, label: `${cursor.getUTCMonth() + 1}/${cursor.getUTCDate()}`, spend: null, sales: null, clicks: null, roas: null });
+    cursor.setUTCDate(cursor.getUTCDate() + 1);
+  }
+  return filled;
 }
 
 export function chartPolyline(values: Array<number | null>, width = 560, height = 180, inset = 22, maximum?: number) {

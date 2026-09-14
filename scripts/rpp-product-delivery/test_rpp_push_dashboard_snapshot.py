@@ -94,6 +94,20 @@ class OperationalDataTest(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, 'performanceDaily'):
             module.validate_snapshot_readback(payload, snapshot, 200)
 
+    def test_performance_db_readback_requires_exact_items_metrics_and_source(self):
+        expected = {
+            'date': '2026-09-10', 'source': 'rpp_item_reports.csv', 'sourceMtime': '2026-09-11T01:00:00Z',
+            'rows': [{'itemCode': 'r0406', 'ctr': 1.5, 'clicks': 10, 'spend': 300, 'sales12h': 500, 'orders12h': 1, 'sales720h': 900, 'orders720h': 2}],
+        }
+        actual_row = {**expected['rows'][0], 'source': expected['source'], 'sourceMtime': '2026-09-11T01:00:00.000Z'}
+        module.validate_performance_readback(expected, {'date': expected['date'], 'rows': [actual_row]}, 200)
+        changed = dict(actual_row)
+        changed['sales720h'] = 901
+        with self.assertRaisesRegex(RuntimeError, 'sales720h'):
+            module.validate_performance_readback(expected, {'date': expected['date'], 'rows': [changed]}, 200)
+        with self.assertRaisesRegex(RuntimeError, 'item codes'):
+            module.validate_performance_readback(expected, {'date': expected['date'], 'rows': []}, 200)
+
     @staticmethod
     def _write_csv(path: Path, fieldnames: list[str], rows: list[list[str]]) -> None:
         with path.open('w', encoding='cp932', newline='') as handle:

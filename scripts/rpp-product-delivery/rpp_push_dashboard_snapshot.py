@@ -279,10 +279,10 @@ def cron_status() -> dict:
     }
 
 
-def request(method: str, auth: str, payload: dict | None = None) -> tuple[int, dict]:
+def request(method: str, auth: str, payload: dict | None = None, query: str = "") -> tuple[int, dict]:
     body = json.dumps(payload, ensure_ascii=False).encode("utf-8") if payload is not None else None
     req = urllib.request.Request(
-        f"{API_BASE}/api/rpp/sync-snapshot",
+        f"{API_BASE}/api/rpp/sync-snapshot{query}",
         data=body,
         method=method,
         headers={"Authorization": f"Bearer {auth}", "Content-Type": "application/json", "User-Agent": "rise-rpp-snapshot-sync/1.0"},
@@ -326,6 +326,29 @@ def validate_snapshot_readback(payload: dict, snapshot: dict, read_status: int) 
         raise RuntimeError("snapshot performanceDaily readback mismatch")
 
 
+def validate_performance_readback(expected: dict, response: dict, read_status: int) -> None:
+    if read_status != 200 or response.get("date") != expected["date"] or not isinstance(response.get("rows"), list):
+        raise RuntimeError(f"performance DB readback mismatch: HTTP {read_status}")
+    actual_by_code = {str(row.get("itemCode") or ""): row for row in response["rows"]}
+    expected_by_code = {row["itemCode"]: row for row in expected["rows"]}
+    if set(actual_by_code) != set(expected_by_code):
+        raise RuntimeError("performance DB readback mismatch: item codes")
+    fields = ("clicks", "spend", "ctr", "sales12h", "orders12h", "sales720h", "orders720h")
+    for item_code, wanted in expected_by_code.items():
+        actual = actual_by_code[item_code]
+        for field in fields:
+            if wanted[field] is None and actual.get(field) is None:
+                continue
+            if float(actual.get(field)) != float(wanted[field]):
+                raise RuntimeError(f"performance DB readback mismatch: {item_code} {field}")
+        if actual.get("source") != expected["source"]:
+            raise RuntimeError(f"performance DB readback mismatch: {item_code} source")
+        actual_mtime = dt.datetime.fromisoformat(str(actual.get("sourceMtime") or "").replace("Z", "+00:00"))
+        expected_mtime = dt.datetime.fromisoformat(expected["sourceMtime"].replace("Z", "+00:00"))
+        if actual_mtime != expected_mtime:
+            raise RuntimeError(f"performance DB readback mismatch: {item_code} sourceMtime")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--dry-run", action="store_true")
@@ -354,6 +377,10 @@ def main() -> int:
     read_status, readback = request("GET", auth)
     snapshot = readback.get("snapshot") or {}
     validate_snapshot_readback(payload, snapshot, read_status)
+    if payload["performanceDaily"] is not None:
+        performance_query = "?resource=performance-daily&date=" + urllib.parse.quote(payload["performanceDaily"]["date"])
+        performance_status, performance_readback = request("GET", auth, query=performance_query)
+        validate_performance_readback(payload["performanceDaily"], performance_readback, performance_status)
     print(json.dumps({**summary, "dryRun": False, "syncedAt": payload["syncedAt"], "readback": "OK"}, ensure_ascii=False))
     return 0
 

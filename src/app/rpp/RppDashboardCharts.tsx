@@ -17,7 +17,7 @@ export default function RppDashboardCharts({
   unknown: number;
 }) {
   const rows = buildRppDashboardChartSeries(daily);
-  const maxMoney = Math.max(...rows.flatMap((row) => [row.spend, row.sales]), 1);
+  const maxMoney = Math.max(...rows.flatMap((row) => [row.spend, row.sales].filter((value): value is number => value != null)), 1);
   const spendPoints = chartPolyline(rows.map((row) => row.spend), 560, 180, 22, maxMoney);
   const salesPoints = chartPolyline(rows.map((row) => row.sales), 560, 180, 22, maxMoney);
   const roasPoints = chartPolyline(rows.map((row) => row.roas));
@@ -33,18 +33,18 @@ export default function RppDashboardCharts({
         <div className="rpp-chart-legend"><span className="is-spend">広告費</span><span className="is-sales">売上（720h）</span></div>
       </div>
       {rows.length ? <>
-        <div className="rpp-chart-summary"><b>全RPP実績・{rows.length}日分</b><span>最新 広告費 {yen(latest?.spend ?? 0)}</span><span>売上 {yen(latest?.sales ?? 0)}</span></div>
+        <div className="rpp-chart-summary"><b>全RPP実績・{rows.length}暦日</b><span>最新 広告費 {latest?.spend == null ? "未取得" : yen(latest.spend)}</span><span>売上 {latest?.sales == null ? "未取得" : yen(latest.sales)}</span></div>
         <svg className="rpp-line-chart" viewBox="0 0 560 180" role="img" aria-label="全RPPの日別広告費と売上推移">
           <g className="rpp-chart-grid"><line x1="22" y1="22" x2="538" y2="22"/><line x1="22" y1="90" x2="538" y2="90"/><line x1="22" y1="158" x2="538" y2="158"/></g>
           {spendPoints.map((points, index) => <polyline className="rpp-chart-line spend" points={points} key={`spend-${index}`}/>)}
           {salesPoints.map((points, index) => <polyline className="rpp-chart-line sales" points={points} key={`sales-${index}`}/>)}
           {rows.map((row, index) => {
             const x = 22 + index / Math.max(1, rows.length - 1) * 516;
-            const spendY = 158 - row.spend / maxMoney * 136;
-            const salesY = 158 - row.sales / maxMoney * 136;
+            const spendY = row.spend == null ? null : 158 - row.spend / maxMoney * 136;
+            const salesY = row.sales == null ? null : 158 - row.sales / maxMoney * 136;
             return <g key={row.date}>
-              <circle className="rpp-chart-dot spend" cx={x} cy={spendY} r="3"><title>{row.label} 広告費 {yen(row.spend)}</title></circle>
-              <circle className="rpp-chart-dot sales" cx={x} cy={salesY} r="3"><title>{row.label} 売上 {yen(row.sales)}</title></circle>
+              {spendY == null ? null : <circle className="rpp-chart-dot spend" cx={x} cy={spendY} r="3"><title>{row.label} 広告費 {yen(row.spend!)}</title></circle>}
+              {salesY == null ? null : <circle className="rpp-chart-dot sales" cx={x} cy={salesY} r="3"><title>{row.label} 売上 {yen(row.sales!)}</title></circle>}
               {(index === 0 || index === rows.length - 1 || index % 3 === 0) ? <text x={x} y="176" textAnchor="middle">{row.label}</text> : null}
             </g>;
           })}
@@ -62,7 +62,7 @@ export default function RppDashboardCharts({
     </article>
 
     <article className="panel rpp-chart-card rpp-delivery-chart">
-      <div className="rpp-chart-heading"><div><p className="eyebrow">DELIVERY</p><h2>配信構成</h2></div><strong className="rpp-chart-value">{total}商品</strong></div>
+      <div className="rpp-chart-heading"><div><p className="eyebrow">AUTOMATIC DELIVERY</p><h2>自動モード商品の配信構成</h2></div><strong className="rpp-chart-value">{total}商品</strong></div>
       <div className="rpp-donut-layout">
         <div className="rpp-donut" style={{ "--active-rate": `${activeRate * 3.6}deg`, "--excluded-rate": `${(activeRate + excludedRate) * 3.6}deg` } as CSSProperties}><span><b>{active}</b><small>稼働中</small></span></div>
         <ul><li><i className="is-active"/><span>稼働</span><b>{active}</b></li><li><i className="is-excluded"/><span>除外</span><b>{excluded}</b></li><li><i className="is-unknown"/><span>未確認</span><b>{unknown}</b></li></ul>

@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import { normalizeRppDashboardSnapshot } from "./rppDashboardSnapshots.ts";
+
+const snapshotSource = readFileSync(new URL("./rppDashboardSnapshots.ts", import.meta.url), "utf8");
 
 test("RPP dashboard snapshot payload is normalized", () => {
   const snapshot = normalizeRppDashboardSnapshot({
@@ -19,6 +22,11 @@ test("RPP dashboard snapshot accepts validated single-day performance rows", () 
   assert.equal(snapshot.schemaVersion, 2);
   assert.equal(snapshot.performanceDaily?.rows[0].itemCode, "r0579");
   assert.equal(snapshot.performanceDaily?.rows[0].sales720h, 700);
+});
+
+test("古い実績は新しいobservedAtだけで上書きしない", () => {
+  assert.match(snapshotSource, /where excluded\.source_mtime > \$\{PERFORMANCE_TABLE\}\.source_mtime/);
+  assert.doesNotMatch(snapshotSource, /source_mtime[^`]+or excluded\.observed_at/i);
 });
 
 test("RPP dashboard snapshot rejects missing recommendation rows", () => {

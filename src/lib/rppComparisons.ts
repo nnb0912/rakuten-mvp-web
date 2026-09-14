@@ -16,7 +16,7 @@ export async function readRppDashboardDailyMetrics(days=14){
   if(!pool)return [];
   const safeDays=Math.max(1,Math.min(31,Math.round(days)));
   try{
-    const result=await pool.query(`select performance_date::text as date,sum(spend)::text as spend,sum(sales_720h)::text as sales,sum(clicks)::text as clicks from rpp_performance_daily where performance_date between current_date-($1::int-1) and current_date group by performance_date order by performance_date`,[safeDays]);
+    const result=await pool.query(`select p.performance_date::text as date,sum(p.spend)::text as spend,sum(p.sales_720h)::text as sales,sum(p.clicks)::text as clicks from rpp_performance_daily p where p.performance_date between current_date-($1::int-1) and current_date and p.source_mtime=(select max(latest.source_mtime) from rpp_performance_daily latest where latest.performance_date=p.performance_date) group by p.performance_date order by p.performance_date`,[safeDays]);
     return result.rows.map((row:{date:string;spend:string;sales:string;clicks:string})=>({date:String(row.date),spend:Number(row.spend),sales:Number(row.sales),clicks:Number(row.clicks)}));
   }catch(error){if((error as {code?:string}).code==="42P01")return [];throw error;}
 }

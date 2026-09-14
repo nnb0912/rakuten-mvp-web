@@ -1,5 +1,5 @@
 import { timingSafeEqual } from "crypto";
-import { readLatestRppDashboardSnapshot, saveRppDashboardSnapshot } from "@/lib/rppDashboardSnapshots";
+import { readLatestRppDashboardSnapshot, readRppPerformanceDaily, saveRppDashboardSnapshot } from "@/lib/rppDashboardSnapshots";
 import { claimRppDeliveryReservation, heartbeatRppDeliveryReservation, markRppDeliveryReservation, readPendingRppDeliveryReservations, readRppDeliverySchedules, releaseRppDeliveryReservationClaim, rppDeliveryStorageStatus } from "@/lib/rppDeliverySchedules";
 import { readRppNightPauseProducts } from "@/lib/rppNightPause";
 import { readRppAlertTargets, readRppConfiguredTargets, readRppProductCpcItemCodes } from "@/lib/rppTargets";
@@ -27,6 +27,10 @@ export async function GET(request: Request) {
     if (searchParams.get("resource") === "night-pause") {
       const data = await readRppNightPauseProducts();
       return Response.json({ ok: true, itemCodes: data.itemCodes });
+    }
+    if (searchParams.get("resource") === "performance-daily") {
+      const date = searchParams.get("date") ?? "";
+      return Response.json({ ok: true, date, rows: await readRppPerformanceDaily(date) });
     }
     if (searchParams.get("resource") === "delivery-schedules") {
       const data = await readRppDeliverySchedules({ reservationLimitPerItem: 0 });
