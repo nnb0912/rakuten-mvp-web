@@ -23,5 +23,12 @@ test("同一maximumを渡した系列は同じ金額スケールを使う", () =
   const low = chartPolyline([100], 560, 180, 22, 1000);
   const high = chartPolyline([1000], 560, 180, 22, 1000);
   assert.notEqual(low, high);
-  assert.match(high, /22\.0,22\.0/);
+  assert.match(high[0], /22\.0,22\.0/);
+});
+
+test("ROAS欠損日は前後を補間せず線を分割する", () => {
+  const segments = chartPolyline([100, null, 200]);
+  assert.equal(segments.length, 2);
+  assert.equal(segments[0].split(" ").length, 1);
+  assert.equal(segments[1].split(" ").length, 1);
 });

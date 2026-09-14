@@ -36,8 +36,8 @@ export default function RppDashboardCharts({
         <div className="rpp-chart-summary"><b>{rows.length}日分</b><span>最新 広告費 {yen(latest?.spend ?? 0)}</span><span>売上 {yen(latest?.sales ?? 0)}</span></div>
         <svg className="rpp-line-chart" viewBox="0 0 560 180" role="img" aria-label="日別の広告費と売上推移">
           <g className="rpp-chart-grid"><line x1="22" y1="22" x2="538" y2="22"/><line x1="22" y1="90" x2="538" y2="90"/><line x1="22" y1="158" x2="538" y2="158"/></g>
-          <polyline className="rpp-chart-line spend" points={spendPoints}/>
-          <polyline className="rpp-chart-line sales" points={salesPoints}/>
+          {spendPoints.map((points, index) => <polyline className="rpp-chart-line spend" points={points} key={`spend-${index}`}/>)}
+          {salesPoints.map((points, index) => <polyline className="rpp-chart-line sales" points={points} key={`sales-${index}`}/>)}
           {rows.map((row, index) => {
             const x = 22 + index / Math.max(1, rows.length - 1) * 516;
             const spendY = 158 - row.spend / maxMoney * 136;
@@ -53,10 +53,10 @@ export default function RppDashboardCharts({
     </article>
 
     <article className="panel rpp-chart-card">
-      <div className="rpp-chart-heading"><div><p className="eyebrow">EFFICIENCY</p><h2>ROAS推移</h2></div><strong className="rpp-chart-value">{latest?.roas == null ? "未取得" : `${Math.round(latest.roas)}%`}</strong></div>
-      {roasPoints ? <svg className="rpp-line-chart rpp-roas-chart" viewBox="0 0 560 180" role="img" aria-label="日別ROAS推移">
+      <div className="rpp-chart-heading"><div><p className="eyebrow">EFFICIENCY</p><h2>ROAS推移（720h）</h2></div><strong className="rpp-chart-value">{latest?.roas == null ? "未取得" : `${Math.round(latest.roas)}%`}</strong></div>
+      {roasPoints.length ? <svg className="rpp-line-chart rpp-roas-chart" viewBox="0 0 560 180" role="img" aria-label="日別ROAS推移（売上720h帰属）">
         <g className="rpp-chart-grid"><line x1="22" y1="22" x2="538" y2="22"/><line x1="22" y1="90" x2="538" y2="90"/><line x1="22" y1="158" x2="538" y2="158"/></g>
-        <polyline className="rpp-chart-line roas" points={roasPoints}/>
+        {roasPoints.map((points, index) => <polyline className="rpp-chart-line roas" points={points} key={`roas-${index}`}/>)}
         {rows.map((row, index) => row.roas == null ? null : <circle key={row.date} className="rpp-chart-dot roas" cx={22 + index / Math.max(1, rows.length - 1) * 516} cy={158 - row.roas / Math.max(...rows.flatMap((item) => item.roas == null ? [] : [item.roas]), 1) * 136} r="3"><title>{row.label} ROAS {Math.round(row.roas)}%</title></circle>)}
       </svg> : <div className="rpp-chart-empty">広告費と売上の両方がある日に表示します</div>}
     </article>
