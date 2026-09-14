@@ -3,7 +3,8 @@ import { pool } from "./db.ts";
 
 export type RppSnapshotFile = { name: string; exists: boolean; mtime: string | null; size: number };
 export type RppPerformanceDailyRow = { itemCode: string; ctr: number | null; clicks: number; spend: number; sales12h: number; orders12h: number; sales720h: number; orders720h: number };
-export type RppPerformanceDaily = { source: string; sourceMtime: string; date: string; attribution: { sales12h: true; sales720h: true }; rows: RppPerformanceDailyRow[] };
+export type RppPerformanceReceipt = { file: string; completedAt: string; sha256: string; expectedCount: number; actualCount: number; complete: true };
+export type RppPerformanceDaily = { source: string; sourceMtime: string; date: string; attribution: { sales12h: true; sales720h: true }; rows: RppPerformanceDailyRow[]; receipt: RppPerformanceReceipt };
 export type RppSnapshotConfiguredTarget = { id: string; itemCode: string; itemName: string; keyword: string; itemCpc: number | null; keywordCpc: number | null; source: "商品CPC" | "キーワードCPC"; owner?: string; rppPosition?: string; rppPositionKeyword?: string; rppPositions?: { keyword: string; position: string }[] };
 export type RppSnapshotExclusionProduct = { itemCode: string; itemName: string; itemCpc: number | null; excluded: boolean; owner?: string };
 export type RppExclusionObservation = { observedAt: string; expectedCount: number; actualCount: number; complete: boolean };
@@ -35,7 +36,10 @@ function normalizePerformanceDaily(value: unknown): RppPerformanceDaily | null {
     if (!itemCode) throw new Error("performanceDaily row itemCode is required");
     return { itemCode, ctr: raw.ctr == null ? null : num(raw.ctr), clicks: Math.round(num(raw.clicks)), spend: num(raw.spend), sales12h: num(raw.sales12h), orders12h: Math.round(num(raw.orders12h)), sales720h: num(raw.sales720h), orders720h: Math.round(num(raw.orders720h)) };
   });
-  return { source: input.source, sourceMtime: new Date(input.sourceMtime).toISOString(), date, attribution: { sales12h: true, sales720h: true }, rows };
+  const receipt = input.receipt as Partial<RppPerformanceReceipt> | undefined;
+  const completedAt = typeof receipt?.completedAt === "string" ? new Date(receipt.completedAt) : new Date(NaN);
+  if (!receipt || receipt.complete !== true || !/^[a-f0-9]{64}$/.test(String(receipt.sha256 ?? "")) || !Number.isInteger(receipt.expectedCount) || receipt.expectedCount !== rows.length || receipt.actualCount !== rows.length || Number.isNaN(completedAt.getTime()) || !String(receipt.file ?? "").trim()) throw new Error("performanceDaily verified receipt is invalid");
+  return { source: input.source, sourceMtime: new Date(input.sourceMtime).toISOString(), date, attribution: { sales12h: true, sales720h: true }, rows, receipt: { file: String(receipt.file), completedAt: completedAt.toISOString(), sha256: String(receipt.sha256), expectedCount: rows.length, actualCount: rows.length, complete: true } };
 }
 
 function nullablePositiveNumber(value: unknown) {
@@ -166,6 +170,9 @@ export async function saveRppDashboardSnapshot(value: unknown) {
     await client.query("begin");
     await ensureTables(client);
     if (snapshot.performanceDaily) {
+      await client.query("select pg_advisory_xact_lock(hashtext($1))", [`rpp-performance:${snapshot.performanceDaily.date}`]);
+      const latestDate = await client.query(`select max(performance_date)::text as performance_date from ${PERFORMANCE_TABLE}`);
+      if (latestDate.rows[0]?.performance_date && snapshot.performanceDaily.date < String(latestDate.rows[0].performance_date)) throw new Error("performance daily date is older than latest persisted date");
       const latest = await client.query(`select max(source_mtime) as source_mtime from ${PERFORMANCE_TABLE} where performance_date=$1`, [snapshot.performanceDaily.date]);
       const currentSourceMtime = latest.rows[0]?.source_mtime == null ? null : new Date(latest.rows[0].source_mtime);
       if (currentSourceMtime && new Date(snapshot.performanceDaily.sourceMtime) < currentSourceMtime) throw new Error("performance daily source is older than persisted data");

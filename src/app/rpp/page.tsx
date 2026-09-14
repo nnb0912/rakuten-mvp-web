@@ -238,14 +238,14 @@ export default async function RppPage({ searchParams }: { searchParams: Promise<
             <tbody>{automaticRows.map((row) => {
               const rec = row.recommendation;
               const currentCpc = rec?.currentCpc ?? row.configured?.itemCpc ?? row.configured?.keywordCpc ?? null;
-              const status = row.excluded ? { label: "除外中", className: "status-hold" } : rec?.action === "RAISE" ? { label: "上げ候補", className: "status-approved" } : rec?.action === "LOWER" ? { label: "下げ候補", className: "approval-rejected" } : { label: "維持", className: "status-hold" };
+              const status = !row.product ? { label: "未確認", className: "status-hold" } : row.excluded ? { label: "除外中", className: "status-hold" } : rec?.action === "RAISE" ? { label: "上げ候補", className: "status-approved" } : rec?.action === "LOWER" ? { label: "下げ候補", className: "approval-rejected" } : { label: "維持", className: "status-hold" };
               return <tr key={`${row.itemCode}__${rec?.keyword || "status"}`}>
                 <td><b>{row.itemCode} / {rec?.keyword || "商品"}</b><br /><small title={rec?.itemName || row.configured?.itemName || row.product?.itemName || undefined}>{shortRppItemName(row.itemCode, rec?.itemName || row.configured?.itemName || row.product?.itemName || "")}</small></td>
                 <td><span className={`status-pill ${!row.product ? "status-hold" : row.excluded ? "approval-rejected" : "status-approved"}`}>{!row.product ? "未確認" : row.excluded ? "広告OFF" : "広告ON"}</span></td>
                 <td><b>{currentCpc == null ? "-" : `${currentCpc}円`}</b><br /><small>{row.target?.optimizationMode || "目標未設定"}</small></td>
                 <td><b>{fmtYen(rec?.spend)}</b><br /><small>{rec?.clicks == null ? "未取得" : `${rec.clicks} click`} / 売上 {fmtYen(rec?.salesAmount)} / ROAS {rec?.roas == null ? "未取得" : `${Math.round(rec.roas)}%`}</small></td>
                 <td><small>{rec?.rppPosition || (row.excluded ? "除外中" : "未測定")}</small></td>
-                <td><span className={`status-pill ${status.className}`}>{status.label}</span><br /><small>{rec ? compactReasons(rec) : row.excluded ? "除外解除後に候補計算" : "実績更新待ち"}</small></td>
+                <td><span className={`status-pill ${status.className}`}>{status.label}</span><br /><small>{!row.product ? "商品状態の実測待ち" : rec ? compactReasons(rec) : row.excluded ? "除外解除後に候補計算" : "実績更新待ち"}</small></td>
               </tr>;
             })}</tbody>
           </table> : <p className="warn-text">自動モードの商品はありません。商品・KW画面からモードを選択してください。</p>}

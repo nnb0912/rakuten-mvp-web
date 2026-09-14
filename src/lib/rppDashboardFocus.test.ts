@@ -23,4 +23,6 @@ test("ダッシュボードは固定以外の選択モードを主表示する",
 
 test("商品観測がない自動モード商品は広告ONと表示しない", () => {
   assert.match(source, /!row\.product \? "未確認"/);
+  assert.match(source, /!row\.product \? \{ label: "未確認"/);
+  assert.match(source, /商品状態の実測待ち/);
 });

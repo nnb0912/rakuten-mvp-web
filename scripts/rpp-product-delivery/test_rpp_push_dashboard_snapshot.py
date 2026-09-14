@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import csv
+import hashlib
 import importlib.util
 import json
 import tempfile
@@ -16,11 +17,19 @@ spec.loader.exec_module(module)
 class OperationalDataTest(unittest.TestCase):
     def test_performance_daily_builds_single_day_rows(self):
         with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / 'rpp_item_reports.csv'
+            root = Path(directory)
+            path = root / 'rpp_item_reports.csv'
             self._write_csv(path, ['日付', '商品管理番号', 'CTR(%)', 'クリック数(合計)', '実績額(合計)', '売上金額(合計12時間)', '売上件数(合計12時間)', '売上金額(合計720時間)', '売上件数(合計720時間)'], [['2026年09月01日～2026年09月01日', 'R0406', '1.5', '10', '300', '500', '1', '900', '2']])
-            result = module.performance_daily(path)
+            self._write_performance_receipt(root, path, '2026-09-01', 1)
+            old_project = module.PROJECT
+            try:
+                module.PROJECT = root
+                result = module.performance_daily(path)
+            finally:
+                module.PROJECT = old_project
             self.assertEqual(result['date'], '2026-09-01')
             self.assertEqual(result['rows'][0], {'itemCode': 'r0406', 'ctr': 1.5, 'clicks': 10, 'spend': 300, 'sales12h': 500, 'orders12h': 1, 'sales720h': 900, 'orders720h': 2})
+            self.assertTrue(result['receipt']['complete'])
 
     def test_performance_daily_rejects_ranges_and_duplicate_items(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -107,6 +116,16 @@ class OperationalDataTest(unittest.TestCase):
             module.validate_performance_readback(expected, {'date': expected['date'], 'rows': [changed]}, 200)
         with self.assertRaisesRegex(RuntimeError, 'item codes'):
             module.validate_performance_readback(expected, {'date': expected['date'], 'rows': []}, 200)
+
+    @staticmethod
+    def _write_performance_receipt(root: Path, output: Path, date: str, rows: int) -> None:
+        logs = root / 'rpp_logs'
+        logs.mkdir(exist_ok=True)
+        (logs / 'rpp_product_report_refresh_20260902_000000.json').write_text(json.dumps({
+            'ok': True, 'download_complete': True, 'start_date': date, 'end_date': date,
+            'output': str(output), 'expected_count': rows, 'actual_count': rows,
+            'output_sha256': hashlib.sha256(output.read_bytes()).hexdigest(), 'completed_at': '2026-09-02T00:00:00+09:00',
+        }), encoding='utf-8')
 
     @staticmethod
     def _write_csv(path: Path, fieldnames: list[str], rows: list[list[str]]) -> None:

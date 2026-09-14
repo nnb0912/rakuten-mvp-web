@@ -18,7 +18,7 @@ test("RPP dashboard snapshot payload is normalized", () => {
 });
 
 test("RPP dashboard snapshot accepts validated single-day performance rows", () => {
-  const snapshot = normalizeRppDashboardSnapshot({ schemaVersion: 2, syncedAt: "2026-08-31T06:00:00Z", recommendations: { summary: {}, recommendations: [] }, latestFiles: [], performanceDaily: { source: "rpp_item_reports.csv", sourceMtime: "2026-08-31T05:00:00Z", date: "2026-08-30", attribution: { sales12h: true, sales720h: true }, rows: [{ itemCode: "R0579", ctr: 1.2, clicks: 10, spend: 300, sales12h: 500, orders12h: 1, sales720h: 700, orders720h: 2 }] } });
+  const snapshot = normalizeRppDashboardSnapshot({ schemaVersion: 2, syncedAt: "2026-08-31T06:00:00Z", recommendations: { summary: {}, recommendations: [] }, latestFiles: [], performanceDaily: { source: "rpp_item_reports.csv", sourceMtime: "2026-08-31T05:00:00Z", date: "2026-08-30", attribution: { sales12h: true, sales720h: true }, rows: [{ itemCode: "R0579", ctr: 1.2, clicks: 10, spend: 300, sales12h: 500, orders12h: 1, sales720h: 700, orders720h: 2 }], receipt: { file: "receipt.json", completedAt: "2026-08-31T05:01:00Z", sha256: "a".repeat(64), expectedCount: 1, actualCount: 1, complete: true } } });
   assert.equal(snapshot.schemaVersion, 2);
   assert.equal(snapshot.performanceDaily?.rows[0].itemCode, "r0579");
   assert.equal(snapshot.performanceDaily?.rows[0].sales720h, 700);
@@ -28,7 +28,14 @@ test("古い実績は新しいobservedAtだけで上書きしない", () => {
   assert.match(snapshotSource, /where excluded\.source_mtime > \$\{PERFORMANCE_TABLE\}\.source_mtime/);
   assert.doesNotMatch(snapshotSource, /source_mtime[^`]+or excluded\.observed_at/i);
   assert.match(snapshotSource, /performance daily source is older than persisted data/);
+  assert.match(snapshotSource, /pg_advisory_xact_lock/);
+  assert.match(snapshotSource, /performance daily date is older than latest persisted date/);
   assert.ok(snapshotSource.indexOf("assertPersistedPerformanceMatches") < snapshotSource.lastIndexOf(`insert into \${TABLE}`));
+});
+
+test("実績payloadは検証済みdownload receiptを必須とする", () => {
+  const base = { schemaVersion: 2, syncedAt: "2026-08-31T06:00:00Z", recommendations: { summary: {}, recommendations: [] }, latestFiles: [], performanceDaily: { source: "rpp_item_reports.csv", sourceMtime: "2026-08-31T05:00:00Z", date: "2026-08-30", attribution: { sales12h: true, sales720h: true }, rows: [] } };
+  assert.throws(() => normalizeRppDashboardSnapshot(base), /verified receipt/);
 });
 
 test("RPP dashboard snapshot rejects missing recommendation rows", () => {

@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import csv
 import datetime as dt
+import hashlib
 import json
 import os
 import re
@@ -207,13 +208,34 @@ def performance_daily(path: Path | None = None) -> dict | None:
             "sales720h": round(_number(row.get("売上金額(合計720時間)"))),
             "orders720h": round(_number(row.get("売上件数(合計720時間)"))),
         })
+    receipt = performance_receipt(path, report_date.isoformat(), len(rows))
     return {
         "source": path.name,
         "sourceMtime": dt.datetime.fromtimestamp(path.stat().st_mtime, dt.timezone.utc).isoformat().replace("+00:00", "Z"),
         "date": report_date.isoformat(),
         "attribution": {"sales12h": True, "sales720h": True},
         "rows": rows,
+        "receipt": receipt,
     }
+
+
+def performance_receipt(path: Path, report_date: str, row_count: int) -> dict:
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    for receipt_path in sorted((PROJECT / "rpp_logs").glob("rpp_product_report_refresh_*.json"), reverse=True):
+        try:
+            receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+            output = Path(str(receipt.get("output") or "")).resolve()
+            complete = receipt.get("ok") is True and receipt.get("download_complete") is True
+            counts_match = receipt.get("expected_count") == receipt.get("actual_count") == row_count
+            dates_match = receipt.get("start_date") == receipt.get("end_date") == report_date
+            hash_matches = receipt.get("output_sha256") == digest
+            fresh = receipt_path.stat().st_mtime >= path.stat().st_mtime
+            if output == path.resolve() and complete and counts_match and dates_match and hash_matches and fresh:
+                completed_at = dt.datetime.fromisoformat(str(receipt.get("completed_at") or "").replace("Z", "+00:00")).astimezone(dt.timezone.utc).isoformat().replace("+00:00", "Z")
+                return {"file": receipt_path.name, "completedAt": completed_at, "sha256": digest, "expectedCount": row_count, "actualCount": row_count, "complete": True}
+        except (OSError, ValueError, json.JSONDecodeError):
+            continue
+    raise RuntimeError("verified product report download receipt was not found")
 
 
 def budget_metrics() -> dict | None:
@@ -322,7 +344,7 @@ def validate_snapshot_readback(payload: dict, snapshot: dict, read_status: int) 
     if expected_performance is None:
         if actual_performance is not None:
             raise RuntimeError("snapshot performanceDaily readback mismatch")
-    elif not isinstance(actual_performance, dict) or actual_performance.get("date") != expected_performance["date"] or len(actual_performance.get("rows") or []) != len(expected_performance["rows"]):
+    elif not isinstance(actual_performance, dict) or actual_performance.get("date") != expected_performance["date"] or len(actual_performance.get("rows") or []) != len(expected_performance["rows"]) or actual_performance.get("receipt") != expected_performance.get("receipt"):
         raise RuntimeError("snapshot performanceDaily readback mismatch")
 
 
