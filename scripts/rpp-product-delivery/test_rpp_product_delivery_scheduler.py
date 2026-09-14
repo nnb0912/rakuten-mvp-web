@@ -226,19 +226,159 @@ class ProductDeliverySchedulerTest(unittest.TestCase):
         self.assertEqual(changes, [])
         self.assertIn("目標保存", failures[0]["error"])
 
-    def test_large_due_set_is_bounded_and_continues_next_tick(self):
+    def test_ten_due_items_drain_across_four_restarted_runs_then_release_cleanly(self):
         at = dt.datetime(2026, 9, 10, 1, tzinfo=UTC)
-        rows = [
-            {"id": "off-%d" % index, "itemCode": "item-%d" % index, "action": "OFF", "executeAt": at}
-            for index in range(5)
-        ]
-        state, changes, failures, completed = scheduler.process_due_reservations(
-            scheduler.default_state(), rows, at, set(), set(), set(), False,
-            "https://example.invalid", Path("/tmp/state"), Path("/tmp/wal"), Path("/tmp/audit"), 3)
-        self.assertEqual(len(changes), 3)
-        self.assertEqual(len(completed), 3)
-        self.assertEqual(failures, [])
-        self.assertEqual(len(state["reservationOff"]), 3)
+        codes = [f"item-{index}" for index in range(10)]
+        api_pending = {
+            f"off-{index}": {"id": f"off-{index}", "itemCode": code, "action": "OFF", "executeAt": at}
+            for index, code in enumerate(codes)
+        }
+        rms_current = set()
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            state_path = root / "state.json"
+            wal_path = root / "wal.json"
+            audit_path = root / "audit.jsonl"
+            exclude_csv = root / "exclude.csv"
+            initial = scheduler.default_state()
+            initial["legacyLedgerMigrated"] = True
+            scheduler.save_state(initial, state_path)
+            args = Namespace(execute=True, confirm=scheduler.PRODUCTION_CONFIRMATION,
+                             api_base="https://example.invalid", state=state_path, wal=wal_path,
+                             audit=audit_path, exclude_csv=exclude_csv, now=at.isoformat(), quiet=True)
+
+            def fetch_schedules(_api_base):
+                return [], list(api_pending.values()), set(codes), set()
+
+            def claim(reservation_id, **_kwargs):
+                return claimed(api_pending[reservation_id], f"claim-{reservation_id}")
+
+            def acknowledge(reservation_id, _claim_id, status, *_args, **_kwargs):
+                if status == "SUCCEEDED":
+                    api_pending.pop(reservation_id, None)
+                return {"ok": True, "status": status}
+
+            adapter_phases = []
+
+            def adapter(*adapter_args):
+                wal = scheduler.load_wal(adapter_args[3])
+                adapter_phases.append(wal["phase"] if wal else None)
+                return verified_adapter(*adapter_args)
+
+            common_patches = (
+                patch.object(scheduler, "fetch_delivery_schedules", side_effect=fetch_schedules),
+                patch.object(scheduler.legacy, "fetch_selection", return_value=[]),
+                patch.object(scheduler, "refresh_exclusions", return_value={"ok": True}),
+                patch.object(scheduler.legacy, "read_current_exclusions", side_effect=lambda _path: rms_current),
+                patch.object(scheduler, "claim_reservation", side_effect=claim),
+                patch.object(scheduler, "acknowledge_reservation", side_effect=acknowledge),
+                patch.object(scheduler.legacy, "_upload_path", side_effect=lambda control, code: root / f"{control}-{code}.csv"),
+                patch.object(scheduler.legacy, "run_adapter", side_effect=adapter),
+                patch.dict("os.environ", {"RPP_SCHEDULER_MAX_ACTIONS_PER_TICK": "3"}),
+            )
+            for context in common_patches:
+                context.start()
+                self.addCleanup(context.stop)
+
+            off_counts = []
+            for _ in range(4):
+                summary = scheduler.run(args)
+                off_counts.append(len(summary["changes"]))
+                self.assertEqual(summary["failures"], [])
+                # Each call reloads state and re-fetches both API reservations and RMS state.
+                self.assertEqual(scheduler.load_state(state_path)["owned"], summary["ownedAfter"])
+
+            self.assertEqual(off_counts, [3, 3, 3, 1])
+            self.assertEqual(api_pending, {})
+            self.assertEqual(rms_current, set(codes))
+            self.assertEqual(set(scheduler.load_state(state_path)["reservationOff"]), set(codes))
+
+            api_pending.update({
+                f"on-{index}": {"id": f"on-{index}", "itemCode": code, "action": "ON", "executeAt": at}
+                for index, code in enumerate(codes)
+            })
+            on_counts = []
+            for _ in range(4):
+                summary = scheduler.run(args)
+                on_counts.append(len(summary["changes"]))
+                self.assertEqual(summary["failures"], [])
+
+            final = scheduler.load_state(state_path)
+            self.assertEqual(on_counts, [3, 3, 3, 1])
+            self.assertEqual(api_pending, {})
+            self.assertEqual(rms_current, set())
+            self.assertEqual(final["owned"], [])
+            self.assertEqual(final["reservationOff"], [])
+            self.assertEqual(final["preexisting"], [])
+            self.assertEqual(final["overrideOn"], [])
+            self.assertEqual(adapter_phases, ["PREPARED"] * 20)
+            self.assertFalse(wal_path.exists())
+
+    def test_one_wal_failure_does_not_block_nine_items_and_retries_with_fixed_tick_limit(self):
+        at = dt.datetime(2026, 9, 10, 1, tzinfo=UTC)
+        rows = {
+            f"off-{index}": {"id": f"off-{index}", "itemCode": f"item-{index}", "action": "OFF", "executeAt": at}
+            for index in range(10)
+        }
+        rms_current = set()
+        failed_once = False
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            state_path = root / "state.json"
+            wal_path = root / "wal.json"
+            audit_path = root / "audit.jsonl"
+            scheduler.save_state(scheduler.default_state(), state_path)
+
+            def claim(reservation_id, **_kwargs):
+                return claimed(rows[reservation_id], f"claim-{reservation_id}")
+
+            def acknowledge(reservation_id, _claim_id, status, *_args, **_kwargs):
+                if status == "SUCCEEDED":
+                    rows.pop(reservation_id, None)
+                return {"ok": True, "status": status}
+
+            def flaky_adapter(*adapter_args):
+                nonlocal failed_once
+                code = adapter_args[2]
+                wal = scheduler.load_wal(adapter_args[3])
+                if wal is None:
+                    self.fail("PREPARED WAL was not created before adapter execution")
+                self.assertEqual(wal["phase"], "PREPARED")
+                if code == "item-0" and not failed_once:
+                    failed_once = True
+                    raise RuntimeError("temporary RMS failure")
+                return verified_adapter(*adapter_args)
+
+            all_completed = []
+            all_failures = []
+            tick_counts = []
+            with patch.object(scheduler, "claim_reservation", side_effect=claim), \
+                 patch.object(scheduler, "acknowledge_reservation", side_effect=acknowledge), \
+                 patch.object(scheduler.legacy, "_upload_path", side_effect=lambda control, code: root / f"{control}-{code}.csv"), \
+                 patch.object(scheduler.legacy, "run_adapter", side_effect=flaky_adapter):
+                for _ in range(4):
+                    before = len(rows)
+                    state = scheduler.load_state(state_path)
+                    state, changes, failures, completed = scheduler.process_due_reservations(
+                        state, list(rows.values()), at, set(), set(), rms_current, True,
+                        "https://example.invalid", state_path, wal_path, audit_path, 3)
+                    tick_counts.append(len(changes))
+                    all_completed.extend(completed)
+                    all_failures.extend(failures)
+                    self.assertLess(len(rows), before, "fixed tick made no progress")
+
+            self.assertEqual(tick_counts, [3, 3, 3, 1])
+            self.assertEqual(rows, {})
+            self.assertEqual(len(all_completed), 10)
+            self.assertEqual(set(all_completed), {f"off-{index}" for index in range(10)})
+            self.assertEqual([failure["reservationId"] for failure in all_failures], ["off-0"])
+            self.assertTrue(all_failures[0]["retryable"])
+            self.assertTrue(all_failures[0]["claimReleased"])
+            self.assertEqual(set(scheduler.load_state(state_path)["owned"]), {f"item-{index}" for index in range(10)})
+            self.assertEqual(rms_current, {f"item-{index}" for index in range(10)})
+            self.assertFalse(wal_path.exists())
 
     def test_capacity_is_checked_before_claim_and_does_not_overclaim(self):
         at = dt.datetime(2026, 9, 10, 1, tzinfo=UTC)
