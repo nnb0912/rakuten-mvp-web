@@ -6,6 +6,7 @@ import argparse
 import csv
 import datetime as dt
 import hashlib
+import hmac
 import json
 import os
 import re
@@ -43,6 +44,21 @@ def token() -> str:
     if result.returncode != 0 or not result.stdout.strip():
         raise RuntimeError("RPP snapshot sync token is not configured")
     return result.stdout.strip()
+
+
+def performance_receipt_key() -> bytes:
+    value = os.environ.get("RPP_PERFORMANCE_RECEIPT_HMAC_KEY", "").strip()
+    if not value:
+        result = subprocess.run(["security", "find-generic-password", "-s", "hermes.rpp.performance-receipt-hmac", "-w"], text=True, capture_output=True, check=False)
+        value = result.stdout.strip() if result.returncode == 0 else ""
+    if len(value) < 32:
+        raise RuntimeError("RPP performance receipt HMAC key is not configured")
+    return value.encode()
+
+
+def performance_receipt_message(receipt: dict) -> bytes:
+    fields = ("version", "output_sha256", "start_date", "end_date", "actual_count", "request_started_at", "history_created_at", "history_row_sha256", "source_archive_sha256")
+    return "\n".join(str(receipt.get(field, "")) for field in fields).encode()
 
 
 def latest_recommendation() -> tuple[Path, dict]:
@@ -224,15 +240,19 @@ def performance_receipt(path: Path, report_date: str, row_count: int) -> dict:
     for receipt_path in sorted((PROJECT / "rpp_logs").glob("rpp_product_report_refresh_*.json"), reverse=True):
         try:
             receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+            signature = str(receipt.get("signature") or "")
+            expected_signature = hmac.new(performance_receipt_key(), performance_receipt_message(receipt), hashlib.sha256).hexdigest()
+            signature_valid = len(signature) == 64 and hmac.compare_digest(signature, expected_signature)
             output = Path(str(receipt.get("output") or "")).resolve()
             complete = receipt.get("ok") is True and receipt.get("download_complete") is True
-            counts_match = receipt.get("expected_count") == receipt.get("actual_count") == row_count
+            counts_match = receipt.get("actual_count") == row_count
             dates_match = receipt.get("start_date") == receipt.get("end_date") == report_date
             hash_matches = receipt.get("output_sha256") == digest
             fresh = receipt_path.stat().st_mtime >= path.stat().st_mtime
-            if output == path.resolve() and complete and counts_match and dates_match and hash_matches and fresh:
+            evidence_valid = receipt.get("version") == 1 and len(str(receipt.get("history_row_sha256") or "")) == 64 and len(str(receipt.get("source_archive_sha256") or "")) == 64 and bool(receipt.get("request_started_at")) and bool(receipt.get("history_created_at"))
+            if output == path.resolve() and complete and counts_match and dates_match and hash_matches and fresh and signature_valid and evidence_valid:
                 completed_at = dt.datetime.fromisoformat(str(receipt.get("completed_at") or "").replace("Z", "+00:00")).astimezone(dt.timezone.utc).isoformat().replace("+00:00", "Z")
-                return {"file": receipt_path.name, "completedAt": completed_at, "sha256": digest, "expectedCount": row_count, "actualCount": row_count, "complete": True}
+                return {"version": 1, "file": receipt_path.name, "completedAt": completed_at, "sha256": digest, "actualCount": row_count, "requestStartedAt": receipt["request_started_at"], "historyCreatedAt": receipt["history_created_at"], "historyRowSha256": receipt["history_row_sha256"], "sourceArchiveSha256": receipt["source_archive_sha256"], "signature": signature, "complete": True}
         except (OSError, ValueError, json.JSONDecodeError):
             continue
     raise RuntimeError("verified product report download receipt was not found")

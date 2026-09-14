@@ -1,9 +1,10 @@
 import type { Pool, PoolClient } from "pg";
+import { createHmac, timingSafeEqual } from "node:crypto";
 import { pool } from "./db.ts";
 
 export type RppSnapshotFile = { name: string; exists: boolean; mtime: string | null; size: number };
 export type RppPerformanceDailyRow = { itemCode: string; ctr: number | null; clicks: number; spend: number; sales12h: number; orders12h: number; sales720h: number; orders720h: number };
-export type RppPerformanceReceipt = { file: string; completedAt: string; sha256: string; expectedCount: number; actualCount: number; complete: true };
+export type RppPerformanceReceipt = { version: 1; file: string; completedAt: string; sha256: string; actualCount: number; requestStartedAt: string; historyCreatedAt: string; historyRowSha256: string; sourceArchiveSha256: string; signature: string; complete: true };
 export type RppPerformanceDaily = { source: string; sourceMtime: string; date: string; attribution: { sales12h: true; sales720h: true }; rows: RppPerformanceDailyRow[]; receipt: RppPerformanceReceipt };
 export type RppSnapshotConfiguredTarget = { id: string; itemCode: string; itemName: string; keyword: string; itemCpc: number | null; keywordCpc: number | null; source: "商品CPC" | "キーワードCPC"; owner?: string; rppPosition?: string; rppPositionKeyword?: string; rppPositions?: { keyword: string; position: string }[] };
 export type RppSnapshotExclusionProduct = { itemCode: string; itemName: string; itemCpc: number | null; excluded: boolean; owner?: string };
@@ -23,6 +24,15 @@ const PERFORMANCE_TABLE = "rpp_performance_daily";
 const num = (value: unknown) => Number.isFinite(Number(value)) ? Number(value) : 0;
 const dateOnly = (value: unknown) => typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : "";
 
+function validPerformanceReceiptSignature(receipt: Partial<RppPerformanceReceipt>, date: string) {
+  const key = process.env.RPP_PERFORMANCE_RECEIPT_HMAC_KEY ?? "";
+  const signature = String(receipt.signature ?? "");
+  if (key.length < 32 || !/^[a-f0-9]{64}$/.test(signature)) return false;
+  const message = [receipt.version, receipt.sha256, date, date, receipt.actualCount, receipt.requestStartedAt, receipt.historyCreatedAt, receipt.historyRowSha256, receipt.sourceArchiveSha256].map((value) => String(value ?? "")).join("\n");
+  const expected = createHmac("sha256", key).update(message).digest("hex");
+  return timingSafeEqual(Buffer.from(signature), Buffer.from(expected));
+}
+
 function normalizePerformanceDaily(value: unknown): RppPerformanceDaily | null {
   if (value == null) return null;
   if (!value || typeof value !== "object") throw new Error("performanceDaily must be an object");
@@ -38,8 +48,9 @@ function normalizePerformanceDaily(value: unknown): RppPerformanceDaily | null {
   });
   const receipt = input.receipt as Partial<RppPerformanceReceipt> | undefined;
   const completedAt = typeof receipt?.completedAt === "string" ? new Date(receipt.completedAt) : new Date(NaN);
-  if (!receipt || receipt.complete !== true || !/^[a-f0-9]{64}$/.test(String(receipt.sha256 ?? "")) || !Number.isInteger(receipt.expectedCount) || receipt.expectedCount !== rows.length || receipt.actualCount !== rows.length || Number.isNaN(completedAt.getTime()) || !String(receipt.file ?? "").trim()) throw new Error("performanceDaily verified receipt is invalid");
-  return { source: input.source, sourceMtime: new Date(input.sourceMtime).toISOString(), date, attribution: { sales12h: true, sales720h: true }, rows, receipt: { file: String(receipt.file), completedAt: completedAt.toISOString(), sha256: String(receipt.sha256), expectedCount: rows.length, actualCount: rows.length, complete: true } };
+  const evidenceHashesValid = /^[a-f0-9]{64}$/.test(String(receipt?.historyRowSha256 ?? "")) && /^[a-f0-9]{64}$/.test(String(receipt?.sourceArchiveSha256 ?? ""));
+  if (!receipt || receipt.version !== 1 || receipt.complete !== true || !/^[a-f0-9]{64}$/.test(String(receipt.sha256 ?? "")) || receipt.actualCount !== rows.length || Number.isNaN(completedAt.getTime()) || !String(receipt.file ?? "").trim() || !String(receipt.requestStartedAt ?? "").trim() || !/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(String(receipt.historyCreatedAt ?? "")) || !evidenceHashesValid || !validPerformanceReceiptSignature(receipt, date)) throw new Error("performanceDaily verified receipt is invalid");
+  return { source: input.source, sourceMtime: new Date(input.sourceMtime).toISOString(), date, attribution: { sales12h: true, sales720h: true }, rows, receipt: { version: 1, file: String(receipt.file), completedAt: completedAt.toISOString(), sha256: String(receipt.sha256), actualCount: rows.length, requestStartedAt: String(receipt.requestStartedAt), historyCreatedAt: String(receipt.historyCreatedAt), historyRowSha256: String(receipt.historyRowSha256), sourceArchiveSha256: String(receipt.sourceArchiveSha256), signature: String(receipt.signature), complete: true } };
 }
 
 function nullablePositiveNumber(value: unknown) {
@@ -170,7 +181,7 @@ export async function saveRppDashboardSnapshot(value: unknown) {
     await client.query("begin");
     await ensureTables(client);
     if (snapshot.performanceDaily) {
-      await client.query("select pg_advisory_xact_lock(hashtext($1))", [`rpp-performance:${snapshot.performanceDaily.date}`]);
+      await client.query("select pg_advisory_xact_lock(hashtext($1))", ["rpp-performance-global"]);
       const latestDate = await client.query(`select max(performance_date)::text as performance_date from ${PERFORMANCE_TABLE}`);
       if (latestDate.rows[0]?.performance_date && snapshot.performanceDaily.date < String(latestDate.rows[0].performance_date)) throw new Error("performance daily date is older than latest persisted date");
       const latest = await client.query(`select max(source_mtime) as source_mtime from ${PERFORMANCE_TABLE} where performance_date=$1`, [snapshot.performanceDaily.date]);

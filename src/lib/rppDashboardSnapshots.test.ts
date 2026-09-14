@@ -1,9 +1,17 @@
 import assert from "node:assert/strict";
+import { createHmac } from "node:crypto";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import { normalizeRppDashboardSnapshot } from "./rppDashboardSnapshots.ts";
 
 const snapshotSource = readFileSync(new URL("./rppDashboardSnapshots.ts", import.meta.url), "utf8");
+const receiptKey = "test-only-rpp-performance-receipt-key-123456";
+process.env.RPP_PERFORMANCE_RECEIPT_HMAC_KEY = receiptKey;
+function signedReceipt(date: string, count: number) {
+  const receipt = { version: 1 as const, file: "receipt.json", completedAt: "2026-08-31T05:01:00Z", sha256: "a".repeat(64), actualCount: count, requestStartedAt: "2026-08-31T13:59:00+09:00", historyCreatedAt: "2026-08-31 14:00:00", historyRowSha256: "b".repeat(64), sourceArchiveSha256: "c".repeat(64), complete: true as const };
+  const message = [receipt.version, receipt.sha256, date, date, receipt.actualCount, receipt.requestStartedAt, receipt.historyCreatedAt, receipt.historyRowSha256, receipt.sourceArchiveSha256].join("\n");
+  return { ...receipt, signature: createHmac("sha256", receiptKey).update(message).digest("hex") };
+}
 
 test("RPP dashboard snapshot payload is normalized", () => {
   const snapshot = normalizeRppDashboardSnapshot({
@@ -18,17 +26,22 @@ test("RPP dashboard snapshot payload is normalized", () => {
 });
 
 test("RPP dashboard snapshot accepts validated single-day performance rows", () => {
-  const snapshot = normalizeRppDashboardSnapshot({ schemaVersion: 2, syncedAt: "2026-08-31T06:00:00Z", recommendations: { summary: {}, recommendations: [] }, latestFiles: [], performanceDaily: { source: "rpp_item_reports.csv", sourceMtime: "2026-08-31T05:00:00Z", date: "2026-08-30", attribution: { sales12h: true, sales720h: true }, rows: [{ itemCode: "R0579", ctr: 1.2, clicks: 10, spend: 300, sales12h: 500, orders12h: 1, sales720h: 700, orders720h: 2 }], receipt: { file: "receipt.json", completedAt: "2026-08-31T05:01:00Z", sha256: "a".repeat(64), expectedCount: 1, actualCount: 1, complete: true } } });
+  const snapshot = normalizeRppDashboardSnapshot({ schemaVersion: 2, syncedAt: "2026-08-31T06:00:00Z", recommendations: { summary: {}, recommendations: [] }, latestFiles: [], performanceDaily: { source: "rpp_item_reports.csv", sourceMtime: "2026-08-31T05:00:00Z", date: "2026-08-30", attribution: { sales12h: true, sales720h: true }, rows: [{ itemCode: "R0579", ctr: 1.2, clicks: 10, spend: 300, sales12h: 500, orders12h: 1, sales720h: 700, orders720h: 2 }], receipt: signedReceipt("2026-08-30", 1) } });
   assert.equal(snapshot.schemaVersion, 2);
   assert.equal(snapshot.performanceDaily?.rows[0].itemCode, "r0579");
   assert.equal(snapshot.performanceDaily?.rows[0].sales720h, 700);
+});
+
+test("RPP dashboard snapshot rejects a forged performance receipt", () => {
+  const receipt = { ...signedReceipt("2026-08-30", 1), signature: "0".repeat(64) };
+  assert.throws(() => normalizeRppDashboardSnapshot({ schemaVersion: 2, syncedAt: "2026-08-31T06:00:00Z", recommendations: { summary: {}, recommendations: [] }, latestFiles: [], performanceDaily: { source: "rpp_item_reports.csv", sourceMtime: "2026-08-31T05:00:00Z", date: "2026-08-30", attribution: { sales12h: true, sales720h: true }, rows: [{ itemCode: "R0579", ctr: 1.2, clicks: 10, spend: 300, sales12h: 500, orders12h: 1, sales720h: 700, orders720h: 2 }], receipt } }), /verified receipt is invalid/);
 });
 
 test("古い実績は新しいobservedAtだけで上書きしない", () => {
   assert.match(snapshotSource, /where excluded\.source_mtime > \$\{PERFORMANCE_TABLE\}\.source_mtime/);
   assert.doesNotMatch(snapshotSource, /source_mtime[^`]+or excluded\.observed_at/i);
   assert.match(snapshotSource, /performance daily source is older than persisted data/);
-  assert.match(snapshotSource, /pg_advisory_xact_lock/);
+  assert.match(snapshotSource, /pg_advisory_xact_lock\(hashtext\(\$1\)\).*rpp-performance-global/s);
   assert.match(snapshotSource, /performance daily date is older than latest persisted date/);
   assert.ok(snapshotSource.indexOf("assertPersistedPerformanceMatches") < snapshotSource.lastIndexOf(`insert into \${TABLE}`));
 });

@@ -3,6 +3,8 @@ import csv
 import hashlib
 import importlib.util
 import json
+import hmac
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -15,6 +17,9 @@ spec.loader.exec_module(module)
 
 
 class OperationalDataTest(unittest.TestCase):
+    def setUp(self):
+        os.environ['RPP_PERFORMANCE_RECEIPT_HMAC_KEY'] = 'test-only-rpp-performance-receipt-key-123456'
+
     def test_performance_daily_builds_single_day_rows(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -30,6 +35,24 @@ class OperationalDataTest(unittest.TestCase):
             self.assertEqual(result['date'], '2026-09-01')
             self.assertEqual(result['rows'][0], {'itemCode': 'r0406', 'ctr': 1.5, 'clicks': 10, 'spend': 300, 'sales12h': 500, 'orders12h': 1, 'sales720h': 900, 'orders720h': 2})
             self.assertTrue(result['receipt']['complete'])
+
+    def test_performance_daily_rejects_forged_receipt_signature(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            path = root / 'rpp_item_reports.csv'
+            self._write_csv(path, ['日付', '商品管理番号', 'CTR(%)', 'クリック数(合計)', '実績額(合計)', '売上金額(合計12時間)', '売上件数(合計12時間)', '売上金額(合計720時間)', '売上件数(合計720時間)'], [['2026年09月01日～2026年09月01日', 'R0406', '1.5', '10', '300', '500', '1', '900', '2']])
+            self._write_performance_receipt(root, path, '2026-09-01', 1)
+            receipt_path = next((root / 'rpp_logs').glob('*.json'))
+            receipt = json.loads(receipt_path.read_text(encoding='utf-8'))
+            receipt['signature'] = '0' * 64
+            receipt_path.write_text(json.dumps(receipt), encoding='utf-8')
+            old_project = module.PROJECT
+            try:
+                setattr(module, 'PROJECT', root)
+                with self.assertRaisesRegex(RuntimeError, 'verified product report download receipt'):
+                    module.performance_daily(path)
+            finally:
+                setattr(module, 'PROJECT', old_project)
 
     def test_performance_daily_rejects_ranges_and_duplicate_items(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -121,11 +144,14 @@ class OperationalDataTest(unittest.TestCase):
     def _write_performance_receipt(root: Path, output: Path, date: str, rows: int) -> None:
         logs = root / 'rpp_logs'
         logs.mkdir(exist_ok=True)
-        (logs / 'rpp_product_report_refresh_20260902_000000.json').write_text(json.dumps({
-            'ok': True, 'download_complete': True, 'start_date': date, 'end_date': date,
-            'output': str(output), 'expected_count': rows, 'actual_count': rows,
-            'output_sha256': hashlib.sha256(output.read_bytes()).hexdigest(), 'completed_at': '2026-09-02T00:00:00+09:00',
-        }), encoding='utf-8')
+        receipt = {
+            'version': 1, 'ok': True, 'download_complete': True, 'start_date': date, 'end_date': date,
+            'output': str(output), 'actual_count': rows, 'output_sha256': hashlib.sha256(output.read_bytes()).hexdigest(),
+            'completed_at': '2026-09-02T00:00:00+09:00', 'request_started_at': '2026-09-02T00:00:00+09:00',
+            'history_created_at': '2026-09-02 00:00:01', 'history_row_sha256': 'b' * 64, 'source_archive_sha256': 'c' * 64,
+        }
+        receipt['signature'] = hmac.new(os.environ['RPP_PERFORMANCE_RECEIPT_HMAC_KEY'].encode(), module.performance_receipt_message(receipt), hashlib.sha256).hexdigest()
+        (logs / 'rpp_product_report_refresh_20260902_000000.json').write_text(json.dumps(receipt), encoding='utf-8')
 
     @staticmethod
     def _write_csv(path: Path, fieldnames: list[str], rows: list[list[str]]) -> None:
