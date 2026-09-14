@@ -11,8 +11,11 @@ from __future__ import annotations
 import argparse
 import copy
 import datetime as dt
+import hashlib
 import json
+import math
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -22,7 +25,7 @@ import urllib.parse
 import urllib.request
 import uuid
 from pathlib import Path
-from typing import Dict, Iterable, List, Mapping, Optional, Set, Tuple
+from typing import Dict, Iterable, List, Mapping, NoReturn, Optional, Set, Tuple
 from zoneinfo import ZoneInfo
 
 import rpp_product_night_pause as legacy
@@ -32,17 +35,23 @@ API_BASE = os.environ.get("RPP_DASHBOARD_URL", "https://rakuten-mvp-web.onrender
 STATE_PATH = PROJECT / "rpp_apply_logs" / "rpp_product_delivery_scheduler_state.json"
 WAL_PATH = PROJECT / "rpp_apply_logs" / "rpp_product_delivery_scheduler_wal.json"
 AUDIT_PATH = PROJECT / "rpp_apply_logs" / "rpp_product_delivery_scheduler_audit.jsonl"
+CIRCUIT_PATH = PROJECT / "rpp_apply_logs" / "rpp_product_delivery_scheduler_circuit.json"
+ON_GUARD_ALERT_PATH = PROJECT / "rpp_apply_logs" / "rpp_product_delivery_scheduler_on_guard.json"
 EXCLUDE_CSV = PROJECT / "rpp_exclude_items.csv"
 REFRESH_SCRIPT = Path(os.environ.get("RPP_SETTINGS_REFRESH_SCRIPT", str(PROJECT / "scripts_refresh_rpp_settings_csvs.py")))
 JST = ZoneInfo("Asia/Tokyo")
 UTC = dt.timezone.utc
 PRODUCTION_CONFIRMATION = "RPP_PRODUCT_DELIVERY_SCHEDULER"
+CIRCUIT_RESET_CONFIRMATION = "RPP_CIRCUIT_RESET"
+CIRCUIT_PROBE_CONFIRMATION = "RPP_CIRCUIT_PROBE"
 STATE_VERSION = 3
 
 
 def max_actions_per_tick() -> int:
     try:
-        return max(1, min(20, int(os.environ.get("RPP_SCHEDULER_MAX_ACTIONS_PER_TICK", "3"))))
+        # Production rollout is deliberately canaried.  No environment override
+        # may raise the number of RMS writes above three in a single tick.
+        return max(1, min(3, int(os.environ.get("RPP_SCHEDULER_MAX_ACTIONS_PER_TICK", "3"))))
     except ValueError as exc:
         raise RuntimeError("RPP_SCHEDULER_MAX_ACTIONS_PER_TICK must be an integer") from exc
 
@@ -289,6 +298,151 @@ def atomic_json_write(payload: dict, path: Path) -> None:
     finally:
         if os.path.exists(temporary):
             os.unlink(temporary)
+
+
+def _failure_category(error: object) -> Optional[str]:
+    text = str(error)
+    lowered = text.lower()
+    if "rms_challenge" in lowered or "captcha" in lowered or "画像認証" in text:
+        return "CAPTCHA"
+    if "rms_readback_uncertain" in lowered or "rms result is uncertain" in lowered or "rms結果がuncertain" in lowered:
+        return "RMS_UNCERTAIN"
+    if any(token in lowered for token in ("rms_snapshot_incomplete", "completeness/output mismatch", "snapshot is stale", "expected_count")) \
+            or "件数不一致" in text:
+        return "RMS_SNAPSHOT_INCOMPLETE"
+    if any(token in lowered for token in ("delivery-schedules response", "pending reservation row is invalid", "schedule row is invalid")):
+        return "SCHEDULE_API_SCHEMA"
+    if any(token in lowered for token in ("rms_auth_required", "unauthorized", "forbidden", "login required", "session expired")) \
+            or "ログイン" in text or "認証切れ" in text or re.search(r"(?:^|\D)(?:401|403)(?:\D|$)", text):
+        return "AUTH"
+    if "rms_dom_drift" in lowered or ("rms" in lowered and any(token in lowered for token in ("selector", "locator", "dom", "element not found"))) \
+            or "rms画面" in lowered or "画面仕様" in text:
+        return "RMS_DOM"
+    if any(token in lowered for token in ("rms_network", "timed out", "timeout", "connection reset", "connection refused",
+                                            "temporary failure", "schedule api failed", "network is unreachable",
+                                            "urlopen error")) or "通信" in text:
+        return "NETWORK"
+    return None
+
+
+def _failure_signature(category: str, error: object) -> str:
+    normalized = re.sub(r"\b[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\b", "<id>", str(error).lower())
+    normalized = re.sub(r"\d+", "#", normalized)
+    normalized = re.sub(r"\s+", " ", normalized).strip()[:500]
+    return "%s:%s" % (category, hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:16])
+
+
+def _must_stop_same_tick(error: object) -> bool:
+    return _failure_category(error) in {"CAPTCHA", "AUTH", "RMS_DOM", "RMS_SNAPSHOT_INCOMPLETE",
+                                        "SCHEDULE_API_SCHEMA", "RMS_UNCERTAIN"}
+
+
+def load_circuit(path: Path = CIRCUIT_PATH) -> dict:
+    if not path.exists():
+        return {"open": False, "category": None, "signature": None, "consecutive": 0,
+                "openedAt": None, "lastFailureAt": None, "lastError": None}
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(value, dict) or not isinstance(value.get("open"), bool):
+            raise ValueError("invalid circuit payload")
+        return value
+    except (OSError, ValueError, json.JSONDecodeError):
+        # A damaged safety state must stop production rather than silently reset.
+        return {"open": True, "category": "STATE_CORRUPT", "signature": "STATE_CORRUPT",
+                "consecutive": 1, "openedAt": iso_utc(now_utc()), "lastFailureAt": iso_utc(now_utc()),
+                "lastError": "circuit breaker state is invalid"}
+
+
+def record_external_failure(error: object, path: Path = CIRCUIT_PATH, threshold: int = 3) -> dict:
+    category = _failure_category(error)
+    if category is None:
+        return {"status": "ignored", "open": False, "notify": False}
+    signature = _failure_signature(category, error)
+    previous = load_circuit(path)
+    same = previous.get("signature") == signature
+    consecutive = int(previous.get("consecutive") or 0) + 1 if same else 1
+    immediate = category in {"CAPTCHA", "AUTH", "RMS_DOM", "RMS_UNCERTAIN", "RMS_SNAPSHOT_INCOMPLETE", "SCHEDULE_API_SCHEMA"}
+    was_open = bool(previous.get("open")) and same
+    opened = was_open or immediate or consecutive >= max(1, threshold)
+    timestamp = iso_utc(now_utc())
+    payload = {
+        "open": opened,
+        "category": category,
+        "signature": signature,
+        "consecutive": consecutive,
+        "openedAt": previous.get("openedAt") if was_open else (timestamp if opened else None),
+        "lastFailureAt": timestamp,
+        "lastError": str(error)[-500:],
+    }
+    atomic_json_write(payload, path)
+    return {**payload, "status": "open" if opened else "counting", "notify": opened and not was_open}
+
+
+def reset_circuit(path: Path = CIRCUIT_PATH) -> None:
+    if path.exists():
+        path.unlink()
+        _fsync_parent(path)
+
+
+def update_on_guard_alerts(item_codes: Set[str], path: Path = ON_GUARD_ALERT_PATH) -> dict:
+    codes = sorted({legacy.normalize_code(code) for code in item_codes})
+    previous: Set[str] = set()
+    if path.exists():
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            previous = {legacy.normalize_code(code) for code in payload.get("itemCodes", [])}
+        except (OSError, ValueError, json.JSONDecodeError):
+            previous = set()
+    if not codes:
+        resolved = bool(previous)
+        if path.exists():
+            path.unlink()
+            _fsync_parent(path)
+        return {"notify": False, "resolved": resolved, "itemCodes": [], "newItemCodes": []}
+    new_codes = sorted(set(codes) - previous)
+    atomic_json_write({"itemCodes": codes, "updatedAt": iso_utc(now_utc())}, path)
+    return {"notify": bool(new_codes), "resolved": False, "itemCodes": codes, "newItemCodes": new_codes}
+
+
+def notification_summary(summary: dict, audit_path: Path = AUDIT_PATH) -> dict:
+    limit = max(1, int(summary.get("maxActionsPerTick") or 1))
+    queue_depth = max(0, int(summary.get("queueDepth") or 0))
+    blocked = summary.get("blocked") is True
+    ticks = None if blocked else (int(math.ceil(queue_depth / limit)) if queue_depth else 0)
+    compact_changes = [{key: row.get(key) for key in ("itemCode", "action", "productionChange") if key in row}
+                       for row in summary.get("changes", [])[:10]]
+    compact_failures = [{key: row.get(key) for key in ("itemCode", "reservationId", "retryable", "blocksRms", "error") if key in row}
+                        for row in summary.get("failures", [])[:10]]
+    earliest = None
+    if isinstance(ticks, int) and ticks > 0 and summary.get("observedAt"):
+        earliest = iso_utc(parse_iso(summary["observedAt"]) + dt.timedelta(minutes=ticks))
+    return {
+        "schemaVersion": 1,
+        "kind": "rppDeliveryTick",
+        "tickId": summary.get("tickId"),
+        "at": summary.get("observedAt"),
+        "ok": summary.get("ok") is True,
+        "dryRun": summary.get("dryRun") is True,
+        "changes": compact_changes,
+        "failures": compact_failures,
+        "completedReservationCount": len(summary.get("completedReservations", [])),
+        "activeRecurringCount": len(summary.get("activeRecurring", [])),
+        "desiredOffCount": len(summary.get("desiredOff", [])),
+        "ownedAfterCount": len(summary.get("ownedAfter", [])),
+        "preexistingAfterCount": len(summary.get("preexistingAfter", [])),
+        "queueDepth": queue_depth,
+        "blocked": blocked,
+        "estimatedTicksRemaining": ticks,
+        "estimatedCompletionMinutes": ticks,
+        "earliestCompletionAt": earliest,
+        "omittedChanges": max(0, len(summary.get("changes", [])) - 10),
+        "omittedFailures": max(0, len(summary.get("failures", [])) - 10),
+        "rolloutPolicy": {"mode": "BOUNDED_CANARY", "maxActionsPerTick": limit},
+        "walRecovery": summary.get("walRecovery", {"status": "none"}),
+        "circuitBreaker": summary.get("circuitBreaker", {"open": False}),
+        "warnings": list(summary.get("warnings", []))[:10],
+        "audit": {"path": str(audit_path), "tickId": summary.get("tickId")},
+    }
 
 
 def save_state(state: dict, path: Path = STATE_PATH) -> None:
@@ -581,7 +735,13 @@ def process_due_reservations(state: dict, reservations: Iterable[dict], at: dt.d
                 try:
                     acknowledge_reservation(reservation["id"], str(cached.get("claimId") or ""), "SUCCEEDED", api_base=api_base)
                 except Exception as exc:
-                    failures.append({"reservationId": reservation["id"], "error": "success acknowledgement pending: %s" % str(exc)[-500:]})
+                    failure = {"reservationId": reservation["id"], "error": "success acknowledgement pending: %s" % str(exc)[-500:]}
+                    if _must_stop_same_tick(exc):
+                        failure["blocksRms"] = True
+                        failure["circuitTrip"] = True
+                    failures.append(failure)
+                    if failure.get("circuitTrip"):
+                        break
             continue
         code = reservation["itemCode"]
         next_state = _reservation_state_after(state, reservation, raw_recurring)
@@ -604,7 +764,12 @@ def process_due_reservations(state: dict, reservations: Iterable[dict], at: dt.d
                 except Exception as exc:
                     failure["retryable"] = True
                     failure["error"] = "orphan guard acknowledgement pending: %s" % str(exc)[-700:]
+                    if _must_stop_same_tick(exc):
+                        failure["blocksRms"] = True
+                        failure["circuitTrip"] = True
             failures.append(failure)
+            if failure.get("circuitTrip"):
+                break
             continue
         if execute and reservation.get("claimId") and reservation.get("claimExpiresAt") and reservation["claimExpiresAt"] > at:
             failures.append({"reservationId": reservation["id"], "itemCode": code, "retryable": True,
@@ -612,17 +777,11 @@ def process_due_reservations(state: dict, reservations: Iterable[dict], at: dt.d
                              "error": "reservation already has an active claim; skipped"})
             continue
         if reservation["action"] == "ON" and code not in release_allowed:
-            failure = {"reservationId": reservation["id"], "itemCode": code, "retryable": False,
-                       "error": "広告ONには全RPP設定行への目標保存が必要です"}
-            if execute:
-                try:
-                    claimed = claim_reservation(reservation["id"], api_base=api_base)
-                    claim_id = str(claimed.get("claimId") or "")
-                    acknowledge_reservation(reservation["id"], claim_id, "FAILED", failure["error"], api_base)
-                    failure["terminal"] = True
-                except Exception as exc:
-                    failure["retryable"] = True
-                    failure["error"] = "ON guard failure acknowledgement pending: %s" % str(exc)[-700:]
+            # Keep the reservation pending and unclaimed. Once the operator completes
+            # every saved target and the snapshot refreshes, the next tick restores ON.
+            failure = {"reservationId": reservation["id"], "itemCode": code, "retryable": True,
+                       "onGuardBlocked": True,
+                       "error": "広告ONには全RPP設定行への目標保存が必要です。保存・スナップショット同期後に自動再試行します"}
             failures.append(failure)
             continue
         if execute:
@@ -635,9 +794,15 @@ def process_due_reservations(state: dict, reservations: Iterable[dict], at: dt.d
                 reservation = {**reservation, "claimId": str(claimed["claimId"])}
                 next_state["processedReservations"][reservation["id"]]["claimId"] = reservation["claimId"]
             except Exception as exc:
-                failures.append({"reservationId": reservation["id"], "itemCode": code, "retryable": True,
-                                 "attemptCount": reservation.get("attemptCount"), "nextAttemptAt": reservation.get("nextAttemptAt"),
-                                 "error": "claim failed: %s" % str(exc)[-900:]})
+                failure = {"reservationId": reservation["id"], "itemCode": code, "retryable": True,
+                           "attemptCount": reservation.get("attemptCount"), "nextAttemptAt": reservation.get("nextAttemptAt"),
+                           "error": "claim failed: %s" % str(exc)[-900:]}
+                if _must_stop_same_tick(exc):
+                    failure["blocksRms"] = True
+                    failure["circuitTrip"] = True
+                failures.append(failure)
+                if failure.get("circuitTrip"):
+                    break
                 continue
         if control == "n":
             next_state["owned"] = sorted(set(next_state["owned"]) | {code})
@@ -660,7 +825,13 @@ def process_due_reservations(state: dict, reservations: Iterable[dict], at: dt.d
                 try:
                     acknowledge_reservation(reservation["id"], str(reservation.get("claimId") or ""), "SUCCEEDED", api_base=api_base)
                 except Exception as exc:
-                    failures.append({"reservationId": reservation["id"], "error": "success acknowledgement pending: %s" % str(exc)[-500:]})
+                    failure = {"reservationId": reservation["id"], "error": "success acknowledgement pending: %s" % str(exc)[-500:]}
+                    if _must_stop_same_tick(exc):
+                        failure["blocksRms"] = True
+                        failure["circuitTrip"] = True
+                    failures.append(failure)
+                    if failure.get("circuitTrip"):
+                        return state, changes, failures, completed
         except Exception as exc:
             failure = {"reservationId": reservation["id"], "itemCode": code, "retryable": True,
                        "attemptCount": reservation.get("attemptCount"), "nextAttemptAt": reservation.get("nextAttemptAt"),
@@ -674,20 +845,31 @@ def process_due_reservations(state: dict, reservations: Iterable[dict], at: dt.d
                         failure["claimReleased"] = True
                     except Exception as release_exc:
                         failure["claimReleaseError"] = str(release_exc)[-500:]
+                        if _must_stop_same_tick(release_exc):
+                            failure["blocksRms"] = True
+                            failure["circuitTrip"] = True
                 failures.append(failure)
+                if _must_stop_same_tick(exc) or failure.get("circuitTrip"):
+                    failure["blocksRms"] = True
+                    failure["circuitTrip"] = True
+                    break
                 continue
             if wal is not None:
                 failure["retryable"] = False
                 failure["blocksRms"] = True
                 failure["error"] += "; RMS result is uncertain; manual repair required"
+            elif _must_stop_same_tick(exc):
+                failure["blocksRms"] = True
+                failure["circuitTrip"] = True
             failures.append(failure)
-            if wal is not None:
+            if wal is not None or failure.get("circuitTrip"):
                 break
     return state, changes, failures, completed
 
 
 def reconcile_recurring(state: dict, raw_recurring: Set[str], release_allowed: Set[str], current: Set[str], execute: bool,
-                        state_path: Path, wal_path: Path, max_actions: int = 999) -> Tuple[dict, List[dict], List[dict]]:
+                        state_path: Path, wal_path: Path, max_actions: int = 999,
+                        audit_path: Path = AUDIT_PATH) -> Tuple[dict, List[dict], List[dict]]:
     next_state = copy.deepcopy(state)
     override = set(next_state["overrideOn"])
     override.intersection_update(raw_recurring)
@@ -716,8 +898,8 @@ def reconcile_recurring(state: dict, raw_recurring: Set[str], release_allowed: S
                 if len(changes) >= max_actions:
                     break
                 if code not in release_allowed:
-                    failures.append({"itemCode": code, "retryable": False,
-                                     "error": "広告ONには全RPP設定行への目標保存が必要です"})
+                    failures.append({"itemCode": code, "retryable": True, "onGuardBlocked": True,
+                                     "error": "広告ONには全RPP設定行への目標保存が必要です。保存・スナップショット同期後に自動再試行します"})
                     continue
                 after = copy.deepcopy(next_state)
                 after["owned"] = sorted(owned - {code})
@@ -731,8 +913,24 @@ def reconcile_recurring(state: dict, raw_recurring: Set[str], release_allowed: S
                 if execute:
                     save_state(next_state, state_path)
         except Exception as exc:
-            failures.append({"itemCode": code, "error": str(exc)[-1000:]})
+            failure = {"itemCode": code, "error": str(exc)[-1000:]}
+            wal = load_wal(wal_path)
+            if wal is not None and wal["phase"] == "PREPARED":
+                next_state, _ = recover_wal(next_state, current, state_path, wal_path, audit_path)
+                if _must_stop_same_tick(exc):
+                    failure["blocksRms"] = True
+                    failure["circuitTrip"] = True
+            elif wal is not None:
+                failure["retryable"] = False
+                failure["blocksRms"] = True
+                failure["error"] += "; RMS result is uncertain; manual repair required"
+            if _must_stop_same_tick(exc):
+                failure["blocksRms"] = True
+                failure["circuitTrip"] = True
+            failures.append(failure)
             if wal_path.exists():
+                break
+            if failure.get("circuitTrip"):
                 break
             continue
     if execute and next_state != state:
@@ -740,22 +938,126 @@ def reconcile_recurring(state: dict, raw_recurring: Set[str], release_allowed: S
     return next_state, changes, failures
 
 
+class SafeArgumentParser(argparse.ArgumentParser):
+    def error(self, message: str) -> NoReturn:
+        # argparse normally echoes the offending argv to stderr. argv may contain
+        # credentials, so route failures through the redacted compact JSON path.
+        raise ValueError("invalid CLI arguments")
+
+
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description=__doc__)
+    parser = SafeArgumentParser(description=__doc__)
     parser.add_argument("--execute", action="store_true")
     parser.add_argument("--confirm")
     parser.add_argument("--api-base", default=API_BASE)
     parser.add_argument("--state", type=Path, default=STATE_PATH)
     parser.add_argument("--wal", type=Path, default=WAL_PATH)
     parser.add_argument("--audit", type=Path, default=AUDIT_PATH)
+    parser.add_argument("--circuit", type=Path, default=CIRCUIT_PATH)
+    parser.add_argument("--on-guard-alert", type=Path, default=ON_GUARD_ALERT_PATH)
     parser.add_argument("--exclude-csv", type=Path, default=EXCLUDE_CSV)
     parser.add_argument("--now", help="test-only ISO datetime override")
     parser.add_argument("--quiet", action="store_true")
+    parser.add_argument("--reset-circuit", action="store_true")
+    parser.add_argument("--circuit-status", action="store_true")
+    parser.add_argument("--circuit-probe", action="store_true")
     return parser
+
+
+def _public_circuit(circuit: dict) -> dict:
+    return {key: circuit.get(key) for key in ("open", "category", "signature", "consecutive", "openedAt", "lastFailureAt")}
+
+
+def emit_compact_cli_failure(args: argparse.Namespace, error_code: str, tick_id: Optional[str] = None) -> None:
+    tick_id = tick_id or str(uuid.uuid4())
+    try:
+        circuit = _public_circuit(load_circuit(args.circuit))
+    except Exception:
+        circuit = {"open": True, "category": "STATE_CORRUPT", "signature": "STATE_CORRUPT",
+                   "consecutive": 1, "openedAt": None, "lastFailureAt": None}
+    summary = {
+        "schemaVersion": 1,
+        "kind": "rppDeliveryTick",
+        "tickId": tick_id,
+        "ok": False,
+        "blocked": True,
+        "errorCode": error_code,
+        "estimatedTicksRemaining": None,
+        "estimatedCompletionMinutes": None,
+        "circuitBreaker": circuit,
+        "guardBlockedItems": [],
+        "auditPath": str(args.audit),
+        "audit": {"path": str(args.audit), "tickId": tick_id},
+    }
+    try:
+        append_audit({"timestamp": iso_utc(now_utc()), "event": "scheduler-cli-failure",
+                      "tickId": tick_id, "errorCode": error_code, "summary": summary}, args.audit)
+    except Exception:
+        summary["auditWriteFailed"] = True
+    # --quiet suppresses routine/no-change ticks only. Safety failures are never hidden.
+    print(json.dumps(summary, ensure_ascii=False, sort_keys=True))
+
+
+def probe_rms_adapter_dom(item_code: str, currently_excluded: bool, directory: Path) -> dict:
+    control = "d" if currently_excluded else "n"
+    csv_path = directory / "adapter-probe.csv"
+    legacy.write_one_row_csv(csv_path, control, item_code)
+    env = os.environ.copy()
+    env["RPP_ENABLE_RMS_EXCLUSION_UPLOAD"] = "1"
+    process = subprocess.run([
+        legacy.NODE_BIN, str(legacy.ADAPTER), "--csv", str(csv_path), "--execute",
+        "--expected-before=%s" % ("excluded" if currently_excluded else "active"),
+    ], cwd=str(legacy.WEB_PROJECT), env=env, text=True, capture_output=True, timeout=600)
+    if process.returncode != 0:
+        raise RuntimeError((process.stderr or process.stdout or "adapter probe failed").strip()[-3000:])
+    try:
+        result = json.loads(process.stdout)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError("RMS adapter probe did not return JSON") from exc
+    applied = result.get("applied") if isinstance(result, dict) else None
+    if (not isinstance(applied, dict) or result.get("productionChange") is not False
+            or applied.get("finalSubmitSkipped") is not True or applied.get("finalUploadButtonPresent") is not True):
+        raise RuntimeError("RMS adapter probe did not verify the read-only upload DOM path")
+    return {"itemCode": item_code, "currentlyExcluded": currently_excluded,
+            "searchReadbackCount": len(applied.get("beforeReadback") or []),
+            "uploadDomVerified": True, "productionChange": False}
+
+
+def probe_external_dependencies(args: argparse.Namespace) -> dict:
+    schedules, reservations, release_allowed, orphaned = fetch_delivery_schedules(args.api_base)
+    legacy_codes = legacy.fetch_selection(args.api_base)
+    with tempfile.TemporaryDirectory(prefix="rpp-circuit-probe-") as temporary:
+        output = Path(temporary) / "exclude.csv"
+        receipt = refresh_exclusions(output)
+        exclusions = legacy.read_current_exclusions(output)
+        candidates = sorted({row["itemCode"] for row in schedules} | {legacy.normalize_code(code) for code in legacy_codes})
+        if not candidates:
+            raise RuntimeError("RMS adapter probe requires at least one authoritative product")
+        adapter_probe = probe_rms_adapter_dom(candidates[0], candidates[0] in exclusions, Path(temporary))
+    return {"scheduleCount": len(schedules), "pendingReservationCount": len(reservations),
+            "releaseAllowedCount": len(release_allowed), "orphanCount": len(orphaned),
+            "legacySelectionCount": len(legacy_codes), "exclusionCount": len(exclusions),
+            "snapshotExpectedCount": (receipt.get("exclude") or {}).get("expected_count"),
+            "adapterProbe": adapter_probe}
+
+
+def recover_wal_while_circuit_open(args: argparse.Namespace) -> dict:
+    state = load_state(args.state)
+    wal = load_wal(args.wal)
+    if wal is not None and wal["phase"] == "PREPARED":
+        state, evidence = recover_wal(state, set(), args.state, args.wal, args.audit)
+        return evidence
+    refresh_exclusions(args.exclude_csv)
+    current = legacy.read_current_exclusions(args.exclude_csv)
+    _, evidence, _ = recover_wal_with_fresh_readback(
+        state, current, args.state, args.wal, args.audit, args.exclude_csv)
+    append_audit({"timestamp": iso_utc(now_utc()), "kind": "circuit-open-wal-recovery", **evidence}, args.audit)
+    return evidence
 
 
 def run(args: argparse.Namespace) -> dict:
     at = parse_iso(args.now) if args.now else now_utc()
+    tick_id = getattr(args, "tick_id", None) or str(uuid.uuid4())
     action_limit = max_actions_per_tick()
     schedules, reservations, release_allowed, orphaned = fetch_delivery_schedules(args.api_base)
     legacy_codes = legacy.fetch_selection(args.api_base)
@@ -767,10 +1069,14 @@ def run(args: argparse.Namespace) -> dict:
         except (OSError, json.JSONDecodeError):
             stored_version = None
     state = load_state(args.state)
+    recovery = {"status": "not-applicable"}
     if args.execute:
         if stored_version != STATE_VERSION:
             save_state(state, args.state)
         state = migrate_legacy_ledger(state, args.state)
+        existing_wal = load_wal(args.wal)
+        if existing_wal is not None and existing_wal["phase"] == "PREPARED":
+            state, recovery = recover_wal(state, set(), args.state, args.wal, args.audit)
     raw_recurring = recurring_holds(at, schedules, legacy_codes)
     preview_state = copy.deepcopy(state)
     preview_state["overrideOn"] = sorted(set(preview_state["overrideOn"]) & raw_recurring)
@@ -796,20 +1102,19 @@ def run(args: argparse.Namespace) -> dict:
         state["lastRmsSnapshotAt"] = iso_utc(at)
         save_state(state, args.state)
     current = legacy.read_current_exclusions(args.exclude_csv)
-    recovery = {"status": "not-applicable"}
-    if args.execute:
+    if args.execute and args.wal.exists():
         state, recovery, current = recover_wal_with_fresh_readback(
             state, current, args.state, args.wal, args.audit, args.exclude_csv)
         if recovery.get("status") == "uncertain":
             warning = "RMS結果がUNCERTAINです。再送せず手動確認・修復してください: %s" % recovery.get("itemCode")
-            summary = {"ok": False, "dryRun": False, "activeRecurring": sorted(raw_recurring),
+            summary = {"tickId": tick_id, "observedAt": iso_utc(at), "ok": False, "dryRun": False, "activeRecurring": sorted(raw_recurring),
                        "desiredOff": sorted(desired_holds(state, raw_recurring)), "completedReservations": [],
                        "changes": [], "failures": [{"itemCode": recovery.get("itemCode"), "error": warning,
                                                        "retryable": False, "blocksRms": True}],
                        "ownedAfter": state["owned"], "preexistingAfter": state["preexisting"],
                        "walRecovery": recovery, "maxActionsPerTick": action_limit,
-                       "queueDepth": 1, "warnings": [warning]}
-            append_audit({"timestamp": iso_utc(now_utc()), "kind": "tick", **summary}, args.audit)
+                       "queueDepth": 1, "blocked": True, "estimatedTicksRemaining": None,
+                       "estimatedCompletionMinutes": None, "guardBlockedItems": [], "warnings": [warning]}
             return summary
     state_before_queue = copy.deepcopy(state)
     queue_schedules = list(schedules) + [
@@ -827,7 +1132,7 @@ def run(args: argparse.Namespace) -> dict:
     if not rms_blocked and (not args.execute or needs_snapshot):
         state, recurring_changes, recurring_failures = reconcile_recurring(
             state, raw_recurring, release_allowed, current, args.execute, args.state, args.wal,
-            max(0, action_limit - len(reservation_changes)))
+            max(0, action_limit - len(reservation_changes)), args.audit)
     settled_state = settle_occurrence_queue(state, current, at)
     if args.execute and settled_state != state:
         save_state(settled_state, args.state)
@@ -836,32 +1141,149 @@ def run(args: argparse.Namespace) -> dict:
     deferred_reservations = len([row for row in unprocessed_due if row["id"] not in completed])
     remaining_recurring = len((final_holds - current) | ((set(state["owned"]) - final_holds) & current))
     queue_depth = deferred_reservations + remaining_recurring
+    guard_blocked_items = sorted({
+        row["itemCode"] for row in unprocessed_due
+        if row.get("action") == "ON" and row["itemCode"] not in release_allowed
+    } | {
+        code for code in set(state["owned"])
+        if code not in final_holds and code in current and code not in release_allowed
+    })
+    blocked = rms_blocked or bool(guard_blocked_items)
+    estimated_ticks = None if blocked else (int(math.ceil(queue_depth / action_limit)) if queue_depth else 0)
     orphan_warnings = (["孤立した時間指定を実行対象から隔離: %s" % ",".join(sorted(orphaned))] if orphaned else [])
     warnings = occurrence_warnings + orphan_warnings + (["処理待ち %d件。次回の1分実行で継続します" % queue_depth] if queue_depth else [])
-    summary = {"ok": not reservation_failures and not recurring_failures, "dryRun": not args.execute,
+    summary = {"tickId": tick_id, "observedAt": iso_utc(at), "ok": not reservation_failures and not recurring_failures, "dryRun": not args.execute,
                "activeRecurring": sorted(raw_recurring), "desiredOff": sorted(final_holds),
                "completedReservations": completed, "changes": reservation_changes + recurring_changes,
                "failures": reservation_failures + recurring_failures, "ownedAfter": state["owned"],
                "preexistingAfter": state["preexisting"], "walRecovery": recovery,
                "occurrenceQueue": state["occurrenceQueue"], "maxActionsPerTick": action_limit,
-               "queueDepth": queue_depth, "warnings": warnings}
-    if args.execute and (summary["changes"] or summary["failures"] or completed or summary["warnings"] or recovery.get("status") not in {"none", "not-applicable"}):
-        append_audit({"timestamp": iso_utc(now_utc()), "kind": "tick", **summary}, args.audit)
+               "queueDepth": queue_depth, "estimatedTicksRemaining": estimated_ticks,
+               "estimatedCompletionMinutes": estimated_ticks, "blocked": blocked,
+               "guardBlockedItems": guard_blocked_items,
+               "rolloutPolicy": {"mode": "BOUNDED_CANARY", "maxActionsPerTick": action_limit},
+               "warnings": warnings}
     return summary
 
 
 def main(argv: Optional[List[str]] = None) -> int:
     args = build_parser().parse_args(argv)
+    args.tick_id = str(uuid.uuid4())
     legacy.load_env_file(legacy.ENV_FILE)
+    if args.circuit_status:
+        if not args.quiet:
+            print(json.dumps({"ok": True, "circuitBreaker": _public_circuit(load_circuit(args.circuit)),
+                              "walPresent": args.wal.exists()}, ensure_ascii=False, sort_keys=True))
+        return 0
+    if args.reset_circuit:
+        if os.environ.get("RPP_ENABLE_PRODUCT_DELIVERY_SCHEDULER") != "1" or args.confirm != CIRCUIT_RESET_CONFIRMATION:
+            raise RuntimeError("--confirm=%s and production gate are required" % CIRCUIT_RESET_CONFIRMATION)
+        if args.wal.exists():
+            raise RuntimeError("WAL exists; circuit reset is prohibited until WAL recovery completes")
+        if load_circuit(args.circuit).get("open") is True:
+            raise RuntimeError("OPEN circuit cannot be reset directly; use --circuit-probe so the read-only adapter path is verified")
+        reset_circuit(args.circuit)
+        if not args.quiet:
+            print(json.dumps({"ok": True, "circuitBreaker": {"open": False}, "message": "circuit breaker reset"}, sort_keys=True))
+        return 0
+    if args.circuit_probe:
+        if os.environ.get("RPP_ENABLE_PRODUCT_DELIVERY_SCHEDULER") != "1" or args.confirm != CIRCUIT_PROBE_CONFIRMATION:
+            raise RuntimeError("--confirm=%s and production gate are required" % CIRCUIT_PROBE_CONFIRMATION)
+        if args.wal.exists():
+            raise RuntimeError("WAL exists; dependency probe is prohibited until WAL recovery completes")
+        probe_lock = legacy.acquire_global_lock()
+        if probe_lock is None:
+            emit_compact_cli_failure(args, "LOCK_BUSY", args.tick_id)
+            return 1
+        try:
+            result = probe_external_dependencies(args)
+            reset_circuit(args.circuit)
+            if not args.quiet:
+                print(json.dumps({"ok": True, "probeOnly": True, "productionChange": False,
+                                  "circuitBreaker": {"open": False}, "readback": result}, ensure_ascii=False, sort_keys=True))
+            return 0
+        finally:
+            legacy.release_global_lock(probe_lock)
+
     require_gate(args.execute, args.confirm, os.environ)
     lock_fd = None
     if args.execute:
         lock_fd = legacy.acquire_global_lock()
         if lock_fd is None:
-            return 0
+            emit_compact_cli_failure(args, "LOCK_BUSY", args.tick_id)
+            return 1
     try:
-        summary = run(args)
-        if not args.quiet and (not args.execute or summary["changes"] or summary["failures"] or summary["completedReservations"] or summary["warnings"]):
+        if args.execute and load_circuit(args.circuit).get("open") is True:
+            if args.wal.exists():
+                try:
+                    recover_wal_while_circuit_open(args)
+                except Exception as error:
+                    append_audit({"timestamp": iso_utc(now_utc()), "kind": "circuit-open-wal-recovery-failed",
+                                  "error": str(error)[-500:]}, args.audit)
+            # The opening tick emitted the alert. OPEN ticks never call schedule API,
+            # claim, or RMS writes; WAL recovery above is read-only.
+            return 0
+        try:
+            summary = run(args)
+        except Exception as error:
+            if not args.execute:
+                raise
+            circuit = record_external_failure(error, args.circuit)
+            if circuit.get("status") == "ignored":
+                summary = {"tickId": args.tick_id, "observedAt": iso_utc(now_utc()), "ok": False,
+                           "dryRun": False, "changes": [], "failures": [{"error": str(error)[-1000:]}],
+                           "completedReservations": [], "activeRecurring": [], "desiredOff": [],
+                           "ownedAfter": [], "preexistingAfter": [], "queueDepth": 0, "blocked": True,
+                           "maxActionsPerTick": max_actions_per_tick(), "walRecovery": {"status": "unknown"},
+                           "circuitBreaker": _public_circuit(load_circuit(args.circuit)), "warnings": []}
+                append_audit({"timestamp": iso_utc(now_utc()), "kind": "tick", **summary}, args.audit)
+                if not args.quiet:
+                    print(json.dumps(notification_summary(summary, args.audit), ensure_ascii=False, sort_keys=True))
+                return 1
+            public_circuit = _public_circuit(circuit)
+            error_summary = {"tickId": args.tick_id, "observedAt": iso_utc(now_utc()), "ok": False,
+                             "dryRun": False, "changes": [], "failures": [{"error": str(error)[-1000:], "blocksRms": True}],
+                             "completedReservations": [], "activeRecurring": [], "desiredOff": [],
+                             "ownedAfter": [], "preexistingAfter": [], "queueDepth": 0, "blocked": True,
+                             "maxActionsPerTick": max_actions_per_tick(), "walRecovery": {"status": "not-applicable"},
+                             "circuitBreaker": public_circuit, "warnings": []}
+            append_audit({"timestamp": iso_utc(now_utc()), "kind": "tick", **error_summary}, args.audit)
+            if not args.quiet and (circuit.get("notify") or not circuit.get("open")):
+                print(json.dumps(notification_summary(error_summary, args.audit), ensure_ascii=False, sort_keys=True))
+            return 1 if circuit.get("notify") or not circuit.get("open") else 0
+
+        if args.execute:
+            external_failure = next((row for row in summary.get("failures", []) if _failure_category(row.get("error", ""))), None)
+            if external_failure:
+                circuit = record_external_failure(external_failure.get("error", ""), args.circuit)
+            else:
+                reset_circuit(args.circuit)
+                circuit = {"open": False, "category": None, "signature": None, "consecutive": 0,
+                           "openedAt": None, "lastFailureAt": None}
+            public_circuit = _public_circuit(circuit)
+            summary["circuitBreaker"] = public_circuit
+            guard_codes = set(summary.get("guardBlockedItems", []))
+            guard_alert = update_on_guard_alerts(guard_codes, args.on_guard_alert)
+            summary["onGuardBlocks"] = guard_alert
+            if circuit.get("open"):
+                summary.setdefault("warnings", []).append("同一の外部障害が継続したためworkerを自動停止しました。原因修復後にread-only probeが必要です")
+                append_audit({"timestamp": iso_utc(now_utc()), "kind": "circuit-breaker", **public_circuit}, args.audit)
+            if summary.get("changes") or summary.get("failures") or summary.get("completedReservations") or summary.get("warnings") or summary.get("walRecovery", {}).get("status") not in {"none", "not-applicable"}:
+                append_audit({"timestamp": iso_utc(now_utc()), "kind": "tick", **summary}, args.audit)
+            only_guard_failures = bool(summary.get("failures")) and all(row.get("onGuardBlocked") for row in summary["failures"])
+            emit = bool(summary.get("changes") or summary.get("completedReservations") or summary.get("warnings") or summary.get("failures"))
+            if only_guard_failures:
+                emit = bool(guard_alert.get("notify") or summary.get("changes") or summary.get("completedReservations"))
+            if not args.quiet and emit:
+                notification_source = copy.deepcopy(summary)
+                if not guard_alert.get("notify"):
+                    notification_source["failures"] = [row for row in notification_source["failures"] if not row.get("onGuardBlocked")]
+                print(json.dumps(notification_summary(notification_source, args.audit), ensure_ascii=False, sort_keys=True))
+            if only_guard_failures and not guard_alert.get("notify"):
+                return 0
+            return 0 if summary["ok"] else 1
+
+        if not args.quiet and (summary["changes"] or summary["failures"] or summary["completedReservations"] or summary["warnings"]):
             print(json.dumps(summary, ensure_ascii=False, sort_keys=True))
         return 0 if summary["ok"] else 1
     finally:
@@ -869,9 +1291,18 @@ def main(argv: Optional[List[str]] = None) -> int:
             legacy.release_global_lock(lock_fd)
 
 
-if __name__ == "__main__":
+def cli(argv: Optional[List[str]] = None) -> int:
     try:
-        raise SystemExit(main())
+        return main(argv)
     except Exception as error:
-        print("ERROR: %s" % error, file=sys.stderr)
-        raise SystemExit(1)
+        # Never include the raw exception: upstream responses or argv may contain secrets.
+        try:
+            args, _ = build_parser().parse_known_args(argv)
+        except BaseException:
+            args = argparse.Namespace(audit=AUDIT_PATH, circuit=CIRCUIT_PATH, quiet=False)
+        emit_compact_cli_failure(args, _failure_category(error) or type(error).__name__.upper())
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(cli())

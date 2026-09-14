@@ -20,6 +20,11 @@ test("商品CPC行だけに時間指定ボタンと行スコープのパネル�
   assert.match(component, /実行中（取消不可）/);
   assert.match(component, /expectedUpdatedAt: scheduleUpdatedAt/);
   assert.match(component, /setInterval\(refreshRuntimeStatus, 15_000\)/);
+  assert.match(component, /1分ごとに最大3商品の段階反映/);
+  assert.match(component, /visibleScheduleWarnings/);
+  assert.match(component, /時間指定の重複・継続状態を確認/);
+  assert.match(component, /acknowledgedWarningKeys/);
+  assert.match(component, /警告を確認して保存/);
 });
 
 test("UIはJSTのdatetime-localと毎日停止・予約・取消APIを使う", () => {
@@ -37,6 +42,10 @@ test("人向けAPIはviewer/operator権限とRPP商品存在確認を行う", ()
   assert.match(route, /readRppProductCpcItemCodes\(\)/);
   assert.match(route, /requireReleaseAllowed/);
   assert.match(route, /全RPP設定行への目標保存/);
+  assert.match(route, /OVERLAP_CONFIRMATION_REQUIRED/);
+  assert.match(route, /OVERLAP_BLOCKED/);
+  assert.match(route, /readRppNightPauseProducts/);
+  assert.doesNotMatch(route, /if \(!warnings\.length\) return/);
 });
 
 test("machine APIは指定payloadで保留予約だけを返しackする", () => {

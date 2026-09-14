@@ -624,6 +624,12 @@ small { color: var(--muted); line-height: 1.45; }
 .rpp-schedule-time-row label, .rpp-schedule-reservation-row label { display: grid; gap: 5px; color: #475569; font-size: 11px; font-weight: 800; }
 .rpp-schedule-time-row input, .rpp-schedule-reservation-row input, .rpp-schedule-reservation-row select { min-height: 38px; border: 1px solid #cbd5e1; border-radius: 7px; background: #fff; padding: 7px 9px; color: #0f172a; font-size: 14px; }
 .rpp-schedule-safe-note { border-left: 3px solid #2563eb; background: #eff6ff; padding: 8px 10px; color: #334155; line-height: 1.5; }
+.rpp-schedule-blocked { border: 1px solid #dc2626; border-radius: 9px; background: #fef2f2; padding: 10px 12px; color: #991b1b; font-size: 12px; }
+.rpp-schedule-blocked ul { margin: 6px 0 0; padding-left: 18px; }
+.rpp-schedule-blocked li + li { margin-top: 4px; }
+.rpp-schedule-warning { border: 1px solid #f59e0b; border-radius: 9px; background: #fffbeb; padding: 10px 12px; color: #92400e; font-size: 12px; }
+.rpp-schedule-warning ul { margin: 6px 0 0; padding-left: 18px; }
+.rpp-schedule-warning li + li { margin-top: 4px; }
 .rpp-schedule-reservations { display: grid; gap: 7px; }
 .rpp-schedule-reservations article { display: grid; grid-template-columns: 1fr auto; gap: 4px 10px; align-items: center; border: 1px solid #e2e8f0; border-radius: 8px; padding: 9px 10px; }
 .rpp-schedule-reservations article div { display: flex; flex-wrap: wrap; gap: 8px; }

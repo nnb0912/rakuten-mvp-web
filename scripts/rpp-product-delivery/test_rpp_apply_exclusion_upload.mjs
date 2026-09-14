@@ -6,6 +6,7 @@ import test from 'node:test';
 
 import {
   acquireProfileLock,
+  classifyAdapterError,
   pollExactReadback,
   releaseProfileLock,
 } from '../rpp_apply_exclusion_upload.mjs';
@@ -47,4 +48,12 @@ test('post-submit polling never waits beyond three minutes', async () => {
     if (original === undefined) delete process.env.RPP_RMS_READBACK_TIMEOUT_MS;
     else process.env.RPP_RMS_READBACK_TIMEOUT_MS = original;
   }
+});
+
+test('adapter failures expose stable circuit-breaker error codes', () => {
+  assert.equal(classifyAdapterError(new Error('RMS login not completed')), 'RMS_AUTH_REQUIRED');
+  assert.equal(classifyAdapterError(new Error('CAPTCHA challenge')), 'RMS_CHALLENGE');
+  assert.equal(classifyAdapterError(new Error('RMS exclusion upload file input not found')), 'RMS_DOM_DRIFT');
+  assert.equal(classifyAdapterError(new Error('navigation timeout')), 'RMS_NETWORK');
+  assert.equal(classifyAdapterError(new Error('RMS precondition changed')), 'RMS_PRECONDITION_CHANGED');
 });
