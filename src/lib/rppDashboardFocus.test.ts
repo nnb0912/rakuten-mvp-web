@@ -4,6 +4,7 @@ import path from "node:path";
 import test from "node:test";
 
 const source = readFileSync(path.join(process.cwd(), "src/app/rpp/page.tsx"), "utf8");
+const chartSource = readFileSync(path.join(process.cwd(), "src/app/rpp/RppDashboardCharts.tsx"), "utf8");
 
 test("ダッシュボードは固定以外の選択モードを主表示する", () => {
   assert.match(source, /自動モードの商品/);
@@ -25,4 +26,11 @@ test("商品観測がない自動モード商品は広告ONと表示しない", 
   assert.match(source, /!row\.product \? "未確認"/);
   assert.match(source, /!row\.product \? \{ label: "未確認"/);
   assert.match(source, /商品状態の実測待ち/);
+});
+
+test("売上とROASは720時間帰属を画面とARIAに明記する", () => {
+  assert.match(chartSource, /売上（720時間帰属）/);
+  assert.match(chartSource, /ROAS推移（720時間帰属）/);
+  assert.match(chartSource, /aria-label="日別ROAS推移（売上720時間帰属）"/);
+  assert.doesNotMatch(chartSource, />[^<]*720h[^<]*</);
 });
