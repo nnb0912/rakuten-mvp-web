@@ -5,3 +5,4 @@ test("comparison uses selected attribution window without mixing periods",()=>{a
 test("zero or missing baseline never returns infinity",()=>{const result=compareRppFacts(rows.slice(0,1),{startDate:"2026-08-01",endDate:"2026-08-01"},{startDate:"2025-08-01",endDate:"2025-08-01"},"12H");assert.equal(result.comparisonAvailable,false);assert.equal(result.deltas.spend.percent,null)});
 test("YOY resolves to same month previous year",()=>{const periods=resolveRppComparisonPeriods(new URLSearchParams({preset:"YOY",month:"2026-08"}));assert.deepEqual(periods.b,{startDate:"2025-08-01",endDate:"2025-08-31"})});
 test("グラフ・予算・期間比較はすべて日付別最新batchだけを読む",()=>{assert.equal(source.match(/select max\(latest\.source_mtime\)/g)?.length,3)});
+test("14日グラフはJST暦日を生成し未来日を含めない",()=>{assert.match(source,/now\(\) at time zone 'Asia\/Tokyo'/);assert.match(source,/generate_series/);assert.match(source,/left join actual/);assert.doesNotMatch(source,/between current_date/)});

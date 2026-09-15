@@ -27,7 +27,7 @@ from pathlib import Path
 SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
-from rpp_performance_contract import JST, item_set_sha256, parse_performance_csv, parse_receipt_times, receipt_message, rows_sha256, validate_batch_quorum
+from rpp_performance_contract import JST, item_set_sha256, parse_performance_csv, parse_receipt_times, receipt_message, rows_sha256, validate_batch_quorum, validate_batch_sequence
 
 PROJECT = Path(os.environ.get('RPP_PROJECT_DIR', '/Users/nob/Projects/rpp-8am-notify'))
 RAKUTEN_MARKETING = Path('/Users/nob/Projects/rakuten-marketing')
@@ -49,29 +49,72 @@ def receipt_key() -> bytes:
     return value.encode()
 
 
-def publish_validated_report(extracted: Path, out_path: Path, receipt_path: Path, receipt: dict, backup: Path | None) -> None:
-    receipt_tmp = receipt_path.with_suffix('.json.tmp')
-    receipt_tmp.write_text(json.dumps(receipt, ensure_ascii=False, indent=2), encoding='utf-8')
-    replaced = False
+def _fsync_file(path: Path) -> None:
+    with path.open('rb') as handle:
+        os.fsync(handle.fileno())
+
+
+def _fsync_directory(path: Path) -> None:
+    descriptor = os.open(path, os.O_RDONLY)
     try:
-        if backup:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def _crash_point(name: str) -> None:
+    if os.environ.get('RPP_TEST_CRASH_AT') == name:
+        os._exit(93)
+
+
+def publish_validated_report(extracted: Path, out_path: Path, receipt_path: Path, receipt: dict, backup: Path | None) -> Path:
+    generations = out_path.parent / 'rpp_performance_generations'
+    generations.mkdir(parents=True, exist_ok=True)
+    for stale in generations.glob('.tmp-*'):
+        if stale.is_dir():
+            shutil.rmtree(stale)
+    generation_id = f'generation-{time.time_ns()}'
+    temporary = generations / f'.tmp-{generation_id}'
+    final = generations / generation_id
+    temporary.mkdir()
+    report_target = temporary / 'rpp_item_reports.csv'
+    generation_receipt = temporary / 'receipt.json'
+    link_tmp = out_path.with_name(f'.{out_path.name}.{generation_id}.tmp')
+    try:
+        shutil.copy2(extracted, report_target)
+        generation_receipt.write_text(json.dumps(receipt, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+        if hashlib.sha256(report_target.read_bytes()).hexdigest() != receipt['output_sha256']:
+            raise RuntimeError('RPP item report generation readback mismatch')
+        _fsync_file(report_target)
+        _fsync_file(generation_receipt)
+        _fsync_directory(temporary)
+        _crash_point('before_generation_commit')
+        os.replace(temporary, final)
+        _fsync_directory(generations)
+        _crash_point('after_generation_commit')
+        if backup and out_path.exists():
             shutil.copy2(out_path, backup)
-        os.replace(extracted, out_path)
-        replaced = True
-        if hashlib.sha256(out_path.read_bytes()).hexdigest() != receipt['output_sha256']:
-            raise RuntimeError('RPP item report atomic replace readback mismatch')
-        os.utime(receipt_tmp, None)
-        receipt_tmp.replace(receipt_path)
-        if receipt_path.stat().st_mtime < out_path.stat().st_mtime:
-            raise RuntimeError('receipt was not published after product report')
+            _fsync_file(backup)
+        target = os.path.relpath(final / 'rpp_item_reports.csv', out_path.parent)
+        os.symlink(target, link_tmp)
+        os.replace(link_tmp, out_path)
+        _fsync_directory(out_path.parent)
+        _crash_point('after_pointer_switch')
+        resolved = out_path.resolve(strict=True)
+        final_receipt = resolved.parent / 'receipt.json'
+        if resolved != (final / 'rpp_item_reports.csv').resolve() or not final_receipt.is_file() or final_receipt.is_symlink():
+            raise RuntimeError('RPP item report generation pointer readback mismatch')
+        if hashlib.sha256(resolved.read_bytes()).hexdigest() != receipt['output_sha256']:
+            raise RuntimeError('RPP item report generation hash mismatch')
+        receipt_log_tmp = receipt_path.with_suffix('.json.tmp')
+        shutil.copy2(final_receipt, receipt_log_tmp)
+        os.replace(receipt_log_tmp, receipt_path)
+        _fsync_directory(receipt_path.parent)
+        return final_receipt
     except Exception:
-        receipt_path.unlink(missing_ok=True)
-        receipt_tmp.unlink(missing_ok=True)
-        if replaced:
-            if backup and backup.exists():
-                os.replace(backup, out_path)
-            else:
-                out_path.unlink(missing_ok=True)
+        link_tmp.unlink(missing_ok=True)
+        if temporary.exists():
+            shutil.rmtree(temporary)
         raise
 
 
@@ -268,16 +311,21 @@ async def download_item_report(start: date, end: date) -> tuple[Path, dict]:
             await p_inst.stop()
 
 
+def default_report_date(now: datetime | None = None) -> str:
+    current = (now or datetime.now(JST)).astimezone(JST)
+    return (current.date() - timedelta(days=1)).isoformat()
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
-    default_date = os.getenv('RPP_REPORT_DATE') or (date.today() - timedelta(days=1)).isoformat()
+    default_date = os.getenv('RPP_REPORT_DATE') or default_report_date()
     ap.add_argument('--date', default=default_date, help='終了日 YYYY-MM-DD。省略時は前日')
     ap.add_argument('--days', type=int, default=1, help='取得日数。7を指定すると終了日を含む過去7日')
     ap.add_argument('--out', default=str(OUT), help='出力CSVパス')
     args = ap.parse_args()
     end = date.fromisoformat(args.date)
     start = end - timedelta(days=max(1, args.days) - 1)
-    out_path = Path(args.out).expanduser().resolve()
+    out_path = Path(args.out).expanduser().absolute()
     load_env(PROJECT / '.env')
     load_env(RAKUTEN_MARKETING / '.env')
     before_mtime = out_path.stat().st_mtime if out_path.exists() else None
@@ -335,13 +383,13 @@ def main() -> int:
             'mtime_changed': before_mtime != extracted.stat().st_mtime,
             'header_sample': rows[0][:8] if rows else [],
         }
-        parse_receipt_times(receipt, report_date=report_date)
-        parse_receipt_times({'request_started_at': receipt['verification_request_started_at'], 'history_created_at': receipt['verification_history_created_at'], 'source_mtime': receipt['verification_source_mtime'], 'completed_at': receipt['verification_completed_at']}, report_date=report_date)
+        verification_receipt = {'request_started_at': receipt['verification_request_started_at'], 'history_created_at': receipt['verification_history_created_at'], 'source_mtime': receipt['verification_source_mtime'], 'completed_at': receipt['verification_completed_at']}
+        validate_batch_sequence(verification_receipt, receipt, report_date=report_date)
         key = receipt_key()
         receipt['signature'] = hmac.new(key, receipt_message(receipt), hashlib.sha256).hexdigest()
         receipt_path = LOGS / f'rpp_product_report_refresh_{time.time_ns()}.json'
-        publish_validated_report(extracted, out_path, receipt_path, receipt, backup)
-        receipt['receipt'] = str(receipt_path)
+        authoritative_receipt = publish_validated_report(extracted, out_path, receipt_path, receipt, backup)
+        receipt['receipt'] = str(authoritative_receipt)
         print(json.dumps(receipt, ensure_ascii=False, indent=2))
         return 0
     finally:

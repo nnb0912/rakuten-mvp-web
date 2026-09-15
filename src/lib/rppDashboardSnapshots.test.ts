@@ -11,7 +11,7 @@ const fixtureNow = new Date();
 const performanceDate = new Date(fixtureNow.getTime() - 24 * 60 * 60_000 + 9 * 60 * 60_000).toISOString().slice(0, 10);
 const fixtureSourceMtime = new Date(fixtureNow.getTime() - 15_000).toISOString();
 function signedReceipt(date: string, count: number, overrides: Record<string, unknown> = {}) {
-  const rowBody = "r0579\tn:1.200000\tn:10.000000\tn:300.000000\tn:500.000000\tn:1.000000\tn:700.000000\tn:2.000000";
+  const rowBody = "r0579\ti:12000\ti:10\ti:300\ti:500\ti:1\ti:700\ti:2";
   const historyCreatedAt = new Date(fixtureNow.getTime() - 10_000 + 9 * 60 * 60_000).toISOString().slice(0, 19).replace("T", " ");
   const verificationHistoryCreatedAt = new Date(fixtureNow.getTime() - 90_000 + 9 * 60 * 60_000).toISOString().slice(0, 19).replace("T", " ");
   const base = { version: 1 as const, file: "receipt.json", completedAt: fixtureNow.toISOString(), sha256: "a".repeat(64), expectedCount: count, actualCount: count, expectedItemSetSha256: createHash("sha256").update("r0579").digest("hex"), requestStartedAt: new Date(fixtureNow.getTime() - 60_000).toISOString(), historyCreatedAt, historyRowSha256: "b".repeat(64), sourceArchiveSha256: "c".repeat(64), sourceArchiveBytes: 1000, sourceCsvCrc32: "deadbeef", sourceCsvCompressedBytes: 800, sourceCsvUncompressedBytes: 1200, sourceCsvNameSha256: "d".repeat(64), verificationRequestStartedAt: new Date(fixtureNow.getTime() - 120_000).toISOString(), verificationHistoryCreatedAt, verificationHistoryRowSha256: "e".repeat(64), verificationArchiveSha256: "f".repeat(64), verificationSourceMtime: new Date(fixtureNow.getTime() - 80_000).toISOString(), verificationCompletedAt: new Date(fixtureNow.getTime() - 70_000).toISOString(), source: "rpp_item_reports.csv", sourceMtime: fixtureSourceMtime, rowsSha256: createHash("sha256").update(rowBody).digest("hex"), complete: true as const };
@@ -57,15 +57,22 @@ test("RPP dashboard snapshot rejects tampered rows, null collisions, invalid met
   const performanceDaily = { source: "rpp_item_reports.csv", sourceMtime: fixtureSourceMtime, date: performanceDate, attribution: { sales12h: true, sales720h: true }, rows: [{ ...row, clicks: 999999 }], receipt };
   const base = { schemaVersion: 2, syncedAt: fixtureNow.toISOString(), recommendations: { summary: {}, recommendations: [] }, latestFiles: [], performanceDaily };
   assert.throws(() => normalizeRppDashboardSnapshot(base), /verified receipt is invalid/);
-  const zeroReceipt = signedReceipt(performanceDate, 1, { rowsSha256: createHash("sha256").update("r0579\tn:0.000000\tn:10.000000\tn:300.000000\tn:500.000000\tn:1.000000\tn:700.000000\tn:2.000000").digest("hex") });
-  assert.throws(() => normalizeRppDashboardSnapshot({ ...base, performanceDaily: { ...performanceDaily, rows: [{ ...row, ctr: null }], receipt: zeroReceipt } }), /verified receipt is invalid/);
+  const zeroReceipt = signedReceipt(performanceDate, 1, { rowsSha256: createHash("sha256").update("r0579\ti:0\ti:10\ti:300\ti:500\ti:1\ti:700\ti:2").digest("hex") });
+  assert.throws(() => normalizeRppDashboardSnapshot({ ...base, performanceDaily: { ...performanceDaily, rows: [{ ...row, ctr: null }], receipt: zeroReceipt } }), /ctr is invalid/);
   assert.throws(() => normalizeRppDashboardSnapshot({ ...base, performanceDaily: { ...performanceDaily, rows: [{ ...row, spend: -1 }], receipt } }), /spend is invalid/);
   assert.throws(() => normalizeRppDashboardSnapshot({ ...base, performanceDaily: { ...performanceDaily, rows: [{ ...row, ctr: Number.NaN }], receipt } }), /ctr is invalid/);
+  assert.throws(() => normalizeRppDashboardSnapshot({ ...base, performanceDaily: { ...performanceDaily, rows: [{ ...row, clicks: "1000" }], receipt } }), /clicks is invalid/);
+  assert.throws(() => normalizeRppDashboardSnapshot({ ...base, performanceDaily: { ...performanceDaily, rows: [{ ...row, clicks: 2_147_483_648 }], receipt } }), /clicks is invalid/);
+  assert.throws(() => normalizeRppDashboardSnapshot({ ...base, performanceDaily: { ...performanceDaily, rows: [{ ...row, spend: 1_000_000_000_000 }], receipt } }), /spend is invalid/);
+  assert.throws(() => normalizeRppDashboardSnapshot({ ...base, performanceDaily: { ...performanceDaily, rows: [{ ...row, ctr: 100.0001 }], receipt } }), /ctr is invalid/);
+  assert.throws(() => normalizeRppDashboardSnapshot({ ...base, performanceDaily: { ...performanceDaily, rows: [{ ...row, itemCode: "商品" }], receipt } }), /itemCode is invalid/);
   const impossible = signedReceipt(performanceDate, 1, { requestStartedAt: new Date(fixtureNow.getTime() + 60 * 60_000).toISOString() });
   assert.throws(() => normalizeRppDashboardSnapshot({ ...base, performanceDaily: { ...performanceDaily, rows: [row], receipt: impossible } }), /verified receipt is invalid/);
   const stale = new Date(fixtureNow.getTime() - 48 * 60 * 60_000);
   const staleReceipt = signedReceipt(performanceDate, 1, { completedAt: stale.toISOString(), requestStartedAt: new Date(stale.getTime() - 60_000).toISOString(), historyCreatedAt: new Date(stale.getTime() - 10_000 + 9 * 60 * 60_000).toISOString().slice(0, 19).replace("T", " "), sourceMtime: new Date(stale.getTime() - 15_000).toISOString() });
   assert.throws(() => normalizeRppDashboardSnapshot({ ...base, performanceDaily: { ...performanceDaily, sourceMtime: staleReceipt.sourceMtime, rows: [row], receipt: staleReceipt } }), /verified receipt is invalid/);
+  const reversed = signedReceipt(performanceDate, 1, { verificationCompletedAt: new Date(fixtureNow.getTime() - 30_000).toISOString() });
+  assert.throws(() => normalizeRppDashboardSnapshot({ ...base, performanceDaily: { ...performanceDaily, rows: [row], receipt: reversed } }), /verified receipt is invalid/);
 });
 
 test("古い実績は新しいobservedAtだけで上書きしない", () => {

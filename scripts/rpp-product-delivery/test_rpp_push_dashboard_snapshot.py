@@ -6,6 +6,7 @@ import importlib.util
 import json
 import hmac
 import os
+import shutil
 import tempfile
 import unittest
 from pathlib import Path
@@ -47,7 +48,7 @@ class OperationalDataTest(unittest.TestCase):
             label = dt.date.fromisoformat(date).strftime('%Y年%m月%d日')
             self._write_csv(path, ['日付', '商品管理番号', 'CTR(%)', 'クリック数(合計)', '実績額(合計)', '売上金額(合計12時間)', '売上件数(合計12時間)', '売上金額(合計720時間)', '売上件数(合計720時間)'], [[f'{label}～{label}', 'R0406', '1.5', '10', '300', '500', '1', '900', '2']])
             self._write_performance_receipt(root, path, date, 1)
-            receipt_path = next((root / 'rpp_logs').glob('*.json'))
+            receipt_path = root / 'rpp_performance_generations' / 'generation-test' / 'receipt.json'
             receipt = json.loads(receipt_path.read_text(encoding='utf-8'))
             receipt['signature'] = '0' * 64
             receipt_path.write_text(json.dumps(receipt), encoding='utf-8')
@@ -172,7 +173,13 @@ class OperationalDataTest(unittest.TestCase):
             'rows_sha256': module.rows_sha256(normalized_rows),
         }
         receipt['signature'] = hmac.new(os.environ['RPP_PERFORMANCE_RECEIPT_HMAC_KEY'].encode(), module.performance_receipt_message(receipt), hashlib.sha256).hexdigest()
-        (logs / 'rpp_product_report_refresh_20260902_000000.json').write_text(json.dumps(receipt), encoding='utf-8')
+        generation = root / 'rpp_performance_generations' / 'generation-test'
+        generation.mkdir(parents=True)
+        report = generation / 'rpp_item_reports.csv'
+        shutil.copy2(output, report)
+        output.unlink()
+        (generation / 'receipt.json').write_text(json.dumps(receipt), encoding='utf-8')
+        output.symlink_to(report.relative_to(output.parent))
 
     @staticmethod
     def _write_csv(path: Path, fieldnames: list[str], rows: list[list[str]]) -> None:

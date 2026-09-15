@@ -4,11 +4,14 @@ import datetime as dt
 import hashlib
 import importlib.util
 import json
+import os
+import subprocess
+import sys
 import zipfile
 import tempfile
 import unittest
 from pathlib import Path
-from unittest import mock
+
 
 SCRIPT = Path(__file__).with_name('scripts_refresh_rpp_product_report.py')
 spec = importlib.util.spec_from_file_location('scripts_refresh_rpp_product_report', SCRIPT)
@@ -18,6 +21,10 @@ spec.loader.exec_module(module)
 
 
 class ProductReportRefreshTest(unittest.TestCase):
+    def test_default_report_date_uses_jst_across_utc_day_boundary(self):
+        utc = dt.datetime(2026, 9, 15, 15, 30, tzinfo=dt.timezone.utc)
+        self.assertEqual(module.default_report_date(utc), '2026-09-15')
+
     def test_python_canonical_matches_shared_vector(self):
         vector = json.loads(Path(__file__).with_name('rpp_performance_canonical_vectors.json').read_text(encoding='utf-8'))
         self.assertEqual(module.rows_sha256(vector['rows']), vector['rowsSha256'])
@@ -75,6 +82,24 @@ class ProductReportRefreshTest(unittest.TestCase):
                 self._write(path, [headers, ['2026年09月14日～2026年09月14日', 'r0406', ctr, clicks, spend, '1', '1', '1', '1']])
                 with self.assertRaises(RuntimeError):
                     module.parse_performance_csv(path)
+            invalid = [
+                ('1e3', '1', '1', 'r0406'),
+                ('100.0001', '1', '1', 'r0406'),
+                ('1', '2147483648', '1', 'r0406'),
+                ('1', '1', '1000000000000', 'r0406'),
+                ('1', '1', '1', '商品'),
+            ]
+            for ctr, clicks, spend, item_code in invalid:
+                self._write(path, [headers, ['2026年09月14日～2026年09月14日', item_code, ctr, clicks, spend, '1', '1', '1', '1']])
+                with self.assertRaises(RuntimeError):
+                    module.parse_performance_csv(path)
+
+    def test_verification_batch_must_finish_before_actual_starts(self):
+        now = dt.datetime(2026, 9, 14, 12, 10, tzinfo=dt.timezone.utc)
+        verification = {'request_started_at': '2026-09-14T12:00:00Z', 'history_created_at': '2026-09-14 21:00:01', 'source_mtime': '2026-09-14T12:00:01Z', 'completed_at': '2026-09-14T12:00:05Z'}
+        actual = {'request_started_at': '2026-09-14T12:00:04Z', 'history_created_at': '2026-09-14 21:00:05', 'source_mtime': '2026-09-14T12:00:05Z', 'completed_at': '2026-09-14T12:00:06Z'}
+        with self.assertRaisesRegex(ValueError, 'must complete before'):
+            module.validate_batch_sequence(verification, actual, now=now, report_date='2026-09-13')
 
     def test_batch_quorum_requires_same_complete_item_set(self):
         expected = [{'itemCode': 'r0406'}, {'itemCode': 'r0579'}]
@@ -83,21 +108,30 @@ class ProductReportRefreshTest(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, 'quorum mismatch'):
             module.validate_batch_quorum(expected, actual[:1])
 
-    def test_publish_failure_restores_existing_csv(self):
+    def test_generation_pointer_is_consistent_across_process_crashes(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            out = root / 'out.csv'
-            extracted = root / 'new.csv'
-            receipt_path = root / 'receipt.json'
-            backup = root / 'backup.csv'
-            out.write_bytes(b'known-good')
-            extracted.write_bytes(b'new-validated')
-            receipt = {'output_sha256': hashlib.sha256(b'new-validated').hexdigest()}
-            with mock.patch.object(module.os, 'utime', side_effect=RuntimeError('forced publish failure')):
-                with self.assertRaisesRegex(RuntimeError, 'forced publish failure'):
-                    module.publish_validated_report(extracted, out, receipt_path, receipt, backup)
-            self.assertEqual(out.read_bytes(), b'known-good')
-            self.assertFalse(receipt_path.exists())
+            generations = root / 'rpp_performance_generations'
+            old_generation = generations / 'generation-old'
+            old_generation.mkdir(parents=True)
+            (old_generation / 'rpp_item_reports.csv').write_bytes(b'known-good')
+            (old_generation / 'receipt.json').write_text('{}', encoding='utf-8')
+            out = root / 'rpp_item_reports.csv'
+            script = f"""import hashlib,json,os,sys
+sys.path.insert(0, {str(SCRIPT.parent)!r})
+import scripts_refresh_rpp_product_report as m
+root=m.Path({str(root)!r}); out=root/'rpp_item_reports.csv'; extracted=root/'new.csv'
+extracted.write_bytes(b'new-validated')
+m.publish_validated_report(extracted,out,root/'audit.json',{{'output_sha256':hashlib.sha256(b'new-validated').hexdigest()}},root/'backup.csv')
+"""
+            for point, expected in [('before_generation_commit', b'known-good'), ('after_generation_commit', b'known-good'), ('after_pointer_switch', b'new-validated')]:
+                out.unlink(missing_ok=True)
+                out.symlink_to((old_generation / 'rpp_item_reports.csv').relative_to(root))
+                env = {**os.environ, 'RPP_TEST_CRASH_AT': point}
+                result = subprocess.run([sys.executable, '-c', script], env=env, capture_output=True, text=True)
+                self.assertEqual(result.returncode, 93)
+                self.assertEqual(out.read_bytes(), expected)
+                self.assertTrue((out.resolve().parent / 'receipt.json').is_file())
 
     def test_history_selection_requires_new_completed_row_after_boundary(self):
         start_jp, end_jp = '2026年09月13日', '2026年09月13日'

@@ -1,6 +1,16 @@
 {
   "rows": [
     {
+      "itemCode": "r-1",
+      "ctr": 100.0,
+      "clicks": 2147483647,
+      "spend": 999999999999,
+      "sales12h": 999999999999,
+      "orders12h": 2147483647,
+      "sales720h": 999999999999,
+      "orders720h": 2147483647
+    },
+    {
       "itemCode": "r0406",
       "ctr": 0.0,
       "clicks": 0,
@@ -19,8 +29,18 @@
       "orders12h": 1,
       "sales720h": 700,
       "orders720h": 2
+    },
+    {
+      "itemCode": "r_1",
+      "ctr": 0.0001,
+      "clicks": 1,
+      "spend": 1,
+      "sales12h": 1,
+      "orders12h": 1,
+      "sales720h": 1,
+      "orders720h": 1
     }
   ],
-  "rowsSha256": "7d842d52cc7a26148ac330e2982ca57f0c23a4a12583d40ad949b5744878eee4",
-  "itemSetSha256": "277baf7430644602c1a816ac2f1b459bd806173547afe7a9a0d9db9149f49842"
+  "rowsSha256": "16319d9407111894456f94d69a48b12428007485c55aac8a217ffc7db9fda503",
+  "itemSetSha256": "1a89ff302b1be8d4beee796661fe642a80a1f946e4c334cb3cd9fa78a0da7216"
 }

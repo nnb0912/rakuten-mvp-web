@@ -12,15 +12,8 @@ export RPP_SCHEDULER_MAX_ACTIONS_PER_TICK="3"
 export RPP_RMS_PROFILE_DIR="/Users/nob/.hermes/rpp-rms-adapter-profile"
 TMP="$(mktemp /tmp/rpp-product-delivery-scheduler.XXXXXX)"
 trap 'rm -f "$TMP"' EXIT
-/usr/bin/python3 "/Users/nob/Projects/rpp-8am-notify/deploy_worker_runtime.py" --verify-only >"$TMP" 2>&1 || {
-  while IFS= read -r line; do printf '%s\n' "$line"; done <"$TMP"
-  exit 1
-}
-: >"$TMP"
 set +e
-/usr/bin/python3 "$RPP_PROJECT_DIR/rpp_product_delivery_scheduler.py" \
-  --execute \
-  --confirm=RPP_PRODUCT_DELIVERY_SCHEDULER >"$TMP" 2>&1
+/usr/bin/python3 "/Users/nob/Projects/rpp-8am-notify/deploy_worker_runtime.py" --run-scheduler >"$TMP" 2>&1
 STATUS=$?
 set -e
 if [[ -s "$TMP" ]]; then

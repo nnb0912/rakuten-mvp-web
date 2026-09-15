@@ -5,6 +5,8 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[2]
 DEPLOY = Path(__file__).with_name('deploy_worker_runtime.py')
@@ -24,10 +26,8 @@ class RuntimeManifestContractTest(unittest.TestCase):
 
     def test_wrapper_verifies_manifest_before_executing_attested_scheduler(self):
         source = WRAPPER.read_text(encoding='utf-8')
-        verify = source.index('deploy_worker_runtime.py\" --verify-only')
-        execute = source.index('$RPP_PROJECT_DIR/rpp_product_delivery_scheduler.py')
-        self.assertLess(verify, execute)
-        self.assertIn('exit 1', source[verify:execute])
+        self.assertIn('deploy_worker_runtime.py\" --run-scheduler', source)
+        self.assertNotIn('$RPP_PROJECT_DIR/rpp_product_delivery_scheduler.py', source)
 
     def test_verify_runtime_fails_on_tampered_sha_and_missing_artifact(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -47,9 +47,45 @@ class RuntimeManifestContractTest(unittest.TestCase):
                 target.unlink()
                 with self.assertRaisesRegex(RuntimeError, 'artifact is missing'):
                     module.verify_runtime()
+                real = root / 'real.py'
+                real.write_text('print(1)\n', encoding='utf-8')
+                target.symlink_to(real)
+                with self.assertRaisesRegex(RuntimeError, 'symlink'):
+                    module.verify_runtime()
             finally:
                 setattr(module, 'ARTIFACTS', old_artifacts)
                 setattr(module, 'MANIFEST', old_manifest)
+
+    def test_run_scheduler_uses_private_verified_generation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            project = root / 'project'
+            logs = project / 'rpp_apply_logs'
+            logs.mkdir(parents=True)
+            scheduler = root / 'scheduler.py'
+            settings = root / 'settings.py'
+            scheduler.write_text('ORIGINAL = True\n', encoding='utf-8')
+            settings.write_text('SETTINGS = True\n', encoding='utf-8')
+            manifest = logs / 'manifest.json'
+            artifacts = {'scheduler': (scheduler, scheduler), 'settingsRefresh': (settings, settings)}
+            manifest.write_text(json.dumps({'artifacts': {name: hashlib.sha256(target.read_bytes()).hexdigest() for name, (_, target) in artifacts.items()}}), encoding='utf-8')
+            old = (getattr(module, 'ARTIFACTS'), getattr(module, 'MANIFEST'), getattr(module, 'PROJECT'))
+            executed = {}
+            def fake_run(command, **kwargs):
+                scheduler.write_text('TAMPERED = True\n', encoding='utf-8')
+                executed['bytes'] = Path(command[1]).read_bytes()
+                return SimpleNamespace(returncode=0, stdout='', stderr='')
+            try:
+                setattr(module, 'ARTIFACTS', artifacts)
+                setattr(module, 'MANIFEST', manifest)
+                setattr(module, 'PROJECT', project)
+                with mock.patch.object(module.subprocess, 'run', side_effect=fake_run):
+                    self.assertEqual(module.run_verified_scheduler(), 0)
+                self.assertEqual(executed['bytes'], b'ORIGINAL = True\n')
+            finally:
+                setattr(module, 'ARTIFACTS', old[0])
+                setattr(module, 'MANIFEST', old[1])
+                setattr(module, 'PROJECT', old[2])
 
 
 if __name__ == '__main__':

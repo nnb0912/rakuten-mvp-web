@@ -9,7 +9,9 @@ import json
 import os
 from pathlib import Path
 import shutil
+import stat
 import subprocess
+import sys
 import tempfile
 
 REPO = Path(__file__).resolve().parents[2]
@@ -45,6 +47,51 @@ def sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def secure_regular_file(path: Path) -> None:
+    if path.is_symlink():
+        raise RuntimeError("stable runtime path must not be a symlink")
+    details = path.lstat()
+    if not stat.S_ISREG(details.st_mode) or details.st_uid != os.getuid() or details.st_mode & 0o022:
+        raise RuntimeError("stable runtime artifact ownership or permissions are unsafe")
+    parent = path.parent
+    while parent != parent.parent:
+        details = parent.lstat()
+        if parent.is_symlink():
+            raise RuntimeError("stable runtime parent directory is unsafe")
+        if details.st_uid != os.getuid():
+            break
+        if details.st_mode & 0o022:
+            raise RuntimeError("stable runtime parent directory is unsafe")
+        parent = parent.parent
+
+
+def stable_bytes(path: Path) -> bytes:
+    secure_regular_file(path)
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    descriptor = os.open(path, flags)
+    try:
+        before = os.fstat(descriptor)
+        data = b""
+        while True:
+            chunk = os.read(descriptor, 1024 * 1024)
+            if not chunk:
+                break
+            data += chunk
+        after = os.fstat(descriptor)
+    finally:
+        os.close(descriptor)
+    if (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns) != (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns):
+        raise RuntimeError("stable runtime artifact changed during verification")
+    return data
+
+
+def verified_bytes(path: Path, expected: str) -> bytes:
+    data = stable_bytes(path)
+    if hashlib.sha256(data).hexdigest() != expected:
+        raise RuntimeError("stable runtime SHA-256 does not match deploy manifest")
+    return data
+
+
 def git(*args: str) -> str:
     return subprocess.check_output(["git", *args], cwd=REPO, text=True).strip()
 
@@ -64,17 +111,45 @@ def atomic_json(path: Path, payload: dict) -> None:
 
 
 def verify_runtime() -> dict:
-    if not MANIFEST.is_file():
+    if not MANIFEST.is_file() or MANIFEST.is_symlink():
         raise RuntimeError("stable runtime deploy manifest is missing")
-    manifest = json.loads(MANIFEST.read_text(encoding="utf-8"))
+    manifest = json.loads(stable_bytes(MANIFEST).decode("utf-8"))
     actual = {}
     for name, (_, target) in ARTIFACTS.items():
         if not target.is_file():
             raise RuntimeError("stable runtime artifact is missing")
-        actual[name] = sha256(target)
-        if (manifest.get("artifacts") or {}).get(name) != actual[name]:
-            raise RuntimeError("stable runtime SHA-256 does not match deploy manifest")
+        expected = str((manifest.get("artifacts") or {}).get(name) or "")
+        data = verified_bytes(target, expected)
+        actual[name] = hashlib.sha256(data).hexdigest()
     return {"ok": True, "mode": "verify", "commit": manifest.get("commit"), "artifacts": actual}
+
+
+def run_verified_scheduler() -> int:
+    manifest = json.loads(stable_bytes(MANIFEST).decode("utf-8"))
+    run_root = PROJECT / "rpp_apply_logs" / "runtime_exec"
+    run_root.mkdir(parents=True, exist_ok=True, mode=0o700)
+    with tempfile.TemporaryDirectory(prefix="generation-", dir=run_root) as directory:
+        generation = Path(directory)
+        for name, (_, target) in ARTIFACTS.items():
+            expected = str((manifest.get("artifacts") or {}).get(name) or "")
+            data = verified_bytes(target, expected)
+            destination = generation / target.name
+            if destination.exists():
+                if destination.read_bytes() != data:
+                    raise RuntimeError("runtime execution generation has a filename collision")
+                continue
+            destination.write_bytes(data)
+            destination.chmod(0o500 if destination.suffix in {".py", ".sh"} else 0o400)
+        scheduler = generation / ARTIFACTS["scheduler"][1].name
+        env = os.environ.copy()
+        env["PYTHONPATH"] = str(generation)
+        env["RPP_SETTINGS_REFRESH_SCRIPT"] = str(generation / ARTIFACTS["settingsRefresh"][1].name)
+        process = subprocess.run([sys.executable, str(scheduler), "--execute", "--confirm=RPP_PRODUCT_DELIVERY_SCHEDULER"], env=env, text=True, capture_output=True)
+        if process.stdout:
+            print(process.stdout, end="")
+        if process.stderr:
+            print(process.stderr, end="", file=sys.stderr)
+        return process.returncode
 
 
 def deploy() -> dict:
@@ -119,8 +194,11 @@ def deploy() -> dict:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--verify-only", action="store_true")
+    parser.add_argument("--run-scheduler", action="store_true")
     args = parser.parse_args()
     try:
+        if args.run_scheduler:
+            return run_verified_scheduler()
         print(json.dumps(verify_runtime() if args.verify_only else deploy(), ensure_ascii=False, sort_keys=True))
         return 0
     except Exception as exc:

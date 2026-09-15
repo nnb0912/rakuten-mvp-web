@@ -6,26 +6,35 @@ import csv
 import datetime as dt
 import hashlib
 import json
-import math
 import re
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 
 JST = dt.timezone(dt.timedelta(hours=9))
+ITEM_CODE_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
+INTEGER_MAX = 2_147_483_647
+MONEY_MAX = 999_999_999_999
 
 
-def number(value: object, field: str, *, integer: bool = False) -> float | int:
-    text = str(value if value is not None else "").strip().replace(",", "")
+def number(value: object, field: str, *, integer: bool = False, maximum: int | Decimal | None = None, scale: int = 0) -> float | int:
+    text = str(value if value is not None else "").strip()
     if not text:
         raise RuntimeError(f"item daily report {field} is blank")
+    if not re.fullmatch(r"(?:\d+|\d{1,3}(?:,\d{3})+)(?:\.\d+)?", text):
+        raise RuntimeError(f"item daily report {field} is not a plain decimal")
     try:
-        parsed = float(text)
-    except ValueError as exc:
+        parsed = Decimal(text.replace(",", ""))
+    except InvalidOperation as exc:
         raise RuntimeError(f"item daily report {field} is not numeric") from exc
-    if not math.isfinite(parsed) or parsed < 0:
+    if not parsed.is_finite() or parsed < 0:
         raise RuntimeError(f"item daily report {field} must be finite and non-negative")
-    if integer and not parsed.is_integer():
+    if integer and parsed != parsed.to_integral_value():
         raise RuntimeError(f"item daily report {field} must be an integer")
-    return int(parsed) if integer else parsed
+    if scale >= 0 and int(parsed.as_tuple().exponent) < -scale:
+        raise RuntimeError(f"item daily report {field} has too many decimal places")
+    if maximum is not None and parsed > Decimal(maximum):
+        raise RuntimeError(f"item daily report {field} exceeds the database range")
+    return int(parsed) if integer else float(parsed)
 
 
 def parse_performance_csv(path: Path) -> tuple[str, list[dict]]:
@@ -49,18 +58,20 @@ def parse_performance_csv(path: Path) -> tuple[str, list[dict]]:
         item_code = str(row.get("商品管理番号") or "").strip().lower()
         if not item_code:
             continue
+        if not ITEM_CODE_RE.fullmatch(item_code):
+            raise RuntimeError("item daily report itemCode is invalid")
         if item_code in item_codes:
             raise RuntimeError(f"item daily report contains duplicate item: {item_code}")
         item_codes.add(item_code)
         rows.append({
             "itemCode": item_code,
-            "ctr": number(row.get("CTR(%)"), "CTR"),
-            "clicks": number(row.get("クリック数(合計)"), "clicks", integer=True),
-            "spend": number(row.get("実績額(合計)"), "spend", integer=True),
-            "sales12h": number(row.get("売上金額(合計12時間)"), "sales12h", integer=True),
-            "orders12h": number(row.get("売上件数(合計12時間)"), "orders12h", integer=True),
-            "sales720h": number(row.get("売上金額(合計720時間)"), "sales720h", integer=True),
-            "orders720h": number(row.get("売上件数(合計720時間)"), "orders720h", integer=True),
+            "ctr": number(row.get("CTR(%)"), "CTR", maximum=100, scale=4),
+            "clicks": number(row.get("クリック数(合計)"), "clicks", integer=True, maximum=INTEGER_MAX),
+            "spend": number(row.get("実績額(合計)"), "spend", integer=True, maximum=MONEY_MAX),
+            "sales12h": number(row.get("売上金額(合計12時間)"), "sales12h", integer=True, maximum=MONEY_MAX),
+            "orders12h": number(row.get("売上件数(合計12時間)"), "orders12h", integer=True, maximum=INTEGER_MAX),
+            "sales720h": number(row.get("売上金額(合計720時間)"), "sales720h", integer=True, maximum=MONEY_MAX),
+            "orders720h": number(row.get("売上件数(合計720時間)"), "orders720h", integer=True, maximum=INTEGER_MAX),
         })
     rows.sort(key=lambda row: row["itemCode"])
     return report_date.isoformat(), rows
@@ -69,14 +80,23 @@ def parse_performance_csv(path: Path) -> tuple[str, list[dict]]:
 def rows_sha256(rows: list[dict]) -> str:
     fields = ("itemCode", "ctr", "clicks", "spend", "sales12h", "orders12h", "sales720h", "orders720h")
     lines = []
-    for row in sorted(rows, key=lambda value: str(value["itemCode"])):
-        values = [str(row["itemCode"])] + [("null" if row[field] is None else f"n:{float(row[field]):.6f}") for field in fields[1:]]
+    for row in sorted(rows, key=lambda value: str(value["itemCode"]).encode("utf-8")):
+        values = [str(row["itemCode"])]
+        for field in fields[1:]:
+            if row[field] is None:
+                values.append("null")
+                continue
+            scale = 10_000 if field == "ctr" else 1
+            scaled = Decimal(str(row[field])) * scale
+            if not scaled.is_finite() or scaled != scaled.to_integral_value():
+                raise RuntimeError(f"performance canonical field {field} is invalid")
+            values.append(f"i:{int(scaled)}")
         lines.append("\t".join(values))
     return hashlib.sha256("\n".join(lines).encode()).hexdigest()
 
 
 def item_set_sha256(rows: list[dict]) -> str:
-    return hashlib.sha256("\n".join(sorted(str(row["itemCode"]) for row in rows)).encode()).hexdigest()
+    return hashlib.sha256("\n".join(sorted((str(row["itemCode"]) for row in rows), key=lambda value: value.encode("utf-8"))).encode()).hexdigest()
 
 
 def validate_batch_quorum(expected_rows: list[dict], actual_rows: list[dict]) -> tuple[int, str]:
@@ -129,3 +149,10 @@ def parse_receipt_times(receipt: dict, now: dt.datetime | None = None, report_da
         if lag_days < 0 or lag_days > 2:
             raise ValueError("receipt report date relationship is invalid")
     return request, history, source_mtime, completed
+
+
+def validate_batch_sequence(verification_receipt: dict, actual_receipt: dict, now: dt.datetime | None = None, report_date: str | None = None) -> None:
+    verification = parse_receipt_times(verification_receipt, now=now, report_date=report_date)
+    actual = parse_receipt_times(actual_receipt, now=now, report_date=report_date)
+    if verification[3] > actual[0]:
+        raise ValueError("verification batch must complete before actual batch starts")

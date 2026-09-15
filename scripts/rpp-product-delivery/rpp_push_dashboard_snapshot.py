@@ -20,7 +20,7 @@ from pathlib import Path
 SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
-from rpp_performance_contract import item_set_sha256, parse_performance_csv, parse_receipt_times, receipt_message as performance_receipt_message, rows_sha256
+from rpp_performance_contract import item_set_sha256, parse_performance_csv, parse_receipt_times, receipt_message as performance_receipt_message, rows_sha256, validate_batch_sequence
 
 PROJECT = Path(os.environ.get("RPP_PROJECT_DIR", "/Users/nob/Projects/rpp-8am-notify"))
 OWNER_MAP_PATH = Path(os.environ.get("RPP_OWNER_MAP_PATH", "/Users/nob/Projects/rakuten-mvp-web/src/data/rpp_owner_map.json"))
@@ -204,10 +204,19 @@ def performance_daily(path: Path | None = None) -> dict | None:
 
 
 def performance_receipt(path: Path, report_date: str, rows: list[dict]) -> dict:
-    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    if not path.is_symlink():
+        raise RuntimeError("RPP performance report must be an atomic generation pointer")
+    resolved_report = path.resolve(strict=True)
+    generations = (PROJECT / "rpp_performance_generations").resolve()
+    if resolved_report.name != "rpp_item_reports.csv" or resolved_report.parent.parent != generations or resolved_report.is_symlink():
+        raise RuntimeError("RPP performance generation pointer is outside the attested store")
+    receipt_path = resolved_report.parent / "receipt.json"
+    if not receipt_path.is_file() or receipt_path.is_symlink():
+        raise RuntimeError("RPP performance generation receipt is missing")
+    digest = hashlib.sha256(resolved_report.read_bytes()).hexdigest()
     row_count = len(rows)
-    source_mtime = dt.datetime.fromtimestamp(path.stat().st_mtime, dt.timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
-    for receipt_path in sorted((PROJECT / "rpp_logs").glob("rpp_product_report_refresh_*.json"), reverse=True):
+    source_mtime = dt.datetime.fromtimestamp(resolved_report.stat().st_mtime, dt.timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+    for receipt_path in [receipt_path]:
         try:
             receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
             signature = str(receipt.get("signature") or "")
@@ -221,8 +230,8 @@ def performance_receipt(path: Path, report_date: str, rows: list[dict]) -> dict:
             fresh = receipt_path.stat().st_mtime >= path.stat().st_mtime
             provider_manifest_valid = isinstance(receipt.get("source_archive_bytes"), int) and receipt["source_archive_bytes"] > 0 and isinstance(receipt.get("source_csv_compressed_bytes"), int) and receipt["source_csv_compressed_bytes"] > 0 and isinstance(receipt.get("source_csv_uncompressed_bytes"), int) and receipt["source_csv_uncompressed_bytes"] > 0 and bool(re.fullmatch(r"[a-f0-9]{8}", str(receipt.get("source_csv_crc32") or ""))) and len(str(receipt.get("source_csv_name_sha256") or "")) == 64
             evidence_valid = receipt.get("version") == 1 and len(str(receipt.get("history_row_sha256") or "")) == 64 and len(str(receipt.get("source_archive_sha256") or "")) == 64 and len(str(receipt.get("verification_history_row_sha256") or "")) == 64 and len(str(receipt.get("verification_archive_sha256") or "")) == 64 and receipt.get("history_row_sha256") != receipt.get("verification_history_row_sha256") and receipt.get("expected_item_set_sha256") == item_set_sha256(rows) and receipt.get("source") == path.name and receipt.get("source_mtime") == source_mtime and receipt.get("rows_sha256") == rows_sha256(rows) and provider_manifest_valid
-            parse_receipt_times(receipt, report_date=report_date)
-            parse_receipt_times({"request_started_at": receipt.get("verification_request_started_at"), "history_created_at": receipt.get("verification_history_created_at"), "source_mtime": receipt.get("verification_source_mtime"), "completed_at": receipt.get("verification_completed_at")}, report_date=report_date)
+            verification_receipt = {"request_started_at": receipt.get("verification_request_started_at"), "history_created_at": receipt.get("verification_history_created_at"), "source_mtime": receipt.get("verification_source_mtime"), "completed_at": receipt.get("verification_completed_at")}
+            validate_batch_sequence(verification_receipt, receipt, report_date=report_date)
             if output == path.resolve() and complete and counts_match and dates_match and hash_matches and fresh and signature_valid and evidence_valid:
                 completed_at = str(receipt.get("completed_at") or "")
                 return {"version": 1, "file": receipt_path.name, "completedAt": completed_at, "sha256": digest, "expectedCount": row_count, "actualCount": row_count, "expectedItemSetSha256": receipt["expected_item_set_sha256"], "requestStartedAt": receipt["request_started_at"], "historyCreatedAt": receipt["history_created_at"], "historyRowSha256": receipt["history_row_sha256"], "sourceArchiveSha256": receipt["source_archive_sha256"], "sourceArchiveBytes": receipt["source_archive_bytes"], "sourceCsvCrc32": receipt["source_csv_crc32"], "sourceCsvCompressedBytes": receipt["source_csv_compressed_bytes"], "sourceCsvUncompressedBytes": receipt["source_csv_uncompressed_bytes"], "sourceCsvNameSha256": receipt["source_csv_name_sha256"], "verificationRequestStartedAt": receipt["verification_request_started_at"], "verificationHistoryCreatedAt": receipt["verification_history_created_at"], "verificationHistoryRowSha256": receipt["verification_history_row_sha256"], "verificationArchiveSha256": receipt["verification_archive_sha256"], "verificationSourceMtime": receipt["verification_source_mtime"], "verificationCompletedAt": receipt["verification_completed_at"], "source": path.name, "sourceMtime": source_mtime, "rowsSha256": receipt["rows_sha256"], "signature": signature, "complete": True}

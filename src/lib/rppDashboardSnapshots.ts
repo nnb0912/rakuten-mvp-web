@@ -24,19 +24,29 @@ const PERFORMANCE_TABLE = "rpp_performance_daily";
 const dateOnly = (value: unknown) => typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : "";
 
 export function performanceRowsSha256(rows: RppPerformanceDailyRow[]) {
-  const body = [...rows].sort((a, b) => a.itemCode.localeCompare(b.itemCode)).map((row) => [row.itemCode, row.ctr, row.clicks, row.spend, row.sales12h, row.orders12h, row.sales720h, row.orders720h].map((value, index) => index === 0 ? String(value) : value === null ? "null" : `n:${Number(value).toFixed(6)}`).join("\t")).join("\n");
+  const body = [...rows].sort((a, b) => Buffer.compare(Buffer.from(a.itemCode, "utf8"), Buffer.from(b.itemCode, "utf8"))).map((row) => {
+    const values: Array<string | number | null> = [row.itemCode, row.ctr, row.clicks, row.spend, row.sales12h, row.orders12h, row.sales720h, row.orders720h];
+    return values.map((value, index) => {
+      if (index === 0) return String(value);
+      if (value === null) return "null";
+      const scale = index === 1 ? 10_000 : 1;
+      const scaled = Number(value) * scale;
+      if (!Number.isSafeInteger(scaled)) throw new Error("performance canonical value is invalid");
+      return `i:${scaled}`;
+    }).join("\t");
+  }).join("\n");
   return createHash("sha256").update(body).digest("hex");
 }
 
 export function performanceItemSetSha256(rows: RppPerformanceDailyRow[]) {
-  return createHash("sha256").update(rows.map((row) => row.itemCode).sort().join("\n")).digest("hex");
+  return createHash("sha256").update(rows.map((row) => row.itemCode).sort((a, b) => Buffer.compare(Buffer.from(a, "utf8"), Buffer.from(b, "utf8"))).join("\n")).digest("hex");
 }
 
-function performanceMetric(value: unknown, field: string, integer = false) {
-  if ((typeof value !== "number" && typeof value !== "string") || (typeof value === "string" && !value.trim())) throw new Error(`performanceDaily row ${field} is invalid`);
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed) || parsed < 0 || (integer && !Number.isInteger(parsed))) throw new Error(`performanceDaily row ${field} is invalid`);
-  return parsed;
+function performanceMetric(value: unknown, field: string, maximum: number, scale = 0) {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0 || value > maximum) throw new Error(`performanceDaily ${field} is invalid`);
+  const scaled = value * 10 ** scale;
+  if (!Number.isSafeInteger(scaled)) throw new Error(`performanceDaily ${field} is invalid`);
+  return value;
 }
 
 function validPerformanceReceiptSignature(receipt: Partial<RppPerformanceReceipt>, date: string, source: string, sourceMtime: string, rows: RppPerformanceDailyRow[]) {
@@ -59,8 +69,8 @@ function normalizePerformanceDaily(value: unknown): RppPerformanceDaily | null {
   if (!Array.isArray(input.rows)) throw new Error("performanceDaily.rows must be an array");
   const rows = input.rows.map((raw) => {
     const itemCode = String(raw?.itemCode ?? "").trim().toLowerCase();
-    if (!itemCode) throw new Error("performanceDaily row itemCode is required");
-    return { itemCode, ctr: raw.ctr == null ? null : performanceMetric(raw.ctr, "ctr"), clicks: performanceMetric(raw.clicks, "clicks", true), spend: performanceMetric(raw.spend, "spend", true), sales12h: performanceMetric(raw.sales12h, "sales12h", true), orders12h: performanceMetric(raw.orders12h, "orders12h", true), sales720h: performanceMetric(raw.sales720h, "sales720h", true), orders720h: performanceMetric(raw.orders720h, "orders720h", true) };
+    if (!/^[a-z0-9][a-z0-9_-]{0,63}$/.test(itemCode)) throw new Error("performanceDaily row itemCode is invalid");
+    return { itemCode, ctr: performanceMetric(raw.ctr, "ctr", 100, 4), clicks: performanceMetric(raw.clicks, "clicks", 2_147_483_647), spend: performanceMetric(raw.spend, "spend", 999_999_999_999), sales12h: performanceMetric(raw.sales12h, "sales12h", 999_999_999_999), orders12h: performanceMetric(raw.orders12h, "orders12h", 2_147_483_647), sales720h: performanceMetric(raw.sales720h, "sales720h", 999_999_999_999), orders720h: performanceMetric(raw.orders720h, "orders720h", 2_147_483_647) };
   });
   const receipt = input.receipt as Partial<RppPerformanceReceipt> | undefined;
   const completedAt = typeof receipt?.completedAt === "string" ? new Date(receipt.completedAt) : new Date(NaN);
@@ -80,7 +90,7 @@ function normalizePerformanceDaily(value: unknown): RppPerformanceDaily | null {
   const reportLagDays = parsedTimesValid ? (Date.parse(`${completedJstDate}T00:00:00Z`) - Date.parse(`${date}T00:00:00Z`)) / 86_400_000 : Number.NaN;
   const verificationReportLagDays = verificationParsedTimesValid ? (Date.parse(`${verificationCompletedJstDate}T00:00:00Z`) - Date.parse(`${date}T00:00:00Z`)) / 86_400_000 : Number.NaN;
   const timesValid = parsedTimesValid && historyAt.getTime() >= requestAt.getTime() - 5_000 && historyAt.getTime() <= completedAt.getTime() && new Date(sourceMtime).getTime() >= requestAt.getTime() - 5_000 && new Date(sourceMtime).getTime() <= completedAt.getTime() + 5_000 && completedAt.getTime() >= requestAt.getTime() && completedAt.getTime() - requestAt.getTime() <= 30 * 60_000 && completedAt.getTime() <= Date.now() + 5 * 60_000 && requestAt.getTime() <= Date.now() + 5 * 60_000 && Date.now() - completedAt.getTime() <= 36 * 60 * 60_000 && reportLagDays >= 0 && reportLagDays <= 2;
-  const verificationTimesValid = !Number.isNaN(verificationRequestAt.getTime()) && !Number.isNaN(verificationHistoryAt.getTime()) && !Number.isNaN(verificationSourceMtime.getTime()) && !Number.isNaN(verificationCompletedAt.getTime()) && verificationHistoryAt.getTime() >= verificationRequestAt.getTime() - 5_000 && verificationHistoryAt.getTime() <= verificationCompletedAt.getTime() && verificationSourceMtime.getTime() >= verificationRequestAt.getTime() - 5_000 && verificationSourceMtime.getTime() <= verificationCompletedAt.getTime() + 5_000 && verificationCompletedAt.getTime() >= verificationRequestAt.getTime() && verificationCompletedAt.getTime() - verificationRequestAt.getTime() <= 30 * 60_000 && verificationCompletedAt.getTime() <= Date.now() + 5 * 60_000 && Date.now() - verificationCompletedAt.getTime() <= 36 * 60 * 60_000 && verificationReportLagDays >= 0 && verificationReportLagDays <= 2;
+  const verificationTimesValid = verificationParsedTimesValid && verificationHistoryAt.getTime() >= verificationRequestAt.getTime() - 5_000 && verificationHistoryAt.getTime() <= verificationCompletedAt.getTime() && verificationSourceMtime.getTime() >= verificationRequestAt.getTime() - 5_000 && verificationSourceMtime.getTime() <= verificationCompletedAt.getTime() + 5_000 && verificationCompletedAt.getTime() >= verificationRequestAt.getTime() && verificationCompletedAt.getTime() <= requestAt.getTime() && verificationCompletedAt.getTime() - verificationRequestAt.getTime() <= 30 * 60_000 && verificationCompletedAt.getTime() <= Date.now() + 5 * 60_000 && Date.now() - verificationCompletedAt.getTime() <= 36 * 60 * 60_000 && verificationReportLagDays >= 0 && verificationReportLagDays <= 2;
   if (!receipt || receipt.version !== 1 || receipt.complete !== true || !/^[a-f0-9]{64}$/.test(String(receipt.sha256 ?? "")) || receipt.expectedCount !== rows.length || receipt.actualCount !== rows.length || !String(receipt.file ?? "").trim() || !/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(String(receipt.historyCreatedAt ?? "")) || !/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(String(receipt.verificationHistoryCreatedAt ?? "")) || !evidenceHashesValid || !providerManifestValid || !timesValid || !verificationTimesValid || !validPerformanceReceiptSignature(receipt, date, String(input.source), sourceMtime, rows)) throw new Error("performanceDaily verified receipt is invalid");
   return { source: String(input.source), sourceMtime, date, attribution: { sales12h: true, sales720h: true }, rows, receipt: { ...receipt, completedAt: completedAt.toISOString() } as RppPerformanceReceipt };
 }
