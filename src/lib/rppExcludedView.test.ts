@@ -12,10 +12,12 @@ test("除外中・広告ON戻しはURL付きの独立メニューで開く", () 
   assert.match(page, /href="\/rpp\?view=excluded"/);
 });
 
-test("除外中画面は担当者タブで件数を表示し検索窓や開閉操作を使わない", () => {
+test("除外中画面は担当者タブで件数を表示し初期DOMを50行に制限する", () => {
   assert.match(component, /excludedOwnerStats\.map/);
   assert.match(component, /aria-label="除外中商品の担当者絞り込み"/);
-  assert.match(component, /excludedProductsForOwner\.map/);
+  assert.match(component, /excludedProductsForOwner\.slice\(0, excludedVisibleCount\)/);
+  assert.match(component, /visibleExcludedProducts\.map/);
+  assert.match(component, /さらに50件表示/);
   assert.doesNotMatch(component, /setShowExcludedProducts|exclusionSearch|filteredExcludedProducts/);
 });
 

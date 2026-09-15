@@ -223,6 +223,7 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [ownerFilter, setOwnerFilter] = useState("全て");
+  const [excludedVisibleCount, setExcludedVisibleCount] = useState(50);
   const [groupFilter, setGroupFilter] = useState("全て");
   const [tableSearch, setTableSearch] = useState("");
   const [tableStatusFilter, setTableStatusFilter] = useState<"ALL" | "CANDIDATE" | "ATTENTION" | "EXCLUDED">("ALL");
@@ -510,6 +511,7 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
       .sort((a, b) => (a.owner === "担当未設定" ? -1 : b.owner === "担当未設定" ? 1 : a.owner.localeCompare(b.owner, "ja")));
   }, [exclusionRows]);
   const excludedProductsForOwner = exclusionRows.filter((row) => row.excluded && (ownerFilter === "全て" || (row.owner || "担当未設定") === ownerFilter));
+  const visibleExcludedProducts = excludedProductsForOwner.slice(0, excludedVisibleCount);
   const searchWordOptions = useMemo(() => {
     const itemCode = form.itemCode.trim().toLowerCase();
     if (!itemCode) return [] as string[];
@@ -530,6 +532,7 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
 
   function selectOwnerFilter(owner: string) {
     setOwnerFilter(owner);
+    setExcludedVisibleCount(50);
   }
 
   function patchForm<K extends keyof FormState>(key: K, value: FormState[K]) {
@@ -1175,7 +1178,7 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
           </div>
         </div>
         <div className="excluded-product-grid">
-          {excludedProductsForOwner.map((row) => {
+          {visibleExcludedProducts.map((row) => {
             const completion = itemTargetCompletionMap.get(row.itemCode) ?? { total: 0, saved: savedTargetCountByItemCode.get(row.itemCode) ?? 0, missing: 0 };
             const savedCount = completion.saved;
             const canTurnOn = completion.total > 0 && completion.missing === 0;
@@ -1193,6 +1196,18 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
               </article>
             );
           })}
+          {excludedProductsForOwner.length > 50 ? (
+            <div className="excluded-load-more">
+              <span role="status" aria-live="polite">{visibleExcludedProducts.length} / {excludedProductsForOwner.length}件表示</span>
+              <button
+                type="button"
+                disabled={visibleExcludedProducts.length >= excludedProductsForOwner.length}
+                onClick={() => setExcludedVisibleCount((count) => count + 50)}
+              >
+                {visibleExcludedProducts.length < excludedProductsForOwner.length ? "さらに50件表示" : "全件表示済み"}
+              </button>
+            </div>
+          ) : null}
           {!excludedProductsForOwner.length ? <p>この担当者の除外中商品はありません。</p> : null}
         </div>
       </section>}
