@@ -68,3 +68,10 @@ test("グラフは日次週次月次を切替え、当月クリックと720時�
   assert.match(chartSource, /\{hasObserved \? <>/);
   assert.match(chartSource, /hasObserved && roasPoints\.length/);
 });
+
+test("スマホのKPIとグラフ見出しは横幅を有効利用する", () => {
+  assert.match(styles, /@media \(max-width: 760px\)[\s\S]*\.rpp-chart-kpis \{ grid-template-columns: repeat\(2, minmax\(0, 1fr\)\)/);
+  assert.match(styles, /\.rpp-chart-heading \{[^}]*display: grid;[^}]*gap: 8px/);
+  assert.match(styles, /\.rpp-period-tabs \{[^}]*justify-content: stretch/);
+  assert.match(styles, /\.rpp-chart-legend span \{[^}]*white-space: nowrap/);
+});

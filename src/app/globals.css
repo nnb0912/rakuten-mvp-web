@@ -466,11 +466,16 @@ small { color: var(--muted); line-height: 1.45; }
   .rpp-console-hero h1 { font-size: 22px; }
   .rpp-console-live { display: none; }
   .rpp-kpi-strip { grid-template-columns: repeat(3, minmax(0, 1fr)); }
-  .rpp-console-main .product-card-panel > .section-heading { display: grid; }
+  .rpp-console-main .product-card-panel > .section-heading { display: grid; gap: 8px; }
+  .rpp-console-main .product-card-panel .product-list-actions { width: 100%; justify-content: flex-start; flex-wrap: wrap; gap: 6px; }
+  .rpp-console-main .product-card-panel .product-list-actions > button,
+  .rpp-console-main .product-card-panel .product-list-actions > span { flex: 0 0 auto; min-height: 30px; white-space: nowrap; }
   .adant-list-toolbar { position: static; grid-template-columns: 1fr; padding: 8px; }
   .adant-list-search input { width: 100%; }
   .adant-status-filters { overflow-x: auto; }
   .adant-status-filters button { flex: 0 0 auto; }
+  .adant-list-toolbar .compact-select { display: grid; grid-template-columns: 52px minmax(0, 1fr); width: 100%; }
+  .adant-list-toolbar .compact-select select { width: 100%; min-width: 0; }
   .adant-ops-table-wrap { border: 1px solid #e2e8f0; }
   .adant-ops-table { min-width: 1280px; }
   .cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -901,12 +906,36 @@ small { color: var(--muted); line-height: 1.45; }
   .rpp-chart-wide { grid-column: 1 / -1; grid-row: auto; }
 }
 
+@media (min-width: 761px) and (max-width: 900px) {
+  .rpp-console-main .adant-list-toolbar { grid-template-columns: 1fr 1fr; overflow-x: visible; }
+  .rpp-console-main .adant-list-search,
+  .rpp-console-main .adant-status-filters { grid-column: 1 / -1; }
+  .rpp-console-main .adant-list-toolbar .compact-select { display: grid; grid-template-columns: 52px minmax(0, 1fr); width: 100%; }
+  .rpp-console-main .adant-list-toolbar .compact-select select { width: 100%; min-width: 0; }
+  .rpp-console-main .adant-list-toolbar .filter-clear { justify-self: end; }
+}
+
 @media (max-width: 760px) {
+  .rpp-console-main .owner-filter-strip { margin-bottom: 48px; }
+  .rpp-console-main .product-card-panel > .section-heading { display: grid !important; gap: 8px; }
+  .rpp-console-main .product-card-panel .product-list-actions { width: 100%; justify-content: flex-start; flex-wrap: wrap; gap: 6px; }
+  .rpp-console-main .product-card-panel .product-list-actions > button,
+  .rpp-console-main .product-card-panel .product-list-actions > span { flex: 0 0 auto; min-height: 30px; white-space: nowrap; }
+  .rpp-console-main .adant-list-toolbar { position: static; grid-template-columns: 1fr; overflow-x: visible; padding: 8px; }
+  .rpp-console-main .adant-list-toolbar .compact-select { display: grid; grid-template-columns: 52px minmax(0, 1fr); width: 100%; }
+  .rpp-console-main .adant-list-toolbar .compact-select select { width: 100%; min-width: 0; }
   .rpp-dashboard-charts { grid-template-columns: 1fr; }
-  .rpp-chart-kpis { grid-template-columns: 1fr; }
+  .rpp-chart-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+  .rpp-metric-card { min-height: 100px; padding: 12px !important; }
+  .rpp-metric-card > strong { font-size: 22px; }
   .rpp-chart-wide { grid-column: auto; }
   .rpp-chart-card { padding: 12px !important; }
+  .rpp-chart-heading { display: grid; gap: 8px; }
+  .rpp-chart-heading > div:last-child { min-width: 0; }
+  .rpp-period-tabs { justify-content: stretch; }
+  .rpp-period-tabs button { flex: 1 1 0; }
   .rpp-chart-legend { gap: 8px; }
+  .rpp-chart-legend span { white-space: nowrap; }
   .rpp-line-chart { height: 160px; }
   .rpp-roas-chart { height: 130px; }
   .rpp-period-tabs button { min-width: 42px; }
