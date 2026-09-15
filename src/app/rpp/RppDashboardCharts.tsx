@@ -32,7 +32,7 @@ export default function RppDashboardCharts({
     <article className="panel rpp-chart-card rpp-chart-wide">
       <div className="rpp-chart-heading">
         <div><p className="eyebrow">ALL RPP PERFORMANCE</p><h2>全RPP 広告費・売上推移</h2></div>
-        <div className="rpp-chart-legend"><span className="is-spend">広告費</span><span className="is-sales">売上（720h）</span></div>
+        <div className="rpp-chart-legend"><span className="is-spend">広告費</span><span className="is-sales">売上（720時間帰属）</span></div>
       </div>
       {rows.length ? <>
         <div className="rpp-chart-summary"><b>全RPP実績・{rows.length}暦日（期待最終日 {expectedLatest?.label}）</b><span>最終観測 {latestObserved?.label ?? "なし"}</span><span>広告費 {latestObserved?.spend == null ? "未取得" : yen(latestObserved.spend)}</span><span>売上 {latestObserved?.sales == null ? "未取得" : yen(latestObserved.sales)}</span></div>
@@ -55,8 +55,8 @@ export default function RppDashboardCharts({
     </article>
 
     <article className="panel rpp-chart-card">
-      <div className="rpp-chart-heading"><div><p className="eyebrow">ALL RPP EFFICIENCY</p><h2>全RPP ROAS推移（720h）</h2></div><strong className="rpp-chart-value">{latestRoas?.roas == null ? "未取得" : `${Math.round(latestRoas.roas)}%（${latestRoas.label}）`}</strong></div>
-      {roasPoints.length ? <svg className="rpp-line-chart rpp-roas-chart" viewBox="0 0 560 180" role="img" aria-label="日別ROAS推移（売上720h帰属）">
+      <div className="rpp-chart-heading"><div><p className="eyebrow">ALL RPP EFFICIENCY</p><h2>全RPP ROAS推移（720時間帰属）</h2></div><strong className="rpp-chart-value">{latestRoas?.roas == null ? "未取得" : `${Math.round(latestRoas.roas)}%（${latestRoas.label}）`}</strong></div>
+      {roasPoints.length ? <svg className="rpp-line-chart rpp-roas-chart" viewBox="0 0 560 180" role="img" aria-label="日別ROAS推移（売上720時間帰属）">
         <g className="rpp-chart-grid"><line x1="22" y1="22" x2="538" y2="22"/><line x1="22" y1="90" x2="538" y2="90"/><line x1="22" y1="158" x2="538" y2="158"/></g>
         {roasPoints.map((points, index) => <polyline className="rpp-chart-line roas" points={points} key={`roas-${index}`}/>)}
         {rows.map((row, index) => row.roas == null ? null : <circle key={row.date} className="rpp-chart-dot roas" cx={22 + index / Math.max(1, rows.length - 1) * 516} cy={158 - row.roas / Math.max(...rows.flatMap((item) => item.roas == null ? [] : [item.roas]), 1) * 136} r="3"><title>{row.label} ROAS {Math.round(row.roas)}%</title></circle>)}
