@@ -86,6 +86,7 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
+  // JSON数値は字句（10 / 1e1）ではなく、parse後の同一な意味値をcanonical化して署名検証する。
   if (!authorized(request)) return Response.json({ error: "unauthorized" }, { status: 401 });
   try {
     const body = await request.json() as Record<string, unknown>;

@@ -32,7 +32,7 @@
     },
     {
       "itemCode": "r_1",
-      "ctr": 0.0001,
+      "ctr": 0.0003,
       "clicks": 1,
       "spend": 1,
       "sales12h": 1,
@@ -41,6 +41,6 @@
       "orders720h": 1
     }
   ],
-  "rowsSha256": "16319d9407111894456f94d69a48b12428007485c55aac8a217ffc7db9fda503",
+  "rowsSha256": "546c3c6d63294eab887cc5670f2c114c5c515e71c060e65cecc2c12331263df2",
   "itemSetSha256": "1a89ff302b1be8d4beee796661fe642a80a1f946e4c334cb3cd9fa78a0da7216"
 }

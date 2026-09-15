@@ -23,16 +23,21 @@ const TABLE = "rpp_dashboard_snapshots";
 const PERFORMANCE_TABLE = "rpp_performance_daily";
 const dateOnly = (value: unknown) => typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : "";
 
+export function performanceDecimalUnits(value: number, scale: number) {
+  const factor = 10 ** scale;
+  const units = Math.round(value * factor);
+  const tolerance = Number.EPSILON * Math.max(1, Math.abs(value)) * 8;
+  if (!Number.isSafeInteger(units) || Math.abs(value - units / factor) > tolerance) throw new Error("performance decimal scale is invalid");
+  return units;
+}
+
 export function performanceRowsSha256(rows: RppPerformanceDailyRow[]) {
   const body = [...rows].sort((a, b) => Buffer.compare(Buffer.from(a.itemCode, "utf8"), Buffer.from(b.itemCode, "utf8"))).map((row) => {
     const values: Array<string | number | null> = [row.itemCode, row.ctr, row.clicks, row.spend, row.sales12h, row.orders12h, row.sales720h, row.orders720h];
     return values.map((value, index) => {
       if (index === 0) return String(value);
       if (value === null) return "null";
-      const scale = index === 1 ? 10_000 : 1;
-      const scaled = Number(value) * scale;
-      if (!Number.isSafeInteger(scaled)) throw new Error("performance canonical value is invalid");
-      return `i:${scaled}`;
+      return `i:${performanceDecimalUnits(Number(value), index === 1 ? 4 : 0)}`;
     }).join("\t");
   }).join("\n");
   return createHash("sha256").update(body).digest("hex");
@@ -44,8 +49,11 @@ export function performanceItemSetSha256(rows: RppPerformanceDailyRow[]) {
 
 function performanceMetric(value: unknown, field: string, maximum: number, scale = 0) {
   if (typeof value !== "number" || !Number.isFinite(value) || value < 0 || value > maximum) throw new Error(`performanceDaily ${field} is invalid`);
-  const scaled = value * 10 ** scale;
-  if (!Number.isSafeInteger(scaled)) throw new Error(`performanceDaily ${field} is invalid`);
+  try {
+    performanceDecimalUnits(value, scale);
+  } catch {
+    throw new Error(`performanceDaily ${field} is invalid`);
+  }
   return value;
 }
 

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { createHash, createHmac } from "node:crypto";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import { normalizeRppDashboardSnapshot, performanceItemSetSha256, performanceRowsSha256 } from "./rppDashboardSnapshots.ts";
+import { normalizeRppDashboardSnapshot, performanceDecimalUnits, performanceItemSetSha256, performanceRowsSha256 } from "./rppDashboardSnapshots.ts";
 
 const snapshotSource = readFileSync(new URL("./rppDashboardSnapshots.ts", import.meta.url), "utf8");
 const receiptKey = "test-only-rpp-performance-receipt-key-123456";
@@ -24,6 +24,13 @@ test("Python and TypeScript share canonical performance vectors", () => {
   const vector = JSON.parse(readFileSync(new URL("../../scripts/rpp-product-delivery/rpp_performance_canonical_vectors.json", import.meta.url), "utf8"));
   assert.equal(performanceRowsSha256(vector.rows), vector.rowsSha256);
   assert.equal(performanceItemSetSha256(vector.rows), vector.itemSetSha256);
+});
+
+test("CTR 0〜100の4桁小数をすべて正確な整数unitへ復元する", () => {
+  for (let units = 0; units <= 1_000_000; units += 1) {
+    assert.equal(performanceDecimalUnits(units / 10_000, 4), units);
+  }
+  assert.throws(() => performanceDecimalUnits(0.00031, 4), /scale is invalid/);
 });
 
 test("RPP dashboard snapshot payload is normalized", () => {
