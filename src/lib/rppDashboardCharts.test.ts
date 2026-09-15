@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildRppDashboardChartSeries, chartPolyline, type RppDashboardDailyMetric } from "./rppDashboardCharts.ts";
+import { buildRppDashboardChartSeries, buildRppDeliveryComposition, chartPolyline, type RppDashboardDailyMetric } from "./rppDashboardCharts.ts";
 
 const day = (delta: number) => {
   const value = new Date(Date.now() + 9 * 60 * 60_000 + delta * 86_400_000);
@@ -58,4 +58,50 @@ test("JSTの14暦日窓は先頭・末尾・全欠損と1観測日を保持し�
   assert.equal(rows.filter((row) => row.spend != null).length, 1);
   assert.equal(buildRppDashboardChartSeries(input.map((row) => ({ ...row, spend: null, sales: null, clicks: null }))).length, 14);
   assert.equal(rows.some((row) => row.date === day(1)), false);
+});
+
+const deliverySnapshot = (input: {
+  syncedAt?: string;
+  allConfiguredTargets?: Array<{ itemCode: string }>;
+  exclusionProducts?: Array<{ itemCode: string; excluded: boolean }>;
+  observation?: { observedAt: string; complete: boolean };
+}) => ({
+  syncedAt: input.syncedAt,
+  rppData: {
+    allConfiguredTargets: input.allConfiguredTargets,
+    exclusionProducts: input.exclusionProducts ?? [],
+    exclusionObservation: input.observation,
+  },
+});
+
+test("全RPP母集団が欠落した旧snapshotは0商品でなく未取得にする", () => {
+  const result = buildRppDeliveryComposition(deliverySnapshot({}), new Date("2026-09-15T09:00:00Z"));
+  assert.deepEqual(result, { state: "UNAVAILABLE", total: 0, active: 0, excluded: 0, unknown: 0 });
+  const empty = buildRppDeliveryComposition(deliverySnapshot({
+    syncedAt: "2026-09-15T08:30:00Z",
+    allConfiguredTargets: [],
+    observation: { observedAt: "2026-09-15T08:40:00Z", complete: true },
+  }), new Date("2026-09-15T09:00:00Z"));
+  assert.deepEqual(empty, { state: "UNAVAILABLE", total: 0, active: 0, excluded: 0, unknown: 0 });
+});
+
+test("不完全・期限切れ・未来の観測は全RPP商品を未確認にする", () => {
+  const base = { syncedAt: "2026-09-15T08:30:00Z", allConfiguredTargets: [{ itemCode: "A" }, { itemCode: "a" }, { itemCode: "B" }], exclusionProducts: [{ itemCode: "a", excluded: false }, { itemCode: "b", excluded: true }] };
+  for (const observation of [
+    { observedAt: "2026-09-15T08:40:00Z", complete: false },
+    { observedAt: "2026-09-15T06:59:59Z", complete: true },
+    { observedAt: "2026-09-15T09:00:01Z", complete: true },
+  ]) {
+    assert.deepEqual(buildRppDeliveryComposition(deliverySnapshot({ ...base, observation }), new Date("2026-09-15T09:00:00Z")), { state: "UNKNOWN", total: 2, active: 0, excluded: 0, unknown: 2 });
+  }
+});
+
+test("同一fresh complete snapshotだけで全RPP商品を重複なく配信分類する", () => {
+  const result = buildRppDeliveryComposition(deliverySnapshot({
+    syncedAt: "2026-09-15T08:30:00Z",
+    allConfiguredTargets: [{ itemCode: "A" }, { itemCode: "a" }, { itemCode: "B" }, { itemCode: "C" }],
+    exclusionProducts: [{ itemCode: "a", excluded: false }, { itemCode: "b", excluded: true }],
+    observation: { observedAt: "2026-09-15T08:40:00Z", complete: true },
+  }), new Date("2026-09-15T09:00:00Z"));
+  assert.deepEqual(result, { state: "CURRENT", total: 3, active: 1, excluded: 1, unknown: 1 });
 });

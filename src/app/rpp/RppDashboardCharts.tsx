@@ -1,4 +1,4 @@
-import { buildRppDashboardChartSeries, chartPolyline, type RppDashboardDailyMetric } from "@/lib/rppDashboardCharts";
+import { buildRppDashboardChartSeries, chartPolyline, type RppDashboardDailyMetric, type RppDeliveryComposition } from "@/lib/rppDashboardCharts";
 import type { CSSProperties } from "react";
 
 function yen(value: number) {
@@ -7,21 +7,18 @@ function yen(value: number) {
 
 export default function RppDashboardCharts({
   daily,
-  active,
-  excluded,
-  unknown,
+  delivery,
 }: {
   daily: RppDashboardDailyMetric[];
-  active: number;
-  excluded: number;
-  unknown: number;
+  delivery: RppDeliveryComposition;
 }) {
+  const { active, excluded, unknown, total } = delivery;
   const rows = buildRppDashboardChartSeries(daily);
   const maxMoney = Math.max(...rows.flatMap((row) => [row.spend, row.sales].filter((value): value is number => value != null)), 1);
   const spendPoints = chartPolyline(rows.map((row) => row.spend), 560, 180, 22, maxMoney);
   const salesPoints = chartPolyline(rows.map((row) => row.sales), 560, 180, 22, maxMoney);
   const roasPoints = chartPolyline(rows.map((row) => row.roas));
-  const total = active + excluded + unknown;
+
   const activeRate = total ? active / total * 100 : 0;
   const excludedRate = total ? excluded / total * 100 : 0;
   const expectedLatest = rows.at(-1);
@@ -64,11 +61,11 @@ export default function RppDashboardCharts({
     </article>
 
     <article className="panel rpp-chart-card rpp-delivery-chart">
-      <div className="rpp-chart-heading"><div><p className="eyebrow">AUTOMATIC DELIVERY</p><h2>自動モード商品の配信構成</h2></div><strong className="rpp-chart-value">{total}商品</strong></div>
-      <div className="rpp-donut-layout">
+      <div className="rpp-chart-heading"><div><p className="eyebrow">ALL RPP DELIVERY</p><h2>全RPP商品の配信構成</h2><small>{delivery.state === "CURRENT" ? "最新の完全なRMS観測" : delivery.state === "UNKNOWN" ? "配信状態は未確認" : "全RPP母集団は未取得"}</small></div><strong className="rpp-chart-value">{delivery.state === "UNAVAILABLE" ? "未取得" : `${total}商品`}</strong></div>
+      {delivery.state === "UNAVAILABLE" ? <div className="rpp-chart-empty">全RPP商品の母集団を取得できていません</div> : <div className="rpp-donut-layout">
         <div className="rpp-donut" style={{ "--active-rate": `${activeRate * 3.6}deg`, "--excluded-rate": `${(activeRate + excludedRate) * 3.6}deg` } as CSSProperties}><span><b>{active}</b><small>稼働中</small></span></div>
         <ul><li><i className="is-active"/><span>稼働</span><b>{active}</b></li><li><i className="is-excluded"/><span>除外</span><b>{excluded}</b></li><li><i className="is-unknown"/><span>未確認</span><b>{unknown}</b></li></ul>
-      </div>
+      </div>}
     </article>
   </section>;
 }
