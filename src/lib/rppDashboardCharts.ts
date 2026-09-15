@@ -13,6 +13,49 @@ export type RppDashboardChartPoint = Omit<RppDashboardDailyMetric, "spend" | "sa
   roas: number | null;
 };
 
+export type RppDeliveryComposition = {
+  state: "CURRENT" | "UNKNOWN" | "UNAVAILABLE";
+  total: number;
+  active: number;
+  excluded: number;
+  unknown: number;
+};
+
+const DELIVERY_OBSERVATION_MAX_AGE_MS = 2 * 60 * 60_000;
+
+export function buildRppDeliveryComposition(snapshot: {
+  syncedAt?: string;
+  rppData?: {
+    allConfiguredTargets?: Array<{ itemCode: string }>;
+    exclusionProducts: Array<{ itemCode: string; excluded: boolean }>;
+    exclusionObservation?: { observedAt: string; complete: boolean };
+  } | null;
+} | null, now = new Date()): RppDeliveryComposition {
+  const targets = snapshot?.rppData?.allConfiguredTargets;
+  if (!targets?.length) return { state: "UNAVAILABLE", total: 0, active: 0, excluded: 0, unknown: 0 };
+  const itemCodes = new Set(targets.map((row) => row.itemCode.trim().toLowerCase()).filter(Boolean));
+  const total = itemCodes.size;
+  if (!total) return { state: "UNAVAILABLE", total: 0, active: 0, excluded: 0, unknown: 0 };
+  const observation = snapshot?.rppData?.exclusionObservation;
+  const syncedMs = Date.parse(snapshot?.syncedAt ?? "");
+  const observedMs = Date.parse(observation?.observedAt ?? "");
+  const nowMs = now.getTime();
+  const fresh = observation?.complete === true
+    && Number.isFinite(syncedMs) && syncedMs <= nowMs && nowMs - syncedMs <= DELIVERY_OBSERVATION_MAX_AGE_MS
+    && Number.isFinite(observedMs) && observedMs <= nowMs && nowMs - observedMs <= DELIVERY_OBSERVATION_MAX_AGE_MS;
+  if (!fresh) return { state: "UNKNOWN", total, active: 0, excluded: 0, unknown: total };
+  const products = new Map(snapshot!.rppData!.exclusionProducts.map((row) => [row.itemCode.trim().toLowerCase(), row]));
+  let active = 0;
+  let excluded = 0;
+  for (const itemCode of itemCodes) {
+    const product = products.get(itemCode);
+    if (!product) continue;
+    if (product.excluded) excluded += 1;
+    else active += 1;
+  }
+  return { state: "CURRENT", total, active, excluded, unknown: Math.max(0, total - active - excluded) };
+}
+
 export function buildRppDashboardChartSeries(rows: RppDashboardDailyMetric[]): RppDashboardChartPoint[] {
   const todayJst = new Date(Date.now() + 9 * 60 * 60_000).toISOString().slice(0, 10);
   const observed = rows

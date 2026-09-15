@@ -34,3 +34,16 @@ test("売上とROASは720時間帰属を画面とARIAに明記する", () => {
   assert.match(chartSource, /aria-label="日別ROAS推移（売上720時間帰属）"/);
   assert.doesNotMatch(chartSource, />[^<]*720h[^<]*</);
 });
+
+test("全グラフは自動モード以外を含む全RPP母集団を表示する", () => {
+  assert.match(source, /readLatestRppDashboardSnapshot\(\)/);
+  assert.match(source, /buildRppDeliveryComposition\(latestDashboardSnapshot\)/);
+  assert.match(source, /delivery=\{allRppDelivery\}/);
+  assert.match(chartSource, /ALL RPP DELIVERY/);
+  assert.match(chartSource, /全RPP商品の配信構成/);
+  assert.match(chartSource, /全RPP母集団は未取得/);
+  assert.match(chartSource, /全RPP商品の母集団を取得できていません/);
+  assert.match(chartSource, /delivery\.state === "UNAVAILABLE"/);
+  assert.match(chartSource, /配信状態は未確認/);
+  assert.doesNotMatch(chartSource, /自動モード商品の配信構成/);
+});
