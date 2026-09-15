@@ -4,7 +4,7 @@ import { pool } from "./db.ts";
 
 export type RppSnapshotFile = { name: string; exists: boolean; mtime: string | null; size: number };
 export type RppPerformanceDailyRow = { itemCode: string; ctr: number | null; clicks: number; spend: number; sales12h: number; orders12h: number; sales720h: number; orders720h: number };
-export type RppPerformanceReceipt = { version: 1; file: string; completedAt: string; sha256: string; actualCount: number; requestStartedAt: string; historyCreatedAt: string; historyRowSha256: string; sourceArchiveSha256: string; sourceArchiveBytes: number; sourceCsvCrc32: string; sourceCsvCompressedBytes: number; sourceCsvUncompressedBytes: number; sourceCsvNameSha256: string; source: string; sourceMtime: string; rowsSha256: string; signature: string; complete: true };
+export type RppPerformanceReceipt = { version: 1; file: string; completedAt: string; sha256: string; expectedCount: number; actualCount: number; expectedItemSetSha256: string; requestStartedAt: string; historyCreatedAt: string; historyRowSha256: string; sourceArchiveSha256: string; sourceArchiveBytes: number; sourceCsvCrc32: string; sourceCsvCompressedBytes: number; sourceCsvUncompressedBytes: number; sourceCsvNameSha256: string; verificationRequestStartedAt: string; verificationHistoryCreatedAt: string; verificationHistoryRowSha256: string; verificationArchiveSha256: string; verificationSourceMtime: string; verificationCompletedAt: string; source: string; sourceMtime: string; rowsSha256: string; signature: string; complete: true };
 export type RppPerformanceDaily = { source: string; sourceMtime: string; date: string; attribution: { sales12h: true; sales720h: true }; rows: RppPerformanceDailyRow[]; receipt: RppPerformanceReceipt };
 export type RppSnapshotConfiguredTarget = { id: string; itemCode: string; itemName: string; keyword: string; itemCpc: number | null; keywordCpc: number | null; source: "商品CPC" | "キーワードCPC"; owner?: string; rppPosition?: string; rppPositionKeyword?: string; rppPositions?: { keyword: string; position: string }[] };
 export type RppSnapshotExclusionProduct = { itemCode: string; itemName: string; itemCpc: number | null; excluded: boolean; owner?: string };
@@ -21,20 +21,30 @@ export type RppDashboardSnapshot = {
 };
 const TABLE = "rpp_dashboard_snapshots";
 const PERFORMANCE_TABLE = "rpp_performance_daily";
-const num = (value: unknown) => Number.isFinite(Number(value)) ? Number(value) : 0;
 const dateOnly = (value: unknown) => typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : "";
 
-function performanceRowsSha256(rows: RppPerformanceDailyRow[]) {
-  const body = [...rows].sort((a, b) => a.itemCode.localeCompare(b.itemCode)).map((row) => [row.itemCode, row.ctr, row.clicks, row.spend, row.sales12h, row.orders12h, row.sales720h, row.orders720h].map((value, index) => index === 0 ? String(value) : Number(value).toFixed(6)).join("\t")).join("\n");
+export function performanceRowsSha256(rows: RppPerformanceDailyRow[]) {
+  const body = [...rows].sort((a, b) => a.itemCode.localeCompare(b.itemCode)).map((row) => [row.itemCode, row.ctr, row.clicks, row.spend, row.sales12h, row.orders12h, row.sales720h, row.orders720h].map((value, index) => index === 0 ? String(value) : value === null ? "null" : `n:${Number(value).toFixed(6)}`).join("\t")).join("\n");
   return createHash("sha256").update(body).digest("hex");
+}
+
+export function performanceItemSetSha256(rows: RppPerformanceDailyRow[]) {
+  return createHash("sha256").update(rows.map((row) => row.itemCode).sort().join("\n")).digest("hex");
+}
+
+function performanceMetric(value: unknown, field: string, integer = false) {
+  if ((typeof value !== "number" && typeof value !== "string") || (typeof value === "string" && !value.trim())) throw new Error(`performanceDaily row ${field} is invalid`);
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 0 || (integer && !Number.isInteger(parsed))) throw new Error(`performanceDaily row ${field} is invalid`);
+  return parsed;
 }
 
 function validPerformanceReceiptSignature(receipt: Partial<RppPerformanceReceipt>, date: string, source: string, sourceMtime: string, rows: RppPerformanceDailyRow[]) {
   const key = process.env.RPP_PERFORMANCE_RECEIPT_HMAC_KEY ?? "";
   const signature = String(receipt.signature ?? "");
   if (key.length < 32 || !/^[a-f0-9]{64}$/.test(signature)) return false;
-  if (receipt.source !== source || receipt.sourceMtime !== sourceMtime || receipt.rowsSha256 !== performanceRowsSha256(rows)) return false;
-  const message = [receipt.version, receipt.sha256, date, date, receipt.actualCount, receipt.requestStartedAt, receipt.historyCreatedAt, receipt.historyRowSha256, receipt.sourceArchiveSha256, receipt.sourceArchiveBytes, receipt.sourceCsvCrc32, receipt.sourceCsvCompressedBytes, receipt.sourceCsvUncompressedBytes, receipt.sourceCsvNameSha256, receipt.source, receipt.sourceMtime, receipt.completedAt, receipt.rowsSha256].map((value) => String(value ?? "")).join("\n");
+  if (receipt.source !== source || receipt.sourceMtime !== sourceMtime || receipt.rowsSha256 !== performanceRowsSha256(rows) || receipt.expectedItemSetSha256 !== performanceItemSetSha256(rows)) return false;
+  const message = [receipt.version, receipt.sha256, date, date, receipt.expectedCount, receipt.actualCount, receipt.expectedItemSetSha256, receipt.requestStartedAt, receipt.historyCreatedAt, receipt.historyRowSha256, receipt.sourceArchiveSha256, receipt.sourceArchiveBytes, receipt.sourceCsvCrc32, receipt.sourceCsvCompressedBytes, receipt.sourceCsvUncompressedBytes, receipt.sourceCsvNameSha256, receipt.verificationRequestStartedAt, receipt.verificationHistoryCreatedAt, receipt.verificationHistoryRowSha256, receipt.verificationArchiveSha256, receipt.verificationSourceMtime, receipt.verificationCompletedAt, receipt.source, receipt.sourceMtime, receipt.completedAt, receipt.rowsSha256].map((value) => String(value ?? "")).join("\n");
   const expected = createHmac("sha256", key).update(message).digest("hex");
   return timingSafeEqual(Buffer.from(signature), Buffer.from(expected));
 }
@@ -50,17 +60,28 @@ function normalizePerformanceDaily(value: unknown): RppPerformanceDaily | null {
   const rows = input.rows.map((raw) => {
     const itemCode = String(raw?.itemCode ?? "").trim().toLowerCase();
     if (!itemCode) throw new Error("performanceDaily row itemCode is required");
-    return { itemCode, ctr: raw.ctr == null ? null : num(raw.ctr), clicks: Math.round(num(raw.clicks)), spend: num(raw.spend), sales12h: num(raw.sales12h), orders12h: Math.round(num(raw.orders12h)), sales720h: num(raw.sales720h), orders720h: Math.round(num(raw.orders720h)) };
+    return { itemCode, ctr: raw.ctr == null ? null : performanceMetric(raw.ctr, "ctr"), clicks: performanceMetric(raw.clicks, "clicks", true), spend: performanceMetric(raw.spend, "spend", true), sales12h: performanceMetric(raw.sales12h, "sales12h", true), orders12h: performanceMetric(raw.orders12h, "orders12h", true), sales720h: performanceMetric(raw.sales720h, "sales720h", true), orders720h: performanceMetric(raw.orders720h, "orders720h", true) };
   });
   const receipt = input.receipt as Partial<RppPerformanceReceipt> | undefined;
   const completedAt = typeof receipt?.completedAt === "string" ? new Date(receipt.completedAt) : new Date(NaN);
   const sourceMtime = new Date(input.sourceMtime).toISOString();
   const requestAt = new Date(String(receipt?.requestStartedAt ?? ""));
   const historyAt = new Date(String(receipt?.historyCreatedAt ?? "").replace(" ", "T") + "+09:00");
-  const evidenceHashesValid = /^[a-f0-9]{64}$/.test(String(receipt?.historyRowSha256 ?? "")) && /^[a-f0-9]{64}$/.test(String(receipt?.sourceArchiveSha256 ?? "")) && /^[a-f0-9]{64}$/.test(String(receipt?.sourceCsvNameSha256 ?? ""));
+  const verificationRequestAt = new Date(String(receipt?.verificationRequestStartedAt ?? ""));
+  const verificationHistoryAt = new Date(String(receipt?.verificationHistoryCreatedAt ?? "").replace(" ", "T") + "+09:00");
+  const verificationSourceMtime = new Date(String(receipt?.verificationSourceMtime ?? ""));
+  const verificationCompletedAt = new Date(String(receipt?.verificationCompletedAt ?? ""));
+  const evidenceHashesValid = /^[a-f0-9]{64}$/.test(String(receipt?.historyRowSha256 ?? "")) && /^[a-f0-9]{64}$/.test(String(receipt?.sourceArchiveSha256 ?? "")) && /^[a-f0-9]{64}$/.test(String(receipt?.sourceCsvNameSha256 ?? "")) && /^[a-f0-9]{64}$/.test(String(receipt?.verificationHistoryRowSha256 ?? "")) && /^[a-f0-9]{64}$/.test(String(receipt?.verificationArchiveSha256 ?? "")) && receipt?.historyRowSha256 !== receipt?.verificationHistoryRowSha256;
   const providerManifestValid = Number.isInteger(receipt?.sourceArchiveBytes) && Number(receipt?.sourceArchiveBytes) > 0 && Number.isInteger(receipt?.sourceCsvCompressedBytes) && Number(receipt?.sourceCsvCompressedBytes) > 0 && Number.isInteger(receipt?.sourceCsvUncompressedBytes) && Number(receipt?.sourceCsvUncompressedBytes) > 0 && /^[a-f0-9]{8}$/.test(String(receipt?.sourceCsvCrc32 ?? ""));
-  const timesValid = !Number.isNaN(requestAt.getTime()) && !Number.isNaN(historyAt.getTime()) && !Number.isNaN(completedAt.getTime()) && historyAt.getTime() >= requestAt.getTime() - 5_000 && historyAt.getTime() <= completedAt.getTime() && new Date(sourceMtime).getTime() >= requestAt.getTime() - 5_000 && new Date(sourceMtime).getTime() <= completedAt.getTime() + 5_000 && completedAt.getTime() >= requestAt.getTime() && completedAt.getTime() - requestAt.getTime() <= 30 * 60_000 && completedAt.getTime() <= Date.now() + 5 * 60_000 && requestAt.getTime() <= Date.now() + 5 * 60_000;
-  if (!receipt || receipt.version !== 1 || receipt.complete !== true || !/^[a-f0-9]{64}$/.test(String(receipt.sha256 ?? "")) || receipt.actualCount !== rows.length || !String(receipt.file ?? "").trim() || !/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(String(receipt.historyCreatedAt ?? "")) || !evidenceHashesValid || !providerManifestValid || !timesValid || !validPerformanceReceiptSignature(receipt, date, String(input.source), sourceMtime, rows)) throw new Error("performanceDaily verified receipt is invalid");
+  const parsedTimesValid = !Number.isNaN(requestAt.getTime()) && !Number.isNaN(historyAt.getTime()) && !Number.isNaN(completedAt.getTime());
+  const verificationParsedTimesValid = !Number.isNaN(verificationRequestAt.getTime()) && !Number.isNaN(verificationHistoryAt.getTime()) && !Number.isNaN(verificationSourceMtime.getTime()) && !Number.isNaN(verificationCompletedAt.getTime());
+  const completedJstDate = parsedTimesValid ? new Date(completedAt.getTime() + 9 * 60 * 60_000).toISOString().slice(0, 10) : "";
+  const verificationCompletedJstDate = verificationParsedTimesValid ? new Date(verificationCompletedAt.getTime() + 9 * 60 * 60_000).toISOString().slice(0, 10) : "";
+  const reportLagDays = parsedTimesValid ? (Date.parse(`${completedJstDate}T00:00:00Z`) - Date.parse(`${date}T00:00:00Z`)) / 86_400_000 : Number.NaN;
+  const verificationReportLagDays = verificationParsedTimesValid ? (Date.parse(`${verificationCompletedJstDate}T00:00:00Z`) - Date.parse(`${date}T00:00:00Z`)) / 86_400_000 : Number.NaN;
+  const timesValid = parsedTimesValid && historyAt.getTime() >= requestAt.getTime() - 5_000 && historyAt.getTime() <= completedAt.getTime() && new Date(sourceMtime).getTime() >= requestAt.getTime() - 5_000 && new Date(sourceMtime).getTime() <= completedAt.getTime() + 5_000 && completedAt.getTime() >= requestAt.getTime() && completedAt.getTime() - requestAt.getTime() <= 30 * 60_000 && completedAt.getTime() <= Date.now() + 5 * 60_000 && requestAt.getTime() <= Date.now() + 5 * 60_000 && Date.now() - completedAt.getTime() <= 36 * 60 * 60_000 && reportLagDays >= 0 && reportLagDays <= 2;
+  const verificationTimesValid = !Number.isNaN(verificationRequestAt.getTime()) && !Number.isNaN(verificationHistoryAt.getTime()) && !Number.isNaN(verificationSourceMtime.getTime()) && !Number.isNaN(verificationCompletedAt.getTime()) && verificationHistoryAt.getTime() >= verificationRequestAt.getTime() - 5_000 && verificationHistoryAt.getTime() <= verificationCompletedAt.getTime() && verificationSourceMtime.getTime() >= verificationRequestAt.getTime() - 5_000 && verificationSourceMtime.getTime() <= verificationCompletedAt.getTime() + 5_000 && verificationCompletedAt.getTime() >= verificationRequestAt.getTime() && verificationCompletedAt.getTime() - verificationRequestAt.getTime() <= 30 * 60_000 && verificationCompletedAt.getTime() <= Date.now() + 5 * 60_000 && Date.now() - verificationCompletedAt.getTime() <= 36 * 60 * 60_000 && verificationReportLagDays >= 0 && verificationReportLagDays <= 2;
+  if (!receipt || receipt.version !== 1 || receipt.complete !== true || !/^[a-f0-9]{64}$/.test(String(receipt.sha256 ?? "")) || receipt.expectedCount !== rows.length || receipt.actualCount !== rows.length || !String(receipt.file ?? "").trim() || !/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(String(receipt.historyCreatedAt ?? "")) || !/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(String(receipt.verificationHistoryCreatedAt ?? "")) || !evidenceHashesValid || !providerManifestValid || !timesValid || !verificationTimesValid || !validPerformanceReceiptSignature(receipt, date, String(input.source), sourceMtime, rows)) throw new Error("performanceDaily verified receipt is invalid");
   return { source: String(input.source), sourceMtime, date, attribution: { sales12h: true, sales720h: true }, rows, receipt: { ...receipt, completedAt: completedAt.toISOString() } as RppPerformanceReceipt };
 }
 

@@ -6,17 +6,26 @@ import csv
 import datetime as dt
 import hashlib
 import json
+import math
 import re
 from pathlib import Path
 
 JST = dt.timezone(dt.timedelta(hours=9))
 
 
-def number(value: object) -> float:
+def number(value: object, field: str, *, integer: bool = False) -> float | int:
+    text = str(value if value is not None else "").strip().replace(",", "")
+    if not text:
+        raise RuntimeError(f"item daily report {field} is blank")
     try:
-        return float(str(value or "0").replace(",", ""))
-    except ValueError:
-        return 0.0
+        parsed = float(text)
+    except ValueError as exc:
+        raise RuntimeError(f"item daily report {field} is not numeric") from exc
+    if not math.isfinite(parsed) or parsed < 0:
+        raise RuntimeError(f"item daily report {field} must be finite and non-negative")
+    if integer and not parsed.is_integer():
+        raise RuntimeError(f"item daily report {field} must be an integer")
+    return int(parsed) if integer else parsed
 
 
 def parse_performance_csv(path: Path) -> tuple[str, list[dict]]:
@@ -45,13 +54,13 @@ def parse_performance_csv(path: Path) -> tuple[str, list[dict]]:
         item_codes.add(item_code)
         rows.append({
             "itemCode": item_code,
-            "ctr": number(row.get("CTR(%)")),
-            "clicks": round(number(row.get("クリック数(合計)"))),
-            "spend": round(number(row.get("実績額(合計)"))),
-            "sales12h": round(number(row.get("売上金額(合計12時間)"))),
-            "orders12h": round(number(row.get("売上件数(合計12時間)"))),
-            "sales720h": round(number(row.get("売上金額(合計720時間)"))),
-            "orders720h": round(number(row.get("売上件数(合計720時間)"))),
+            "ctr": number(row.get("CTR(%)"), "CTR"),
+            "clicks": number(row.get("クリック数(合計)"), "clicks", integer=True),
+            "spend": number(row.get("実績額(合計)"), "spend", integer=True),
+            "sales12h": number(row.get("売上金額(合計12時間)"), "sales12h", integer=True),
+            "orders12h": number(row.get("売上件数(合計12時間)"), "orders12h", integer=True),
+            "sales720h": number(row.get("売上金額(合計720時間)"), "sales720h", integer=True),
+            "orders720h": number(row.get("売上件数(合計720時間)"), "orders720h", integer=True),
         })
     rows.sort(key=lambda row: row["itemCode"])
     return report_date.isoformat(), rows
@@ -61,17 +70,30 @@ def rows_sha256(rows: list[dict]) -> str:
     fields = ("itemCode", "ctr", "clicks", "spend", "sales12h", "orders12h", "sales720h", "orders720h")
     lines = []
     for row in sorted(rows, key=lambda value: str(value["itemCode"])):
-        values = [str(row["itemCode"])] + [f"{float(row[field]):.6f}" for field in fields[1:]]
+        values = [str(row["itemCode"])] + [("null" if row[field] is None else f"n:{float(row[field]):.6f}") for field in fields[1:]]
         lines.append("\t".join(values))
     return hashlib.sha256("\n".join(lines).encode()).hexdigest()
 
 
+def item_set_sha256(rows: list[dict]) -> str:
+    return hashlib.sha256("\n".join(sorted(str(row["itemCode"]) for row in rows)).encode()).hexdigest()
+
+
+def validate_batch_quorum(expected_rows: list[dict], actual_rows: list[dict]) -> tuple[int, str]:
+    expected_set = {str(row["itemCode"]) for row in expected_rows}
+    actual_set = {str(row["itemCode"]) for row in actual_rows}
+    if len(expected_rows) != len(expected_set) or len(actual_rows) != len(actual_set) or expected_set != actual_set:
+        raise RuntimeError("RPP item report independent batch quorum mismatch")
+    return len(expected_rows), hashlib.sha256("\n".join(sorted(expected_set)).encode()).hexdigest()
+
+
 RECEIPT_FIELDS = (
-    "version", "output_sha256", "start_date", "end_date", "actual_count",
+    "version", "output_sha256", "start_date", "end_date", "expected_count", "actual_count", "expected_item_set_sha256",
     "request_started_at", "history_created_at", "history_row_sha256",
     "source_archive_sha256", "source_archive_bytes", "source_csv_crc32",
     "source_csv_compressed_bytes", "source_csv_uncompressed_bytes",
-    "source_csv_name_sha256", "source", "source_mtime", "completed_at",
+    "source_csv_name_sha256", "verification_request_started_at", "verification_history_created_at",
+    "verification_history_row_sha256", "verification_archive_sha256", "verification_source_mtime", "verification_completed_at", "source", "source_mtime", "completed_at",
     "rows_sha256",
 )
 
@@ -80,7 +102,7 @@ def receipt_message(receipt: dict) -> bytes:
     return "\n".join(str(receipt.get(field, "")) for field in RECEIPT_FIELDS).encode()
 
 
-def parse_receipt_times(receipt: dict, now: dt.datetime | None = None) -> tuple[dt.datetime, dt.datetime, dt.datetime, dt.datetime]:
+def parse_receipt_times(receipt: dict, now: dt.datetime | None = None, report_date: str | None = None) -> tuple[dt.datetime, dt.datetime, dt.datetime, dt.datetime]:
     now = now or dt.datetime.now(dt.timezone.utc)
     request = dt.datetime.fromisoformat(str(receipt.get("request_started_at") or "").replace("Z", "+00:00"))
     history = dt.datetime.strptime(str(receipt.get("history_created_at") or ""), "%Y-%m-%d %H:%M:%S").replace(tzinfo=JST)
@@ -99,4 +121,11 @@ def parse_receipt_times(receipt: dict, now: dt.datetime | None = None) -> tuple[
         raise ValueError("receipt completion timestamp order is invalid")
     if completed - request > dt.timedelta(minutes=30):
         raise ValueError("receipt generation duration is invalid")
+    if now - completed > dt.timedelta(hours=36):
+        raise ValueError("receipt is stale")
+    if report_date:
+        report_day = dt.date.fromisoformat(report_date)
+        lag_days = (completed.astimezone(JST).date() - report_day).days
+        if lag_days < 0 or lag_days > 2:
+            raise ValueError("receipt report date relationship is invalid")
     return request, history, source_mtime, completed

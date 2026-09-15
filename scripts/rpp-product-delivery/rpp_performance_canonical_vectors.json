@@ -1,0 +1,26 @@
+{
+  "rows": [
+    {
+      "itemCode": "r0406",
+      "ctr": 0.0,
+      "clicks": 0,
+      "spend": 0,
+      "sales12h": 0,
+      "orders12h": 0,
+      "sales720h": 0,
+      "orders720h": 0
+    },
+    {
+      "itemCode": "r0579",
+      "ctr": 1.25,
+      "clicks": 10,
+      "spend": 300,
+      "sales12h": 500,
+      "orders12h": 1,
+      "sales720h": 700,
+      "orders720h": 2
+    }
+  ],
+  "rowsSha256": "7d842d52cc7a26148ac330e2982ca57f0c23a4a12583d40ad949b5744878eee4",
+  "itemSetSha256": "277baf7430644602c1a816ac2f1b459bd806173547afe7a9a0d9db9149f49842"
+}

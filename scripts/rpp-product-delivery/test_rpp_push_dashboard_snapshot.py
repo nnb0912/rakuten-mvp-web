@@ -25,15 +25,17 @@ class OperationalDataTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             path = root / 'rpp_item_reports.csv'
-            self._write_csv(path, ['日付', '商品管理番号', 'CTR(%)', 'クリック数(合計)', '実績額(合計)', '売上金額(合計12時間)', '売上件数(合計12時間)', '売上金額(合計720時間)', '売上件数(合計720時間)'], [['2026年09月01日～2026年09月01日', 'R0406', '1.5', '10', '300', '500', '1', '900', '2']])
-            self._write_performance_receipt(root, path, '2026-09-01', 1)
+            date = (dt.datetime.now(dt.timezone(dt.timedelta(hours=9))).date() - dt.timedelta(days=1)).isoformat()
+            label = dt.date.fromisoformat(date).strftime('%Y年%m月%d日')
+            self._write_csv(path, ['日付', '商品管理番号', 'CTR(%)', 'クリック数(合計)', '実績額(合計)', '売上金額(合計12時間)', '売上件数(合計12時間)', '売上金額(合計720時間)', '売上件数(合計720時間)'], [[f'{label}～{label}', 'R0406', '1.5', '10', '300', '500', '1', '900', '2']])
+            self._write_performance_receipt(root, path, date, 1)
             old_project = module.PROJECT
             try:
                 module.PROJECT = root
                 result = module.performance_daily(path)
             finally:
                 module.PROJECT = old_project
-            self.assertEqual(result['date'], '2026-09-01')
+            self.assertEqual(result['date'], date)
             self.assertEqual(result['rows'][0], {'itemCode': 'r0406', 'ctr': 1.5, 'clicks': 10, 'spend': 300, 'sales12h': 500, 'orders12h': 1, 'sales720h': 900, 'orders720h': 2})
             self.assertTrue(result['receipt']['complete'])
 
@@ -41,8 +43,10 @@ class OperationalDataTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             path = root / 'rpp_item_reports.csv'
-            self._write_csv(path, ['日付', '商品管理番号', 'CTR(%)', 'クリック数(合計)', '実績額(合計)', '売上金額(合計12時間)', '売上件数(合計12時間)', '売上金額(合計720時間)', '売上件数(合計720時間)'], [['2026年09月01日～2026年09月01日', 'R0406', '1.5', '10', '300', '500', '1', '900', '2']])
-            self._write_performance_receipt(root, path, '2026-09-01', 1)
+            date = (dt.datetime.now(dt.timezone(dt.timedelta(hours=9))).date() - dt.timedelta(days=1)).isoformat()
+            label = dt.date.fromisoformat(date).strftime('%Y年%m月%d日')
+            self._write_csv(path, ['日付', '商品管理番号', 'CTR(%)', 'クリック数(合計)', '実績額(合計)', '売上金額(合計12時間)', '売上件数(合計12時間)', '売上金額(合計720時間)', '売上件数(合計720時間)'], [[f'{label}～{label}', 'R0406', '1.5', '10', '300', '500', '1', '900', '2']])
+            self._write_performance_receipt(root, path, date, 1)
             receipt_path = next((root / 'rpp_logs').glob('*.json'))
             receipt = json.loads(receipt_path.read_text(encoding='utf-8'))
             receipt['signature'] = '0' * 64
@@ -58,11 +62,12 @@ class OperationalDataTest(unittest.TestCase):
     def test_performance_daily_rejects_ranges_and_duplicate_items(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / 'rpp_item_reports.csv'
-            headers = ['日付', '商品管理番号']
-            self._write_csv(path, headers, [['2026年09月01日～2026年09月02日', 'r0406']])
+            headers = ['日付', '商品管理番号', 'CTR(%)', 'クリック数(合計)', '実績額(合計)', '売上金額(合計12時間)', '売上件数(合計12時間)', '売上金額(合計720時間)', '売上件数(合計720時間)']
+            metrics = ['1', '1', '1', '1', '1', '1', '1']
+            self._write_csv(path, headers, [['2026年09月01日～2026年09月02日', 'r0406', *metrics]])
             with self.assertRaisesRegex(RuntimeError, 'single-day'):
                 module.performance_daily(path)
-            self._write_csv(path, headers, [['2026年09月01日～2026年09月01日', 'r0406'], ['2026年09月01日～2026年09月01日', 'R0406']])
+            self._write_csv(path, headers, [['2026年09月01日～2026年09月01日', 'r0406', *metrics], ['2026年09月01日～2026年09月01日', 'R0406', *metrics]])
             with self.assertRaisesRegex(RuntimeError, 'duplicate item'):
                 module.performance_daily(path)
 
@@ -148,15 +153,22 @@ class OperationalDataTest(unittest.TestCase):
         now = dt.datetime.now(dt.timezone.utc)
         request = now - dt.timedelta(seconds=2)
         history = (now - dt.timedelta(seconds=1)).astimezone(dt.timezone(dt.timedelta(hours=9))).strftime('%Y-%m-%d %H:%M:%S')
+        verification_request = now - dt.timedelta(seconds=5)
+        verification_history = (now - dt.timedelta(seconds=4)).astimezone(dt.timezone(dt.timedelta(hours=9))).strftime('%Y-%m-%d %H:%M:%S')
+        verification_source_mtime = (now - dt.timedelta(seconds=3)).isoformat(timespec='milliseconds').replace('+00:00', 'Z')
+        verification_completed_at = (now - dt.timedelta(seconds=2)).isoformat()
         source_mtime = dt.datetime.fromtimestamp(output.stat().st_mtime, dt.timezone.utc).isoformat(timespec='milliseconds').replace('+00:00', 'Z')
         normalized_rows = module.parse_performance_csv(output)[1]
         receipt = {
             'version': 1, 'ok': True, 'download_complete': True, 'start_date': date, 'end_date': date,
-            'output': str(output), 'actual_count': rows, 'output_sha256': hashlib.sha256(output.read_bytes()).hexdigest(),
+            'output': str(output), 'expected_count': rows, 'actual_count': rows, 'expected_item_set_sha256': module.item_set_sha256(normalized_rows), 'output_sha256': hashlib.sha256(output.read_bytes()).hexdigest(),
             'completed_at': now.isoformat(), 'request_started_at': request.isoformat(), 'history_created_at': history,
             'history_row_sha256': 'b' * 64, 'source_archive_sha256': 'c' * 64, 'source_archive_bytes': 1000,
             'source_csv_crc32': 'deadbeef', 'source_csv_compressed_bytes': 800, 'source_csv_uncompressed_bytes': output.stat().st_size,
             'source_csv_name_sha256': 'd' * 64, 'source': output.name, 'source_mtime': source_mtime,
+            'verification_request_started_at': verification_request.isoformat(), 'verification_history_created_at': verification_history,
+            'verification_history_row_sha256': 'e' * 64, 'verification_archive_sha256': 'f' * 64,
+            'verification_source_mtime': verification_source_mtime, 'verification_completed_at': verification_completed_at,
             'rows_sha256': module.rows_sha256(normalized_rows),
         }
         receipt['signature'] = hmac.new(os.environ['RPP_PERFORMANCE_RECEIPT_HMAC_KEY'].encode(), module.performance_receipt_message(receipt), hashlib.sha256).hexdigest()

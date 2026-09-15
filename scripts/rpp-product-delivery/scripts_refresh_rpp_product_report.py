@@ -27,7 +27,7 @@ from pathlib import Path
 SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
-from rpp_performance_contract import parse_performance_csv, parse_receipt_times, receipt_message, rows_sha256
+from rpp_performance_contract import JST, item_set_sha256, parse_performance_csv, parse_receipt_times, receipt_message, rows_sha256, validate_batch_quorum
 
 PROJECT = Path(os.environ.get('RPP_PROJECT_DIR', '/Users/nob/Projects/rpp-8am-notify'))
 RAKUTEN_MARKETING = Path('/Users/nob/Projects/rakuten-marketing')
@@ -47,6 +47,32 @@ def receipt_key() -> bytes:
     if len(value) < 32:
         raise RuntimeError('RPP performance receipt HMAC key is not configured')
     return value.encode()
+
+
+def publish_validated_report(extracted: Path, out_path: Path, receipt_path: Path, receipt: dict, backup: Path | None) -> None:
+    receipt_tmp = receipt_path.with_suffix('.json.tmp')
+    receipt_tmp.write_text(json.dumps(receipt, ensure_ascii=False, indent=2), encoding='utf-8')
+    replaced = False
+    try:
+        if backup:
+            shutil.copy2(out_path, backup)
+        os.replace(extracted, out_path)
+        replaced = True
+        if hashlib.sha256(out_path.read_bytes()).hexdigest() != receipt['output_sha256']:
+            raise RuntimeError('RPP item report atomic replace readback mismatch')
+        os.utime(receipt_tmp, None)
+        receipt_tmp.replace(receipt_path)
+        if receipt_path.stat().st_mtime < out_path.stat().st_mtime:
+            raise RuntimeError('receipt was not published after product report')
+    except Exception:
+        receipt_path.unlink(missing_ok=True)
+        receipt_tmp.unlink(missing_ok=True)
+        if replaced:
+            if backup and backup.exists():
+                os.replace(backup, out_path)
+            else:
+                out_path.unlink(missing_ok=True)
+        raise
 
 
 @contextmanager
@@ -183,7 +209,7 @@ async def download_item_report(start: date, end: date) -> tuple[Path, dict]:
             && r.innerText.includes(args.startJp) && r.innerText.includes(args.endJp))
           .map(r => r.innerText.trim())''', {'startJp': start_jp, 'endJp': end_jp})
         await history_probe.close()
-        request_started = datetime.now().astimezone()
+        request_started = datetime.now(JST)
         not_before = (request_started - timedelta(seconds=5)).strftime('%Y-%m-%d %H:%M:%S')
         await page.locator('#btnReportSearch, button:has-text("この条件で検索")').first.click()
         await page.wait_for_timeout(3000)
@@ -234,7 +260,7 @@ async def download_item_report(start: date, end: date) -> tuple[Path, dict]:
         download = await dl_info.value
         out = DOWNLOADS / f'rpp_item_{time.time_ns()}_{download.suggested_filename}'
         await download.save_as(str(out))
-        return out, {'request_started_at': request_started.isoformat(), 'history_created_at': history_created_at, 'history_row_sha256': hashlib.sha256(history_row.encode()).hexdigest()}
+        return out, {'request_started_at': request_started.isoformat(), 'history_created_at': history_created_at, 'history_row_sha256': hashlib.sha256(history_row.encode()).hexdigest(), 'download_completed_at': datetime.now(JST).isoformat()}
     finally:
         if browser:
             await browser.close()
@@ -258,19 +284,23 @@ def main() -> int:
     lock_context = exclusive_refresh_lock(LOCK)
     lock_context.__enter__()
     try:
+        verification_download, verification_evidence = asyncio.run(download_item_report(start, end))
+        _, verification_raw_rows, verification_extracted, _ = extract_csv(verification_download)
+        verification_date, verification_rows = parse_performance_csv(verification_extracted)
         downloaded, request_evidence = asyncio.run(download_item_report(start, end))
         source_name, rows, extracted, provider_manifest = extract_csv(downloaded)
-        backup = None
-        if out_path.exists():
-            backup = DOWNLOADS / f'{out_path.stem}_backup_{time.time_ns()}.csv'
-            shutil.copy2(out_path, backup)
-        shutil.copy2(extracted, out_path)
-        after_mtime = out_path.stat().st_mtime
-        report_date, normalized_rows = parse_performance_csv(out_path)
+        report_date, normalized_rows = parse_performance_csv(extracted)
         if report_date != start.isoformat() or report_date != end.isoformat() or len(normalized_rows) != len(rows) - 1:
             raise RuntimeError('RPP item report normalized row manifest mismatch')
-        completed_at = datetime.now().astimezone().isoformat()
-        source_mtime = datetime.fromtimestamp(out_path.stat().st_mtime, timezone.utc).isoformat(timespec='milliseconds').replace('+00:00', 'Z')
+        if verification_date != report_date or len(verification_rows) != len(verification_raw_rows) - 1:
+            raise RuntimeError('RPP item report verification batch date mismatch')
+        expected_count, expected_item_set_sha256 = validate_batch_quorum(verification_rows, normalized_rows)
+        if verification_evidence['history_row_sha256'] == request_evidence['history_row_sha256']:
+            raise RuntimeError('RPP item report verification did not use an independent history row')
+        completed_at = datetime.now(JST).isoformat()
+        source_mtime = datetime.fromtimestamp(extracted.stat().st_mtime, timezone.utc).isoformat(timespec='milliseconds').replace('+00:00', 'Z')
+        verification_source_mtime = datetime.fromtimestamp(verification_extracted.stat().st_mtime, timezone.utc).isoformat(timespec='milliseconds').replace('+00:00', 'Z')
+        backup = DOWNLOADS / f'{out_path.stem}_backup_{time.time_ns()}.csv' if out_path.exists() else None
         receipt = {
             'version': 1,
             'ok': True,
@@ -284,25 +314,33 @@ def main() -> int:
             'backup': str(backup) if backup else None,
             'rows_including_header': len(rows),
             'data_rows': max(0, len(rows) - 1),
+            'expected_count': expected_count,
             'actual_count': len(normalized_rows),
-            'output_sha256': hashlib.sha256(out_path.read_bytes()).hexdigest(),
+            'expected_item_set_sha256': expected_item_set_sha256,
+            'output_sha256': hashlib.sha256(extracted.read_bytes()).hexdigest(),
             'source_archive_sha256': hashlib.sha256(downloaded.read_bytes()).hexdigest(),
             'source_archive_bytes': downloaded.stat().st_size,
             **provider_manifest,
+            'verification_request_started_at': verification_evidence['request_started_at'],
+            'verification_history_created_at': verification_evidence['history_created_at'],
+            'verification_history_row_sha256': verification_evidence['history_row_sha256'],
+            'verification_archive_sha256': hashlib.sha256(verification_download.read_bytes()).hexdigest(),
+            'verification_source_mtime': verification_source_mtime,
+            'verification_completed_at': verification_evidence['download_completed_at'],
             'source': out_path.name,
             'source_mtime': source_mtime,
             'rows_sha256': rows_sha256(normalized_rows),
             'completed_at': completed_at,
             **request_evidence,
-            'mtime_changed': before_mtime != after_mtime,
+            'mtime_changed': before_mtime != extracted.stat().st_mtime,
             'header_sample': rows[0][:8] if rows else [],
         }
-        parse_receipt_times(receipt)
-        receipt['signature'] = hmac.new(receipt_key(), receipt_message(receipt), hashlib.sha256).hexdigest()
+        parse_receipt_times(receipt, report_date=report_date)
+        parse_receipt_times({'request_started_at': receipt['verification_request_started_at'], 'history_created_at': receipt['verification_history_created_at'], 'source_mtime': receipt['verification_source_mtime'], 'completed_at': receipt['verification_completed_at']}, report_date=report_date)
+        key = receipt_key()
+        receipt['signature'] = hmac.new(key, receipt_message(receipt), hashlib.sha256).hexdigest()
         receipt_path = LOGS / f'rpp_product_report_refresh_{time.time_ns()}.json'
-        receipt_tmp = receipt_path.with_suffix('.json.tmp')
-        receipt_tmp.write_text(json.dumps(receipt, ensure_ascii=False, indent=2), encoding='utf-8')
-        receipt_tmp.replace(receipt_path)
+        publish_validated_report(extracted, out_path, receipt_path, receipt, backup)
         receipt['receipt'] = str(receipt_path)
         print(json.dumps(receipt, ensure_ascii=False, indent=2))
         return 0
