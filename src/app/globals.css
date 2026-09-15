@@ -596,7 +596,11 @@ small { color: var(--muted); line-height: 1.45; }
 .adant-ops-table .select-col { position: sticky; left: 0; z-index: 5; width: 46px; min-width: 46px; background: #f8fafc; }
 .adant-ops-table .product-col { position: sticky; left: 46px; z-index: 5; width: 245px; min-width: 245px; background: #fff; box-shadow: 8px 0 12px -12px #334155; }
 .adant-ops-table thead .product-col { background: #f8fafc; z-index: 6; }
-.adant-ops-table .actions-col { position: sticky; right: 0; z-index: 5; min-width: 166px; background: #fff; box-shadow: -8px 0 12px -12px #334155; }
+.adant-ops-table .actions-col { position: sticky; right: 0; z-index: 5; min-width: 270px; background: #fff; box-shadow: -8px 0 12px -12px #334155; }
+.adant-ops-table .actions-col .action-button-row { display: flex; align-items: center; gap: 4px; white-space: nowrap; }
+.adant-ops-table .actions-col .action-button-row > button { margin-right: 0; }
+.adant-ops-table .actions-col .night-pause-control { grid-template-columns: auto auto 1fr; gap: 4px 6px; margin-top: 6px; padding-top: 5px; border-top: 1px solid #e2e8f0; }
+.adant-ops-table .actions-col .night-pause-control small { grid-column: auto; align-self: center; white-space: nowrap; }
 .adant-ops-table thead .actions-col { background: #f8fafc; z-index: 6; }
 .adant-ops-table tr.excluded .product-col, .adant-ops-table tr.excluded .actions-col { background: #fff7ed; }
 .adant-ops-table tr.selected .product-col, .adant-ops-table tr.selected .actions-col { background: #eff6ff; }
@@ -848,6 +852,16 @@ small { color: var(--muted); line-height: 1.45; }
 
 /* ADant-style dashboard charts: real daily facts only */
 .rpp-dashboard-charts { display: grid; grid-template-columns: minmax(0, 1.45fr) minmax(250px, .72fr); gap: 10px; margin: 10px 0; }
+.rpp-chart-kpis { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(2, minmax(0, 210px)); gap: 12px; }
+.rpp-metric-card { display: grid; grid-template-columns: 24px 1fr; align-items: center; gap: 6px 8px; min-height: 112px; padding: 14px 16px !important; }
+.rpp-metric-card .rpp-metric-icon { display: grid; place-items: center; width: 24px; height: 24px; border-radius: 6px; background: #fee2e2; color: #ef4444; font-size: 13px; font-weight: 900; }
+.rpp-metric-card > b { color: #5d626a; font-size: 12px; }
+.rpp-metric-card > strong { grid-column: 1 / -1; color: #202124; font-size: 25px; line-height: 1; }
+.rpp-metric-card > strong em { color: #8b8f96; font-size: 13px; font-style: normal; }
+.rpp-metric-card > small { grid-column: 1 / -1; justify-self: start; padding: 3px 7px; border-radius: 999px; background: #f1eeec; color: #77706c; font-size: 10px; font-weight: 800; }
+.rpp-period-tabs { display: flex; justify-content: flex-end; margin-bottom: 8px; padding: 3px; border-radius: 10px; background: #f1eeee; }
+.rpp-period-tabs button { min-width: 46px; min-height: 30px; border: 0; border-radius: 8px; background: transparent; color: #555; font-size: 11px; font-weight: 800; cursor: pointer; }
+.rpp-period-tabs button.active { background: #fff; color: #dc2626; box-shadow: 0 1px 4px rgba(15, 23, 42, .12); }
 .rpp-chart-card { min-width: 0; padding: 14px 16px !important; border: 1px solid #c9d4e1 !important; background: #fff; }
 .rpp-chart-wide { grid-row: span 2; }
 .rpp-chart-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 8px; }
@@ -889,9 +903,11 @@ small { color: var(--muted); line-height: 1.45; }
 
 @media (max-width: 760px) {
   .rpp-dashboard-charts { grid-template-columns: 1fr; }
+  .rpp-chart-kpis { grid-template-columns: 1fr; }
   .rpp-chart-wide { grid-column: auto; }
   .rpp-chart-card { padding: 12px !important; }
   .rpp-chart-legend { gap: 8px; }
   .rpp-line-chart { height: 160px; }
   .rpp-roas-chart { height: 130px; }
+  .rpp-period-tabs button { min-width: 42px; }
 }
