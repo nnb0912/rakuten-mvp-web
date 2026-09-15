@@ -51,6 +51,10 @@ test("RPP dashboard snapshot accepts validated single-day performance rows", () 
   assert.equal(snapshot.schemaVersion, 2);
   assert.equal(snapshot.performanceDaily?.rows[0].itemCode, "r0579");
   assert.equal(snapshot.performanceDaily?.rows[0].sales720h, 700);
+  assert.deepEqual(snapshot.performanceDaily?.receipt, receipt);
+  const readback = normalizeRppDashboardSnapshot(snapshot);
+  assert.deepEqual(readback.performanceDaily?.receipt, receipt);
+  assert.deepEqual(readback, snapshot);
 });
 
 test("RPP dashboard snapshot rejects a forged performance receipt", () => {
