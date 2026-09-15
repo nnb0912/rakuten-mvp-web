@@ -3,15 +3,20 @@ export type RppDashboardDailyMetric = {
   spend: number | null;
   sales: number | null;
   clicks: number | null;
+  orders?: number | null;
 };
 
 export type RppDashboardChartPoint = Omit<RppDashboardDailyMetric, "spend" | "sales" | "clicks"> & {
   spend: number | null;
   sales: number | null;
   clicks: number | null;
+  orders: number | null;
   label: string;
   roas: number | null;
+  cvr: number | null;
 };
+
+export type RppChartPeriod = "DAY" | "WEEK" | "MONTH";
 
 export type RppDeliveryComposition = {
   state: "CURRENT" | "UNKNOWN" | "UNAVAILABLE";
@@ -66,8 +71,12 @@ export function buildRppDashboardChartSeries(rows: RppDashboardDailyMetric[]): R
       spend: typeof row.spend === "number" && Number.isFinite(row.spend) ? Math.max(0, row.spend) : null,
       sales: typeof row.sales === "number" && Number.isFinite(row.sales) ? Math.max(0, row.sales) : null,
       clicks: typeof row.clicks === "number" && Number.isFinite(row.clicks) ? Math.max(0, Math.round(row.clicks)) : null,
+      orders: typeof row.orders === "number" && Number.isFinite(row.orders) ? Math.max(0, Math.round(row.orders)) : null,
       roas: typeof row.spend === "number" && Number.isFinite(row.spend) && row.spend > 0 && typeof row.sales === "number" && Number.isFinite(row.sales)
         ? Math.max(0, row.sales / row.spend * 100)
+        : null,
+      cvr: typeof row.clicks === "number" && row.clicks > 0 && typeof row.orders === "number" && Number.isFinite(row.orders)
+        ? Math.max(0, row.orders / row.clicks * 100)
         : null,
     }))
     .sort((a, b) => a.date.localeCompare(b.date));
@@ -78,10 +87,72 @@ export function buildRppDashboardChartSeries(rows: RppDashboardDailyMetric[]): R
   const end = new Date(`${observed.at(-1)!.date}T00:00:00Z`);
   while (cursor <= end) {
     const date = cursor.toISOString().slice(0, 10);
-    filled.push(byDate.get(date) ?? { date, label: `${cursor.getUTCMonth() + 1}/${cursor.getUTCDate()}`, spend: null, sales: null, clicks: null, roas: null });
+    filled.push(byDate.get(date) ?? { date, label: `${cursor.getUTCMonth() + 1}/${cursor.getUTCDate()}`, spend: null, sales: null, clicks: null, orders: null, roas: null, cvr: null });
     cursor.setUTCDate(cursor.getUTCDate() + 1);
   }
   return filled;
+}
+
+function jstToday(now: Date) {
+  return new Date(now.getTime() + 9 * 60 * 60_000).toISOString().slice(0, 10);
+}
+
+function utcDate(date: string) {
+  return new Date(`${date}T00:00:00Z`);
+}
+
+function isoDate(date: Date) {
+  return date.toISOString().slice(0, 10);
+}
+
+export function buildRppDashboardPeriodSeries(rows: RppDashboardDailyMetric[], period: RppChartPeriod, now = new Date()): RppDashboardChartPoint[] {
+  const today = jstToday(now);
+  const end = utcDate(today);
+  const buckets: Array<{ start: string; end: string; label: string }> = [];
+  if (period === "DAY") {
+    for (let offset = 13; offset >= 0; offset -= 1) {
+      const date = new Date(end); date.setUTCDate(date.getUTCDate() - offset);
+      buckets.push({ start: isoDate(date), end: isoDate(date), label: `${date.getUTCMonth() + 1}/${date.getUTCDate()}` });
+    }
+  } else if (period === "WEEK") {
+    const currentMonday = new Date(end);
+    currentMonday.setUTCDate(currentMonday.getUTCDate() - ((currentMonday.getUTCDay() + 6) % 7));
+    for (let offset = 11; offset >= 0; offset -= 1) {
+      const start = new Date(currentMonday); start.setUTCDate(start.getUTCDate() - offset * 7);
+      const finish = new Date(start); finish.setUTCDate(finish.getUTCDate() + 6);
+      if (finish > end) finish.setTime(end.getTime());
+      buckets.push({ start: isoDate(start), end: isoDate(finish), label: `${start.getUTCMonth() + 1}/${start.getUTCDate()}週` });
+    }
+  } else {
+    const currentMonth = new Date(Date.UTC(end.getUTCFullYear(), end.getUTCMonth(), 1));
+    for (let offset = 11; offset >= 0; offset -= 1) {
+      const start = new Date(Date.UTC(currentMonth.getUTCFullYear(), currentMonth.getUTCMonth() - offset, 1));
+      const finish = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth() + 1, 0));
+      if (finish > end) finish.setTime(end.getTime());
+      buckets.push({ start: isoDate(start), end: isoDate(finish), label: `${start.getUTCFullYear()}/${start.getUTCMonth() + 1}` });
+    }
+  }
+  const validRows = rows.filter((row) => /^\d{4}-\d{2}-\d{2}$/.test(row.date) && row.date <= today);
+  return buckets.map((bucket) => {
+    const selected = validRows.filter((row) => row.date >= bucket.start && row.date <= bucket.end);
+    const sum = (field: "spend" | "sales" | "clicks" | "orders") => {
+      const values = selected.flatMap((row) => typeof row[field] === "number" && Number.isFinite(row[field]) ? [Math.max(0, Number(row[field]))] : []);
+      return values.length ? values.reduce((total, value) => total + value, 0) : null;
+    };
+    const spend = sum("spend"), sales = sum("sales"), clicks = sum("clicks"), orders = sum("orders");
+    return { date: bucket.start, label: bucket.label, spend, sales, clicks, orders, roas: spend != null && spend > 0 && sales != null ? sales / spend * 100 : null, cvr: clicks != null && clicks > 0 && orders != null ? orders / clicks * 100 : null };
+  });
+}
+
+export function buildRppCurrentMonthKpis(rows: RppDashboardDailyMetric[], now = new Date()) {
+  const today = jstToday(now);
+  const month = today.slice(0, 7);
+  const selected = rows.filter((row) => row.date.startsWith(month) && row.date <= today);
+  const clicksValues = selected.flatMap((row) => typeof row.clicks === "number" && Number.isFinite(row.clicks) ? [Math.max(0, row.clicks)] : []);
+  const orderValues = selected.flatMap((row) => typeof row.orders === "number" && Number.isFinite(row.orders) ? [Math.max(0, row.orders)] : []);
+  const clicks = clicksValues.length ? Math.round(clicksValues.reduce((sum, value) => sum + value, 0)) : null;
+  const orders = orderValues.length ? Math.round(orderValues.reduce((sum, value) => sum + value, 0)) : null;
+  return { clicks, orders, cvr: clicks != null && clicks > 0 && orders != null ? orders / clicks * 100 : null };
 }
 
 export function chartPolyline(values: Array<number | null>, width = 560, height = 180, inset = 22, maximum?: number) {

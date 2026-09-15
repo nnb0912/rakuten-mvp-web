@@ -6,6 +6,7 @@ const component = readFileSync(new URL("../app/rpp/RppTargetSettings.tsx", impor
 const route = readFileSync(new URL("../app/api/rpp/delivery-schedules/route.ts", import.meta.url), "utf8");
 const machineRoute = readFileSync(new URL("../app/api/rpp/sync-snapshot/route.ts", import.meta.url), "utf8");
 const targetSource = readFileSync(new URL("./rppTargets.ts", import.meta.url), "utf8");
+const styles = readFileSync(new URL("../app/globals.css", import.meta.url), "utf8");
 
 test("商品CPC行だけに時間指定ボタンと行スコープのパネルを表示する", () => {
   assert.match(component, /productExclusionOperable \? <button className="schedule-button"[\s\S]*?>時間指定<\/button> : null/);
@@ -25,6 +26,13 @@ test("商品CPC行だけに時間指定ボタンと行スコープのパネル�
   assert.match(component, /時間指定の重複・継続状態を確認/);
   assert.match(component, /acknowledgedWarningKeys/);
   assert.match(component, /警告を確認して保存/);
+});
+
+test("操作列は上段ボタンと下段夜間停止を規則的に整列する", () => {
+  assert.match(component, /<div className="action-button-row">[\s\S]*設定[\s\S]*CPC変更CSV[\s\S]*時間指定[\s\S]*<\/div>/);
+  assert.match(styles, /\.actions-col \.action-button-row \{ display: flex/);
+  assert.match(styles, /\.actions-col \.night-pause-control \{ grid-template-columns: auto auto 1fr/);
+  assert.match(styles, /\.actions-col \{[^}]*min-width: 270px/);
 });
 
 test("UIはJSTのdatetime-localと毎日停止・予約・取消APIを使う", () => {

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildRppDashboardChartSeries, buildRppDeliveryComposition, chartPolyline, type RppDashboardDailyMetric } from "./rppDashboardCharts.ts";
+import { buildRppCurrentMonthKpis, buildRppDashboardChartSeries, buildRppDashboardPeriodSeries, buildRppDeliveryComposition, chartPolyline, type RppDashboardDailyMetric } from "./rppDashboardCharts.ts";
 
 const day = (delta: number) => {
   const value = new Date(Date.now() + 9 * 60 * 60_000 + delta * 86_400_000);
@@ -104,4 +104,34 @@ test("同一fresh complete snapshotだけで全RPP商品を重複なく配信分
     observation: { observedAt: "2026-09-15T08:40:00Z", complete: true },
   }), new Date("2026-09-15T09:00:00Z"));
   assert.deepEqual(result, { state: "CURRENT", total: 3, active: 1, excluded: 1, unknown: 1 });
+});
+
+test("日次・週次・月次はJST固定窓で実績だけを集計する", () => {
+  const metrics: RppDashboardDailyMetric[] = [
+    { date: "2026-08-31", spend: 100, sales: 200, clicks: 10, orders: 1 },
+    { date: "2026-09-01", spend: 300, sales: 900, clicks: 30, orders: 6 },
+    { date: "2026-09-14", spend: 200, sales: 400, clicks: 20, orders: 2 },
+    { date: "2026-09-16", spend: 999, sales: 999, clicks: 999, orders: 999 },
+  ];
+  const now = new Date("2026-09-15T09:00:00Z");
+  const daily = buildRppDashboardPeriodSeries(metrics, "DAY", now);
+  const weekly = buildRppDashboardPeriodSeries(metrics, "WEEK", now);
+  const monthly = buildRppDashboardPeriodSeries(metrics, "MONTH", now);
+  assert.equal(daily.length, 14);
+  assert.equal(weekly.length, 12);
+  assert.equal(monthly.length, 12);
+  assert.deepEqual(daily.at(-2), { date: "2026-09-14", label: "9/14", spend: 200, sales: 400, clicks: 20, orders: 2, roas: 200, cvr: 10 });
+  assert.equal(weekly.at(-1)?.spend, 200);
+  assert.equal(monthly.at(-1)?.spend, 500);
+  assert.equal(monthly.at(-1)?.orders, 8);
+});
+
+test("当月クリックと720時間CV・CVRは欠損を0にせず集計する", () => {
+  const now = new Date("2026-09-15T09:00:00Z");
+  assert.deepEqual(buildRppCurrentMonthKpis([
+    { date: "2026-09-01", spend: 1, sales: 1, clicks: 80, orders: 8 },
+    { date: "2026-09-14", spend: 1, sales: 1, clicks: 20, orders: 2 },
+    { date: "2026-08-31", spend: 1, sales: 1, clicks: 999, orders: 999 },
+  ], now), { clicks: 100, orders: 10, cvr: 10 });
+  assert.deepEqual(buildRppCurrentMonthKpis([], now), { clicks: null, orders: null, cvr: null });
 });

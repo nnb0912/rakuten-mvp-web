@@ -14,10 +14,10 @@ export async function readRppDailySpendActuals(){if(!pool)return [];try{const re
 
 export async function readRppDashboardDailyMetrics(days=14){
   if(!pool)return [];
-  const safeDays=Math.max(1,Math.min(31,Math.round(days)));
+  const safeDays=Math.max(1,Math.min(366,Math.round(days)));
   try{
-    const result=await pool.query(`with bounds as (select (now() at time zone 'Asia/Tokyo')::date as end_date), dates as (select generate_series(end_date-($1::int-1),end_date,interval '1 day')::date as performance_date from bounds), actual as (select p.performance_date,sum(p.spend)::text as spend,sum(p.sales_720h)::text as sales,sum(p.clicks)::text as clicks from rpp_performance_daily p,bounds where p.performance_date between end_date-($1::int-1) and end_date and p.source_mtime=(select max(latest.source_mtime) from rpp_performance_daily latest where latest.performance_date=p.performance_date) group by p.performance_date) select dates.performance_date::text as date,actual.spend,actual.sales,actual.clicks from dates left join actual using(performance_date) order by dates.performance_date`,[safeDays]);
-    return result.rows.map((row:{date:string;spend:string|null;sales:string|null;clicks:string|null})=>({date:String(row.date),spend:row.spend==null?null:Number(row.spend),sales:row.sales==null?null:Number(row.sales),clicks:row.clicks==null?null:Number(row.clicks)}));
+    const result=await pool.query(`with bounds as (select (now() at time zone 'Asia/Tokyo')::date as end_date), dates as (select generate_series(end_date-($1::int-1),end_date,interval '1 day')::date as performance_date from bounds), actual as (select p.performance_date,sum(p.spend)::text as spend,sum(p.sales_720h)::text as sales,sum(p.clicks)::text as clicks,sum(p.orders_720h)::text as orders from rpp_performance_daily p,bounds where p.performance_date between end_date-($1::int-1) and end_date and p.source_mtime=(select max(latest.source_mtime) from rpp_performance_daily latest where latest.performance_date=p.performance_date) group by p.performance_date) select dates.performance_date::text as date,actual.spend,actual.sales,actual.clicks,actual.orders from dates left join actual using(performance_date) order by dates.performance_date`,[safeDays]);
+    return result.rows.map((row:{date:string;spend:string|null;sales:string|null;clicks:string|null;orders:string|null})=>({date:String(row.date),spend:row.spend==null?null:Number(row.spend),sales:row.sales==null?null:Number(row.sales),clicks:row.clicks==null?null:Number(row.clicks),orders:row.orders==null?null:Number(row.orders)}));
   }catch(error){if((error as {code?:string}).code==="42P01")return [];throw error;}
 }
 

@@ -138,7 +138,7 @@ export default async function RppPage({ searchParams }: { searchParams: Promise<
   const view: RppView = isRppView(requestedView) ? requestedView : "dashboard";
   const [data, meta, targetData, autoSettingsData, experimentHistory, exclusionJobs, budgetData, strategyData, dailyActuals, auditEvents, anomalyData, nightPauseData, dashboardDailyMetrics, latestDashboardSnapshot] = await Promise.all([
     readRppRecommendations(), readRppDashboardMeta(), readRppAlertTargets(), readRppAutoAdjustmentSettings(),
-    readRppExperimentHistory(), listRecentRppExclusionJobs(8), readRppBudgetSettings(), readRppStrategySettings(), readRppDailySpendActuals(), listRppAuditEvents(30), readRppAnomalyComparison(), readRppNightPauseProducts(), readRppDashboardDailyMetrics(14), readLatestRppDashboardSnapshot(),
+    readRppExperimentHistory(), listRecentRppExclusionJobs(8), readRppBudgetSettings(), readRppStrategySettings(), readRppDailySpendActuals(), listRppAuditEvents(30), readRppAnomalyComparison(), readRppNightPauseProducts(), readRppDashboardDailyMetrics(366), readLatestRppDashboardSnapshot(),
   ]);
   const summary = data.summary as { generatedAt?: string; performanceDateRange?: string | null; counts?: { raise?: number; lower?: number; hold?: number; ok?: number }; safety?: { productionChange?: boolean; autoAdjustment?: { enabled?: boolean } }; budgetMetrics?: RppBudgetMetrics } | null;
   const candidateTotal = (summary?.counts?.raise ?? 0) + (summary?.counts?.lower ?? 0);
