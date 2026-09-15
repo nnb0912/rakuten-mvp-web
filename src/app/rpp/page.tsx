@@ -15,6 +15,7 @@ import { shortRppItemName } from "@/lib/rppItemShortNames";
 import { readLatestRppDashboardSnapshot } from "@/lib/rppDashboardSnapshots";
 import { buildRppDeliveryComposition } from "@/lib/rppDashboardCharts";
 import RppAutoAdjustmentSettingsPanel from "./RppAutoAdjustmentSettingsPanel";
+import RppConsoleNav from "./RppConsoleNav";
 import RppDashboardCharts from "./RppDashboardCharts";
 
 import RppBudgetPanel from "./RppBudgetPanel";
@@ -184,13 +185,7 @@ export default async function RppPage({ searchParams }: { searchParams: Promise<
     <div className="rpp-console-shell">
       <aside className="rpp-console-nav" aria-label="RPPメニュー">
         <div className="rpp-console-brand"><span>R</span><div><b>RPP CONTROL</b><small>atRise operations</small></div></div>
-        <nav>
-          {Object.entries(RPP_VIEWS).map(([key, item]) => (
-            <Link className={view === key ? "active" : ""} href={`/rpp?view=${key}`} aria-current={view === key ? "page" : undefined} key={key}>
-              {item.label}
-            </Link>
-          ))}
-        </nav>
+        <RppConsoleNav activeView={view} items={Object.entries(RPP_VIEWS).map(([key, item]) => ({ key, label: item.label }))} />
         <div className="rpp-console-safe"><b>モード選択式</b><small>固定以外だけ自動調整</small></div>
         <Link className="rpp-console-back" href="/">← 管理トップへ</Link>
       </aside>
@@ -453,7 +448,7 @@ export default async function RppPage({ searchParams }: { searchParams: Promise<
 
       <section className="panel history-panel" id="rpp-audit">
         <h2>統合監査ログ</h2>
-        {auditEvents.length ? <table className="wide-table"><thead><tr><th><RppInfoTip label="日時" /></th><th><RppInfoTip label="イベント" /></th><th><RppInfoTip label="対象" /></th><th><RppInfoTip label="実行者" /></th><th><RppInfoTip label="状態" /></th></tr></thead><tbody>{auditEvents.map((row) => <tr key={row.id}><td>{fmtDate(row.occurredAt)}</td><td><b>{row.eventType}</b></td><td>{row.entityId}</td><td><small>{row.actorId}</small></td><td><span className={`status-pill ${row.status === "failed" || row.status === "blocked" ? "approval-rejected" : "status-approved"}`}>{row.status}{row.productionChange ? " / 本番変更" : ""}</span></td></tr>)}</tbody></table> : <p>監査イベントはまだありません。</p>}
+        {auditEvents.length ? <div className="rpp-audit-table-wrap"><table className="wide-table"><thead><tr><th><RppInfoTip label="日時" /></th><th><RppInfoTip label="イベント" /></th><th><RppInfoTip label="対象" /></th><th><RppInfoTip label="実行者" /></th><th><RppInfoTip label="状態" /></th></tr></thead><tbody>{auditEvents.map((row) => <tr key={row.id}><td>{fmtDate(row.occurredAt)}</td><td><b>{row.eventType}</b></td><td>{row.entityId}</td><td><small>{row.actorId}</small></td><td><span className={`status-pill ${row.status === "failed" || row.status === "blocked" ? "approval-rejected" : "status-approved"}`}>{row.status}{row.productionChange ? " / 本番変更" : ""}</span></td></tr>)}</tbody></table></div> : <p>監査イベントはまだありません。</p>}
         <small>追記専用。更新・削除はDBトリガーで拒否します。</small>
       </section>
 
