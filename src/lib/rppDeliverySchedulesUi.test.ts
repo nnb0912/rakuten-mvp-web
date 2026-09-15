@@ -35,6 +35,15 @@ test("操作列は上段ボタンと下段夜間停止を規則的に整列す�
   assert.match(styles, /\.actions-col \{[^}]*min-width: 270px/);
 });
 
+test("スマホの商品一覧は見出し・操作・フィルターを画面内に整列する", () => {
+  assert.match(styles, /@media \(min-width: 761px\) and \(max-width: 900px\)[\s\S]*\.rpp-console-main \.adant-list-toolbar \{ grid-template-columns: 1fr 1fr; overflow-x: visible/);
+  assert.match(styles, /@media \(max-width: 760px\)[\s\S]*\.rpp-console-main \.owner-filter-strip \{ margin-bottom: 48px/);
+  assert.match(styles, /\.product-card-panel > \.section-heading \{ display: grid !important; gap: 8px/);
+  assert.match(styles, /\.product-card-panel \.product-list-actions \{[^}]*flex-wrap: wrap/);
+  assert.match(styles, /\.adant-list-toolbar \{[^}]*grid-template-columns: 1fr[^}]*overflow-x: visible/);
+  assert.match(styles, /\.adant-list-toolbar \.compact-select select \{ width: 100%; min-width: 0/);
+});
+
 test("UIはJSTのdatetime-localと毎日停止・予約・取消APIを使う", () => {
   assert.match(component, /type="datetime-local"/);
   assert.match(component, /timeZone: "Asia\/Tokyo"/);
