@@ -1,6 +1,37 @@
 import assert from "node:assert/strict";
+import { createHash, createHmac } from "node:crypto";
+import { readFileSync } from "node:fs";
 import test from "node:test";
-import { normalizeRppDashboardSnapshot } from "./rppDashboardSnapshots.ts";
+import { normalizeRppDashboardSnapshot, performanceDecimalUnits, performanceItemSetSha256, performanceRowsSha256 } from "./rppDashboardSnapshots.ts";
+
+const snapshotSource = readFileSync(new URL("./rppDashboardSnapshots.ts", import.meta.url), "utf8");
+const receiptKey = "test-only-rpp-performance-receipt-key-123456";
+process.env.RPP_PERFORMANCE_RECEIPT_HMAC_KEY = receiptKey;
+const fixtureNow = new Date();
+const performanceDate = new Date(fixtureNow.getTime() - 24 * 60 * 60_000 + 9 * 60 * 60_000).toISOString().slice(0, 10);
+const fixtureSourceMtime = new Date(fixtureNow.getTime() - 15_000).toISOString();
+function signedReceipt(date: string, count: number, overrides: Record<string, unknown> = {}) {
+  const rowBody = "r0579\ti:12000\ti:10\ti:300\ti:500\ti:1\ti:700\ti:2";
+  const historyCreatedAt = new Date(fixtureNow.getTime() - 10_000 + 9 * 60 * 60_000).toISOString().slice(0, 19).replace("T", " ");
+  const verificationHistoryCreatedAt = new Date(fixtureNow.getTime() - 90_000 + 9 * 60 * 60_000).toISOString().slice(0, 19).replace("T", " ");
+  const base = { version: 1 as const, file: "receipt.json", completedAt: fixtureNow.toISOString(), sha256: "a".repeat(64), expectedCount: count, actualCount: count, expectedItemSetSha256: createHash("sha256").update("r0579").digest("hex"), requestStartedAt: new Date(fixtureNow.getTime() - 60_000).toISOString(), historyCreatedAt, historyRowSha256: "b".repeat(64), sourceArchiveSha256: "c".repeat(64), sourceArchiveBytes: 1000, sourceCsvCrc32: "deadbeef", sourceCsvCompressedBytes: 800, sourceCsvUncompressedBytes: 1200, sourceCsvNameSha256: "d".repeat(64), verificationRequestStartedAt: new Date(fixtureNow.getTime() - 120_000).toISOString(), verificationHistoryCreatedAt, verificationHistoryRowSha256: "e".repeat(64), verificationArchiveSha256: "f".repeat(64), verificationSourceMtime: new Date(fixtureNow.getTime() - 80_000).toISOString(), verificationCompletedAt: new Date(fixtureNow.getTime() - 70_000).toISOString(), source: "rpp_item_reports.csv", sourceMtime: fixtureSourceMtime, rowsSha256: createHash("sha256").update(rowBody).digest("hex"), complete: true as const };
+  const receipt = { ...base, ...overrides } as typeof base;
+  const message = [receipt.version, receipt.sha256, date, date, receipt.expectedCount, receipt.actualCount, receipt.expectedItemSetSha256, receipt.requestStartedAt, receipt.historyCreatedAt, receipt.historyRowSha256, receipt.sourceArchiveSha256, receipt.sourceArchiveBytes, receipt.sourceCsvCrc32, receipt.sourceCsvCompressedBytes, receipt.sourceCsvUncompressedBytes, receipt.sourceCsvNameSha256, receipt.verificationRequestStartedAt, receipt.verificationHistoryCreatedAt, receipt.verificationHistoryRowSha256, receipt.verificationArchiveSha256, receipt.verificationSourceMtime, receipt.verificationCompletedAt, receipt.source, receipt.sourceMtime, receipt.completedAt, receipt.rowsSha256].join("\n");
+  return { ...receipt, signature: createHmac("sha256", receiptKey).update(message).digest("hex") };
+}
+
+test("Python and TypeScript share canonical performance vectors", () => {
+  const vector = JSON.parse(readFileSync(new URL("../../scripts/rpp-product-delivery/rpp_performance_canonical_vectors.json", import.meta.url), "utf8"));
+  assert.equal(performanceRowsSha256(vector.rows), vector.rowsSha256);
+  assert.equal(performanceItemSetSha256(vector.rows), vector.itemSetSha256);
+});
+
+test("CTR 0〜100の4桁小数をすべて正確な整数unitへ復元する", () => {
+  for (let units = 0; units <= 1_000_000; units += 1) {
+    assert.equal(performanceDecimalUnits(units / 10_000, 4), units);
+  }
+  assert.throws(() => performanceDecimalUnits(0.00031, 4), /scale is invalid/);
+});
 
 test("RPP dashboard snapshot payload is normalized", () => {
   const snapshot = normalizeRppDashboardSnapshot({
@@ -15,10 +46,58 @@ test("RPP dashboard snapshot payload is normalized", () => {
 });
 
 test("RPP dashboard snapshot accepts validated single-day performance rows", () => {
-  const snapshot = normalizeRppDashboardSnapshot({ schemaVersion: 2, syncedAt: "2026-08-31T06:00:00Z", recommendations: { summary: {}, recommendations: [] }, latestFiles: [], performanceDaily: { source: "rpp_item_reports.csv", sourceMtime: "2026-08-31T05:00:00Z", date: "2026-08-30", attribution: { sales12h: true, sales720h: true }, rows: [{ itemCode: "R0579", ctr: 1.2, clicks: 10, spend: 300, sales12h: 500, orders12h: 1, sales720h: 700, orders720h: 2 }] } });
+  const receipt = signedReceipt(performanceDate, 1);
+  const snapshot = normalizeRppDashboardSnapshot({ schemaVersion: 2, syncedAt: fixtureNow.toISOString(), recommendations: { summary: {}, recommendations: [] }, latestFiles: [], performanceDaily: { source: "rpp_item_reports.csv", sourceMtime: fixtureSourceMtime, date: performanceDate, attribution: { sales12h: true, sales720h: true }, rows: [{ itemCode: "R0579", ctr: 1.2, clicks: 10, spend: 300, sales12h: 500, orders12h: 1, sales720h: 700, orders720h: 2 }], receipt } });
   assert.equal(snapshot.schemaVersion, 2);
   assert.equal(snapshot.performanceDaily?.rows[0].itemCode, "r0579");
   assert.equal(snapshot.performanceDaily?.rows[0].sales720h, 700);
+  assert.deepEqual(snapshot.performanceDaily?.receipt, receipt);
+  const readback = normalizeRppDashboardSnapshot(snapshot);
+  assert.deepEqual(readback.performanceDaily?.receipt, receipt);
+  assert.deepEqual(readback, snapshot);
+});
+
+test("RPP dashboard snapshot rejects a forged performance receipt", () => {
+  const receipt = { ...signedReceipt(performanceDate, 1), signature: "0".repeat(64) };
+  assert.throws(() => normalizeRppDashboardSnapshot({ schemaVersion: 2, syncedAt: fixtureNow.toISOString(), recommendations: { summary: {}, recommendations: [] }, latestFiles: [], performanceDaily: { source: "rpp_item_reports.csv", sourceMtime: fixtureSourceMtime, date: performanceDate, attribution: { sales12h: true, sales720h: true }, rows: [{ itemCode: "R0579", ctr: 1.2, clicks: 10, spend: 300, sales12h: 500, orders12h: 1, sales720h: 700, orders720h: 2 }], receipt } }), /verified receipt is invalid/);
+});
+
+test("RPP dashboard snapshot rejects tampered rows, null collisions, invalid metrics, and impossible times", () => {
+  const receipt = signedReceipt(performanceDate, 1);
+  const row = { itemCode: "R0579", ctr: 1.2, clicks: 10, spend: 300, sales12h: 500, orders12h: 1, sales720h: 700, orders720h: 2 };
+  const performanceDaily = { source: "rpp_item_reports.csv", sourceMtime: fixtureSourceMtime, date: performanceDate, attribution: { sales12h: true, sales720h: true }, rows: [{ ...row, clicks: 999999 }], receipt };
+  const base = { schemaVersion: 2, syncedAt: fixtureNow.toISOString(), recommendations: { summary: {}, recommendations: [] }, latestFiles: [], performanceDaily };
+  assert.throws(() => normalizeRppDashboardSnapshot(base), /verified receipt is invalid/);
+  const zeroReceipt = signedReceipt(performanceDate, 1, { rowsSha256: createHash("sha256").update("r0579\ti:0\ti:10\ti:300\ti:500\ti:1\ti:700\ti:2").digest("hex") });
+  assert.throws(() => normalizeRppDashboardSnapshot({ ...base, performanceDaily: { ...performanceDaily, rows: [{ ...row, ctr: null }], receipt: zeroReceipt } }), /ctr is invalid/);
+  assert.throws(() => normalizeRppDashboardSnapshot({ ...base, performanceDaily: { ...performanceDaily, rows: [{ ...row, spend: -1 }], receipt } }), /spend is invalid/);
+  assert.throws(() => normalizeRppDashboardSnapshot({ ...base, performanceDaily: { ...performanceDaily, rows: [{ ...row, ctr: Number.NaN }], receipt } }), /ctr is invalid/);
+  assert.throws(() => normalizeRppDashboardSnapshot({ ...base, performanceDaily: { ...performanceDaily, rows: [{ ...row, clicks: "1000" }], receipt } }), /clicks is invalid/);
+  assert.throws(() => normalizeRppDashboardSnapshot({ ...base, performanceDaily: { ...performanceDaily, rows: [{ ...row, clicks: 2_147_483_648 }], receipt } }), /clicks is invalid/);
+  assert.throws(() => normalizeRppDashboardSnapshot({ ...base, performanceDaily: { ...performanceDaily, rows: [{ ...row, spend: 1_000_000_000_000 }], receipt } }), /spend is invalid/);
+  assert.throws(() => normalizeRppDashboardSnapshot({ ...base, performanceDaily: { ...performanceDaily, rows: [{ ...row, ctr: 100.0001 }], receipt } }), /ctr is invalid/);
+  assert.throws(() => normalizeRppDashboardSnapshot({ ...base, performanceDaily: { ...performanceDaily, rows: [{ ...row, itemCode: "商品" }], receipt } }), /itemCode is invalid/);
+  const impossible = signedReceipt(performanceDate, 1, { requestStartedAt: new Date(fixtureNow.getTime() + 60 * 60_000).toISOString() });
+  assert.throws(() => normalizeRppDashboardSnapshot({ ...base, performanceDaily: { ...performanceDaily, rows: [row], receipt: impossible } }), /verified receipt is invalid/);
+  const stale = new Date(fixtureNow.getTime() - 48 * 60 * 60_000);
+  const staleReceipt = signedReceipt(performanceDate, 1, { completedAt: stale.toISOString(), requestStartedAt: new Date(stale.getTime() - 60_000).toISOString(), historyCreatedAt: new Date(stale.getTime() - 10_000 + 9 * 60 * 60_000).toISOString().slice(0, 19).replace("T", " "), sourceMtime: new Date(stale.getTime() - 15_000).toISOString() });
+  assert.throws(() => normalizeRppDashboardSnapshot({ ...base, performanceDaily: { ...performanceDaily, sourceMtime: staleReceipt.sourceMtime, rows: [row], receipt: staleReceipt } }), /verified receipt is invalid/);
+  const reversed = signedReceipt(performanceDate, 1, { verificationCompletedAt: new Date(fixtureNow.getTime() - 30_000).toISOString() });
+  assert.throws(() => normalizeRppDashboardSnapshot({ ...base, performanceDaily: { ...performanceDaily, rows: [row], receipt: reversed } }), /verified receipt is invalid/);
+});
+
+test("古い実績は新しいobservedAtだけで上書きしない", () => {
+  assert.match(snapshotSource, /where excluded\.source_mtime > \$\{PERFORMANCE_TABLE\}\.source_mtime/);
+  assert.doesNotMatch(snapshotSource, /source_mtime[^`]+or excluded\.observed_at/i);
+  assert.match(snapshotSource, /performance daily source is older than persisted data/);
+  assert.match(snapshotSource, /pg_advisory_xact_lock\(hashtext\(\$1\)\).*rpp-performance-global/s);
+  assert.match(snapshotSource, /performance daily date is older than latest persisted date/);
+  assert.ok(snapshotSource.indexOf("assertPersistedPerformanceMatches") < snapshotSource.lastIndexOf(`insert into \${TABLE}`));
+});
+
+test("実績payloadは検証済みdownload receiptを必須とする", () => {
+  const base = { schemaVersion: 2, syncedAt: "2026-08-31T06:00:00Z", recommendations: { summary: {}, recommendations: [] }, latestFiles: [], performanceDaily: { source: "rpp_item_reports.csv", sourceMtime: "2026-08-31T05:00:00Z", date: "2026-08-30", attribution: { sales12h: true, sales720h: true }, rows: [] } };
+  assert.throws(() => normalizeRppDashboardSnapshot(base), /verified receipt/);
 });
 
 test("RPP dashboard snapshot rejects missing recommendation rows", () => {

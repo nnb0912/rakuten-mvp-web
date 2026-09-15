@@ -1,0 +1,46 @@
+{
+  "rows": [
+    {
+      "itemCode": "r-1",
+      "ctr": 100.0,
+      "clicks": 2147483647,
+      "spend": 999999999999,
+      "sales12h": 999999999999,
+      "orders12h": 2147483647,
+      "sales720h": 999999999999,
+      "orders720h": 2147483647
+    },
+    {
+      "itemCode": "r0406",
+      "ctr": 0.0,
+      "clicks": 0,
+      "spend": 0,
+      "sales12h": 0,
+      "orders12h": 0,
+      "sales720h": 0,
+      "orders720h": 0
+    },
+    {
+      "itemCode": "r0579",
+      "ctr": 1.25,
+      "clicks": 10,
+      "spend": 300,
+      "sales12h": 500,
+      "orders12h": 1,
+      "sales720h": 700,
+      "orders720h": 2
+    },
+    {
+      "itemCode": "r_1",
+      "ctr": 0.0003,
+      "clicks": 1,
+      "spend": 1,
+      "sales12h": 1,
+      "orders12h": 1,
+      "sales720h": 1,
+      "orders720h": 1
+    }
+  ],
+  "rowsSha256": "546c3c6d63294eab887cc5670f2c114c5c515e71c060e65cecc2c12331263df2",
+  "itemSetSha256": "1a89ff302b1be8d4beee796661fe642a80a1f946e4c334cb3cd9fa78a0da7216"
+}

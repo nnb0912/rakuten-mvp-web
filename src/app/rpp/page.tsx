@@ -6,13 +6,14 @@ import { listRppAuditEvents } from "@/lib/rppAuditLog";
 import { readRppAutoAdjustmentSettings } from "@/lib/rppAutoAdjustmentSettings";
 import { readRppExperimentHistory } from "@/lib/rppExperiments";
 import { readRppBudgetSettings, type RppBudgetMetrics } from "@/lib/rppBudgetSettings";
-import { readRppDailySpendActuals } from "@/lib/rppComparisons";
+import { readRppDailySpendActuals, readRppDashboardDailyMetrics } from "@/lib/rppComparisons";
 import { readRppStrategySettings } from "@/lib/rppStrategySettings";
 import { readRppAnomalyComparison } from "@/lib/rppAnomalyData";
 import { readRppNightPauseProducts } from "@/lib/rppNightPause";
 import { isAutomaticRppOptimizationMode } from "@/lib/rppCpcModePolicy";
 import { shortRppItemName } from "@/lib/rppItemShortNames";
 import RppAutoAdjustmentSettingsPanel from "./RppAutoAdjustmentSettingsPanel";
+import RppDashboardCharts from "./RppDashboardCharts";
 
 import RppBudgetPanel from "./RppBudgetPanel";
 import RppPeriodComparison from "./RppPeriodComparison";
@@ -133,9 +134,9 @@ function outOfScopeOperation(row: { blocks: string[]; reasons: string[]; rppPosi
 export default async function RppPage({ searchParams }: { searchParams: Promise<{ view?: string | string[] }> }) {
   const requestedView = (await searchParams).view;
   const view: RppView = isRppView(requestedView) ? requestedView : "dashboard";
-  const [data, meta, targetData, autoSettingsData, experimentHistory, exclusionJobs, budgetData, strategyData, dailyActuals, auditEvents, anomalyData, nightPauseData] = await Promise.all([
+  const [data, meta, targetData, autoSettingsData, experimentHistory, exclusionJobs, budgetData, strategyData, dailyActuals, auditEvents, anomalyData, nightPauseData, dashboardDailyMetrics] = await Promise.all([
     readRppRecommendations(), readRppDashboardMeta(), readRppAlertTargets(), readRppAutoAdjustmentSettings(),
-    readRppExperimentHistory(), listRecentRppExclusionJobs(8), readRppBudgetSettings(), readRppStrategySettings(), readRppDailySpendActuals(), listRppAuditEvents(30), readRppAnomalyComparison(), readRppNightPauseProducts(),
+    readRppExperimentHistory(), listRecentRppExclusionJobs(8), readRppBudgetSettings(), readRppStrategySettings(), readRppDailySpendActuals(), listRppAuditEvents(30), readRppAnomalyComparison(), readRppNightPauseProducts(), readRppDashboardDailyMetrics(14),
   ]);
   const summary = data.summary as { generatedAt?: string; performanceDateRange?: string | null; counts?: { raise?: number; lower?: number; hold?: number; ok?: number }; safety?: { productionChange?: boolean; autoAdjustment?: { enabled?: boolean } }; budgetMetrics?: RppBudgetMetrics } | null;
   const candidateTotal = (summary?.counts?.raise ?? 0) + (summary?.counts?.lower ?? 0);
@@ -169,8 +170,9 @@ export default async function RppPage({ searchParams }: { searchParams: Promise<
     };
   });
   const automaticItemCodes = new Set(automaticTargets.map((row) => row.itemCode));
-  const activeAutomaticProducts = new Set(automaticRows.filter((row) => !row.excluded).map((row) => row.itemCode)).size;
+  const activeAutomaticProducts = new Set(automaticRows.filter((row) => row.product && !row.excluded).map((row) => row.itemCode)).size;
   const excludedAutomaticProducts = [...automaticItemCodes].filter((itemCode) => targetData.exclusionProducts.some((row) => row.itemCode === itemCode && row.excluded)).length;
+  const unknownAutomaticProducts = Math.max(0, automaticItemCodes.size - activeAutomaticProducts - excludedAutomaticProducts);
   const dashboardSpend = automaticRecommendations.reduce((sum, row) => sum + (row.spend ?? 0), 0);
   const dashboardSales = automaticRecommendations.reduce((sum, row) => sum + (row.salesAmount ?? 0), 0);
   const dashboardRoas = dashboardSpend > 0 ? (dashboardSales / dashboardSpend) * 100 : null;
@@ -207,11 +209,13 @@ export default async function RppPage({ searchParams }: { searchParams: Promise<
           <div className="card"><span>自動モード商品</span><strong>{automaticItemCodes.size}</strong></div>
           <div className="card"><span>現在稼働</span><strong>{activeAutomaticProducts}</strong></div>
           <div className="card"><span>除外中</span><strong>{excludedAutomaticProducts}</strong></div>
-          <div className="card"><span>前日広告費</span><strong>{fmtYen(dashboardSpend)}</strong></div>
-          <div className="card"><span>前日売上</span><strong>{fmtYen(dashboardSales)}</strong></div>
-          <div className="card"><span>前日ROAS</span><strong>{dashboardRoas == null ? "未取得" : `${Math.round(dashboardRoas)}%`}</strong></div>
+          <div className={`card ${unknownAutomaticProducts ? "status-hold" : ""}`}><span>未確認</span><strong>{unknownAutomaticProducts}</strong></div>
+          <div className="card"><span>自動 前日広告費</span><strong>{fmtYen(dashboardSpend)}</strong></div>
+          <div className="card"><span>自動 前日売上</span><strong>{fmtYen(dashboardSales)}</strong></div>
+          <div className="card"><span>自動 前日ROAS</span><strong>{dashboardRoas == null ? "未取得" : `${Math.round(dashboardRoas)}%`}</strong></div>
           <div className={`card ${anomalyData.anomalies.length ? "approval-rejected" : "status-approved"}`}><span>異常チェック</span><strong>{anomalyData.anomalies.length ? `${anomalyData.anomalies.length}件` : "異常なし"}</strong></div>
         </section>
+        <RppDashboardCharts daily={dashboardDailyMetrics} active={activeAutomaticProducts} excluded={excludedAutomaticProducts} unknown={unknownAutomaticProducts} />
         <section className="panel history-panel compact-status-panel" id="rpp-dashboard-anomalies">
           <div className="section-heading compact-heading">
             <div><h2>異常チェック</h2><p>CPC・ROAS・広告費・データ鮮度・取得件数を前回データと比較します。</p></div>
@@ -234,14 +238,14 @@ export default async function RppPage({ searchParams }: { searchParams: Promise<
             <tbody>{automaticRows.map((row) => {
               const rec = row.recommendation;
               const currentCpc = rec?.currentCpc ?? row.configured?.itemCpc ?? row.configured?.keywordCpc ?? null;
-              const status = row.excluded ? { label: "除外中", className: "status-hold" } : rec?.action === "RAISE" ? { label: "上げ候補", className: "status-approved" } : rec?.action === "LOWER" ? { label: "下げ候補", className: "approval-rejected" } : { label: "維持", className: "status-hold" };
+              const status = !row.product ? { label: "未確認", className: "status-hold" } : row.excluded ? { label: "除外中", className: "status-hold" } : rec?.action === "RAISE" ? { label: "上げ候補", className: "status-approved" } : rec?.action === "LOWER" ? { label: "下げ候補", className: "approval-rejected" } : { label: "維持", className: "status-hold" };
               return <tr key={`${row.itemCode}__${rec?.keyword || "status"}`}>
                 <td><b>{row.itemCode} / {rec?.keyword || "商品"}</b><br /><small title={rec?.itemName || row.configured?.itemName || row.product?.itemName || undefined}>{shortRppItemName(row.itemCode, rec?.itemName || row.configured?.itemName || row.product?.itemName || "")}</small></td>
-                <td><span className={`status-pill ${row.excluded ? "approval-rejected" : "status-approved"}`}>{row.excluded ? "広告OFF" : "広告ON"}</span></td>
+                <td><span className={`status-pill ${!row.product ? "status-hold" : row.excluded ? "approval-rejected" : "status-approved"}`}>{!row.product ? "未確認" : row.excluded ? "広告OFF" : "広告ON"}</span></td>
                 <td><b>{currentCpc == null ? "-" : `${currentCpc}円`}</b><br /><small>{row.target?.optimizationMode || "目標未設定"}</small></td>
                 <td><b>{fmtYen(rec?.spend)}</b><br /><small>{rec?.clicks == null ? "未取得" : `${rec.clicks} click`} / 売上 {fmtYen(rec?.salesAmount)} / ROAS {rec?.roas == null ? "未取得" : `${Math.round(rec.roas)}%`}</small></td>
                 <td><small>{rec?.rppPosition || (row.excluded ? "除外中" : "未測定")}</small></td>
-                <td><span className={`status-pill ${status.className}`}>{status.label}</span><br /><small>{rec ? compactReasons(rec) : row.excluded ? "除外解除後に候補計算" : "実績更新待ち"}</small></td>
+                <td><span className={`status-pill ${status.className}`}>{status.label}</span><br /><small>{!row.product ? "商品状態の実測待ち" : rec ? compactReasons(rec) : row.excluded ? "除外解除後に候補計算" : "実績更新待ち"}</small></td>
               </tr>;
             })}</tbody>
           </table> : <p className="warn-text">自動モードの商品はありません。商品・KW画面からモードを選択してください。</p>}

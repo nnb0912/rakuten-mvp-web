@@ -1,9 +1,11 @@
 import type { Pool, PoolClient } from "pg";
+import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 import { pool } from "./db.ts";
 
 export type RppSnapshotFile = { name: string; exists: boolean; mtime: string | null; size: number };
 export type RppPerformanceDailyRow = { itemCode: string; ctr: number | null; clicks: number; spend: number; sales12h: number; orders12h: number; sales720h: number; orders720h: number };
-export type RppPerformanceDaily = { source: string; sourceMtime: string; date: string; attribution: { sales12h: true; sales720h: true }; rows: RppPerformanceDailyRow[] };
+export type RppPerformanceReceipt = { version: 1; file: string; completedAt: string; sha256: string; expectedCount: number; actualCount: number; expectedItemSetSha256: string; requestStartedAt: string; historyCreatedAt: string; historyRowSha256: string; sourceArchiveSha256: string; sourceArchiveBytes: number; sourceCsvCrc32: string; sourceCsvCompressedBytes: number; sourceCsvUncompressedBytes: number; sourceCsvNameSha256: string; verificationRequestStartedAt: string; verificationHistoryCreatedAt: string; verificationHistoryRowSha256: string; verificationArchiveSha256: string; verificationSourceMtime: string; verificationCompletedAt: string; source: string; sourceMtime: string; rowsSha256: string; signature: string; complete: true };
+export type RppPerformanceDaily = { source: string; sourceMtime: string; date: string; attribution: { sales12h: true; sales720h: true }; rows: RppPerformanceDailyRow[]; receipt: RppPerformanceReceipt };
 export type RppSnapshotConfiguredTarget = { id: string; itemCode: string; itemName: string; keyword: string; itemCpc: number | null; keywordCpc: number | null; source: "商品CPC" | "キーワードCPC"; owner?: string; rppPosition?: string; rppPositionKeyword?: string; rppPositions?: { keyword: string; position: string }[] };
 export type RppSnapshotExclusionProduct = { itemCode: string; itemName: string; itemCpc: number | null; excluded: boolean; owner?: string };
 export type RppExclusionObservation = { observedAt: string; expectedCount: number; actualCount: number; complete: boolean };
@@ -19,8 +21,51 @@ export type RppDashboardSnapshot = {
 };
 const TABLE = "rpp_dashboard_snapshots";
 const PERFORMANCE_TABLE = "rpp_performance_daily";
-const num = (value: unknown) => Number.isFinite(Number(value)) ? Number(value) : 0;
 const dateOnly = (value: unknown) => typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value) ? value : "";
+
+export function performanceDecimalUnits(value: number, scale: number) {
+  const factor = 10 ** scale;
+  const units = Math.round(value * factor);
+  const tolerance = Number.EPSILON * Math.max(1, Math.abs(value)) * 8;
+  if (!Number.isSafeInteger(units) || Math.abs(value - units / factor) > tolerance) throw new Error("performance decimal scale is invalid");
+  return units;
+}
+
+export function performanceRowsSha256(rows: RppPerformanceDailyRow[]) {
+  const body = [...rows].sort((a, b) => Buffer.compare(Buffer.from(a.itemCode, "utf8"), Buffer.from(b.itemCode, "utf8"))).map((row) => {
+    const values: Array<string | number | null> = [row.itemCode, row.ctr, row.clicks, row.spend, row.sales12h, row.orders12h, row.sales720h, row.orders720h];
+    return values.map((value, index) => {
+      if (index === 0) return String(value);
+      if (value === null) return "null";
+      return `i:${performanceDecimalUnits(Number(value), index === 1 ? 4 : 0)}`;
+    }).join("\t");
+  }).join("\n");
+  return createHash("sha256").update(body).digest("hex");
+}
+
+export function performanceItemSetSha256(rows: RppPerformanceDailyRow[]) {
+  return createHash("sha256").update(rows.map((row) => row.itemCode).sort((a, b) => Buffer.compare(Buffer.from(a, "utf8"), Buffer.from(b, "utf8"))).join("\n")).digest("hex");
+}
+
+function performanceMetric(value: unknown, field: string, maximum: number, scale = 0) {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0 || value > maximum) throw new Error(`performanceDaily ${field} is invalid`);
+  try {
+    performanceDecimalUnits(value, scale);
+  } catch {
+    throw new Error(`performanceDaily ${field} is invalid`);
+  }
+  return value;
+}
+
+function validPerformanceReceiptSignature(receipt: Partial<RppPerformanceReceipt>, date: string, source: string, sourceMtime: string, rows: RppPerformanceDailyRow[]) {
+  const key = process.env.RPP_PERFORMANCE_RECEIPT_HMAC_KEY ?? "";
+  const signature = String(receipt.signature ?? "");
+  if (key.length < 32 || !/^[a-f0-9]{64}$/.test(signature)) return false;
+  if (receipt.source !== source || receipt.sourceMtime !== sourceMtime || receipt.rowsSha256 !== performanceRowsSha256(rows) || receipt.expectedItemSetSha256 !== performanceItemSetSha256(rows)) return false;
+  const message = [receipt.version, receipt.sha256, date, date, receipt.expectedCount, receipt.actualCount, receipt.expectedItemSetSha256, receipt.requestStartedAt, receipt.historyCreatedAt, receipt.historyRowSha256, receipt.sourceArchiveSha256, receipt.sourceArchiveBytes, receipt.sourceCsvCrc32, receipt.sourceCsvCompressedBytes, receipt.sourceCsvUncompressedBytes, receipt.sourceCsvNameSha256, receipt.verificationRequestStartedAt, receipt.verificationHistoryCreatedAt, receipt.verificationHistoryRowSha256, receipt.verificationArchiveSha256, receipt.verificationSourceMtime, receipt.verificationCompletedAt, receipt.source, receipt.sourceMtime, receipt.completedAt, receipt.rowsSha256].map((value) => String(value ?? "")).join("\n");
+  const expected = createHmac("sha256", key).update(message).digest("hex");
+  return timingSafeEqual(Buffer.from(signature), Buffer.from(expected));
+}
 
 function normalizePerformanceDaily(value: unknown): RppPerformanceDaily | null {
   if (value == null) return null;
@@ -32,10 +77,30 @@ function normalizePerformanceDaily(value: unknown): RppPerformanceDaily | null {
   if (!Array.isArray(input.rows)) throw new Error("performanceDaily.rows must be an array");
   const rows = input.rows.map((raw) => {
     const itemCode = String(raw?.itemCode ?? "").trim().toLowerCase();
-    if (!itemCode) throw new Error("performanceDaily row itemCode is required");
-    return { itemCode, ctr: raw.ctr == null ? null : num(raw.ctr), clicks: Math.round(num(raw.clicks)), spend: num(raw.spend), sales12h: num(raw.sales12h), orders12h: Math.round(num(raw.orders12h)), sales720h: num(raw.sales720h), orders720h: Math.round(num(raw.orders720h)) };
+    if (!/^[a-z0-9][a-z0-9_-]{0,63}$/.test(itemCode)) throw new Error("performanceDaily row itemCode is invalid");
+    return { itemCode, ctr: performanceMetric(raw.ctr, "ctr", 100, 4), clicks: performanceMetric(raw.clicks, "clicks", 2_147_483_647), spend: performanceMetric(raw.spend, "spend", 999_999_999_999), sales12h: performanceMetric(raw.sales12h, "sales12h", 999_999_999_999), orders12h: performanceMetric(raw.orders12h, "orders12h", 2_147_483_647), sales720h: performanceMetric(raw.sales720h, "sales720h", 999_999_999_999), orders720h: performanceMetric(raw.orders720h, "orders720h", 2_147_483_647) };
   });
-  return { source: input.source, sourceMtime: new Date(input.sourceMtime).toISOString(), date, attribution: { sales12h: true, sales720h: true }, rows };
+  const receipt = input.receipt as Partial<RppPerformanceReceipt> | undefined;
+  const completedAt = typeof receipt?.completedAt === "string" ? new Date(receipt.completedAt) : new Date(NaN);
+  const sourceMtime = new Date(input.sourceMtime).toISOString();
+  const requestAt = new Date(String(receipt?.requestStartedAt ?? ""));
+  const historyAt = new Date(String(receipt?.historyCreatedAt ?? "").replace(" ", "T") + "+09:00");
+  const verificationRequestAt = new Date(String(receipt?.verificationRequestStartedAt ?? ""));
+  const verificationHistoryAt = new Date(String(receipt?.verificationHistoryCreatedAt ?? "").replace(" ", "T") + "+09:00");
+  const verificationSourceMtime = new Date(String(receipt?.verificationSourceMtime ?? ""));
+  const verificationCompletedAt = new Date(String(receipt?.verificationCompletedAt ?? ""));
+  const evidenceHashesValid = /^[a-f0-9]{64}$/.test(String(receipt?.historyRowSha256 ?? "")) && /^[a-f0-9]{64}$/.test(String(receipt?.sourceArchiveSha256 ?? "")) && /^[a-f0-9]{64}$/.test(String(receipt?.sourceCsvNameSha256 ?? "")) && /^[a-f0-9]{64}$/.test(String(receipt?.verificationHistoryRowSha256 ?? "")) && /^[a-f0-9]{64}$/.test(String(receipt?.verificationArchiveSha256 ?? "")) && receipt?.historyRowSha256 !== receipt?.verificationHistoryRowSha256;
+  const providerManifestValid = Number.isInteger(receipt?.sourceArchiveBytes) && Number(receipt?.sourceArchiveBytes) > 0 && Number.isInteger(receipt?.sourceCsvCompressedBytes) && Number(receipt?.sourceCsvCompressedBytes) > 0 && Number.isInteger(receipt?.sourceCsvUncompressedBytes) && Number(receipt?.sourceCsvUncompressedBytes) > 0 && /^[a-f0-9]{8}$/.test(String(receipt?.sourceCsvCrc32 ?? ""));
+  const parsedTimesValid = !Number.isNaN(requestAt.getTime()) && !Number.isNaN(historyAt.getTime()) && !Number.isNaN(completedAt.getTime());
+  const verificationParsedTimesValid = !Number.isNaN(verificationRequestAt.getTime()) && !Number.isNaN(verificationHistoryAt.getTime()) && !Number.isNaN(verificationSourceMtime.getTime()) && !Number.isNaN(verificationCompletedAt.getTime());
+  const completedJstDate = parsedTimesValid ? new Date(completedAt.getTime() + 9 * 60 * 60_000).toISOString().slice(0, 10) : "";
+  const verificationCompletedJstDate = verificationParsedTimesValid ? new Date(verificationCompletedAt.getTime() + 9 * 60 * 60_000).toISOString().slice(0, 10) : "";
+  const reportLagDays = parsedTimesValid ? (Date.parse(`${completedJstDate}T00:00:00Z`) - Date.parse(`${date}T00:00:00Z`)) / 86_400_000 : Number.NaN;
+  const verificationReportLagDays = verificationParsedTimesValid ? (Date.parse(`${verificationCompletedJstDate}T00:00:00Z`) - Date.parse(`${date}T00:00:00Z`)) / 86_400_000 : Number.NaN;
+  const timesValid = parsedTimesValid && historyAt.getTime() >= requestAt.getTime() - 5_000 && historyAt.getTime() <= completedAt.getTime() && new Date(sourceMtime).getTime() >= requestAt.getTime() - 5_000 && new Date(sourceMtime).getTime() <= completedAt.getTime() + 5_000 && completedAt.getTime() >= requestAt.getTime() && completedAt.getTime() - requestAt.getTime() <= 30 * 60_000 && completedAt.getTime() <= Date.now() + 5 * 60_000 && requestAt.getTime() <= Date.now() + 5 * 60_000 && Date.now() - completedAt.getTime() <= 36 * 60 * 60_000 && reportLagDays >= 0 && reportLagDays <= 2;
+  const verificationTimesValid = verificationParsedTimesValid && verificationHistoryAt.getTime() >= verificationRequestAt.getTime() - 5_000 && verificationHistoryAt.getTime() <= verificationCompletedAt.getTime() && verificationSourceMtime.getTime() >= verificationRequestAt.getTime() - 5_000 && verificationSourceMtime.getTime() <= verificationCompletedAt.getTime() + 5_000 && verificationCompletedAt.getTime() >= verificationRequestAt.getTime() && verificationCompletedAt.getTime() <= requestAt.getTime() && verificationCompletedAt.getTime() - verificationRequestAt.getTime() <= 30 * 60_000 && verificationCompletedAt.getTime() <= Date.now() + 5 * 60_000 && Date.now() - verificationCompletedAt.getTime() <= 36 * 60 * 60_000 && verificationReportLagDays >= 0 && verificationReportLagDays <= 2;
+  if (!receipt || receipt.version !== 1 || receipt.complete !== true || !/^[a-f0-9]{64}$/.test(String(receipt.sha256 ?? "")) || receipt.expectedCount !== rows.length || receipt.actualCount !== rows.length || !String(receipt.file ?? "").trim() || !/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(String(receipt.historyCreatedAt ?? "")) || !/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/.test(String(receipt.verificationHistoryCreatedAt ?? "")) || !evidenceHashesValid || !providerManifestValid || !timesValid || !verificationTimesValid || !validPerformanceReceiptSignature(receipt, date, String(input.source), sourceMtime, rows)) throw new Error("performanceDaily verified receipt is invalid");
+  return { source: String(input.source), sourceMtime, date, attribution: { sales12h: true, sales720h: true }, rows, receipt: { ...receipt, completedAt: String(receipt.completedAt) } as RppPerformanceReceipt };
 }
 
 function nullablePositiveNumber(value: unknown) {
@@ -135,6 +200,29 @@ async function ensureTables(client: Pool | PoolClient | null = pool) {
   return true;
 }
 
+async function queryRppPerformanceDaily(client: Pool | PoolClient, date: string) {
+  const result = await client.query(`select item_code,clicks,spend,ctr,sales_12h,orders_12h,sales_720h,orders_720h,source_file,source_mtime from ${PERFORMANCE_TABLE} where performance_date=$1 and source_mtime=(select max(source_mtime) from ${PERFORMANCE_TABLE} where performance_date=$1) order by item_code`, [date]);
+  return result.rows.map((row) => ({
+    itemCode: String(row.item_code), clicks: Number(row.clicks), spend: Number(row.spend), ctr: row.ctr == null ? null : Number(row.ctr),
+    sales12h: Number(row.sales_12h), orders12h: Number(row.orders_12h), sales720h: Number(row.sales_720h), orders720h: Number(row.orders_720h),
+    source: String(row.source_file), sourceMtime: new Date(row.source_mtime).toISOString(),
+  }));
+}
+
+function assertPersistedPerformanceMatches(performance: RppPerformanceDaily, actualRows: Awaited<ReturnType<typeof queryRppPerformanceDaily>>) {
+  const expected = [...performance.rows].sort((a, b) => a.itemCode.localeCompare(b.itemCode));
+  if (actualRows.length !== expected.length) throw new Error("performance daily persistence row count mismatch");
+  const fields: Array<keyof RppPerformanceDailyRow> = ["clicks", "spend", "ctr", "sales12h", "orders12h", "sales720h", "orders720h"];
+  expected.forEach((row, index) => {
+    const actual = actualRows[index];
+    if (actual.itemCode !== row.itemCode) throw new Error("performance daily persistence item mismatch");
+    for (const field of fields) {
+      if (actual[field] !== row[field]) throw new Error(`performance daily persistence ${field} mismatch`);
+    }
+    if (actual.source !== performance.source || actual.sourceMtime !== performance.sourceMtime) throw new Error("performance daily persistence source mismatch");
+  });
+}
+
 export async function saveRppDashboardSnapshot(value: unknown) {
   const snapshot = normalizeRppDashboardSnapshot(value);
   if (!pool) throw new Error("DATABASE_URL is not configured");
@@ -142,10 +230,19 @@ export async function saveRppDashboardSnapshot(value: unknown) {
   try {
     await client.query("begin");
     await ensureTables(client);
-    await client.query(`insert into ${TABLE} (synced_at,payload) values($1,$2::jsonb)`, [snapshot.syncedAt, JSON.stringify(snapshot)]);
-    for (const row of snapshot.performanceDaily?.rows ?? []) {
-      await client.query(`insert into ${PERFORMANCE_TABLE}(performance_date,item_code,clicks,spend,ctr,sales_12h,orders_12h,sales_720h,orders_720h,source_file,source_mtime,observed_at) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) on conflict(performance_date,item_code) do update set clicks=excluded.clicks,spend=excluded.spend,ctr=excluded.ctr,sales_12h=excluded.sales_12h,orders_12h=excluded.orders_12h,sales_720h=excluded.sales_720h,orders_720h=excluded.orders_720h,source_file=excluded.source_file,source_mtime=excluded.source_mtime,observed_at=excluded.observed_at where excluded.source_mtime >= ${PERFORMANCE_TABLE}.source_mtime or excluded.observed_at > ${PERFORMANCE_TABLE}.observed_at`, [snapshot.performanceDaily!.date,row.itemCode,row.clicks,row.spend,row.ctr,row.sales12h,row.orders12h,row.sales720h,row.orders720h,snapshot.performanceDaily!.source,snapshot.performanceDaily!.sourceMtime,snapshot.syncedAt]);
+    if (snapshot.performanceDaily) {
+      await client.query("select pg_advisory_xact_lock(hashtext($1))", ["rpp-performance-global"]);
+      const latestDate = await client.query(`select max(performance_date)::text as performance_date from ${PERFORMANCE_TABLE}`);
+      if (latestDate.rows[0]?.performance_date && snapshot.performanceDaily.date < String(latestDate.rows[0].performance_date)) throw new Error("performance daily date is older than latest persisted date");
+      const latest = await client.query(`select max(source_mtime) as source_mtime from ${PERFORMANCE_TABLE} where performance_date=$1`, [snapshot.performanceDaily.date]);
+      const currentSourceMtime = latest.rows[0]?.source_mtime == null ? null : new Date(latest.rows[0].source_mtime);
+      if (currentSourceMtime && new Date(snapshot.performanceDaily.sourceMtime) < currentSourceMtime) throw new Error("performance daily source is older than persisted data");
     }
+    for (const row of snapshot.performanceDaily?.rows ?? []) {
+      await client.query(`insert into ${PERFORMANCE_TABLE}(performance_date,item_code,clicks,spend,ctr,sales_12h,orders_12h,sales_720h,orders_720h,source_file,source_mtime,observed_at) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) on conflict(performance_date,item_code) do update set clicks=excluded.clicks,spend=excluded.spend,ctr=excluded.ctr,sales_12h=excluded.sales_12h,orders_12h=excluded.orders_12h,sales_720h=excluded.sales_720h,orders_720h=excluded.orders_720h,source_file=excluded.source_file,source_mtime=excluded.source_mtime,observed_at=excluded.observed_at where excluded.source_mtime > ${PERFORMANCE_TABLE}.source_mtime`, [snapshot.performanceDaily!.date,row.itemCode,row.clicks,row.spend,row.ctr,row.sales12h,row.orders12h,row.sales720h,row.orders720h,snapshot.performanceDaily!.source,snapshot.performanceDaily!.sourceMtime,snapshot.syncedAt]);
+    }
+    if (snapshot.performanceDaily) assertPersistedPerformanceMatches(snapshot.performanceDaily, await queryRppPerformanceDaily(client, snapshot.performanceDaily.date));
+    await client.query(`insert into ${TABLE} (synced_at,payload) values($1,$2::jsonb)`, [snapshot.syncedAt, JSON.stringify(snapshot)]);
     await client.query(`delete from ${TABLE} where id not in (select id from ${TABLE} order by synced_at desc,id desc limit 90)`);
     await client.query(`delete from ${PERFORMANCE_TABLE} where performance_date < current_date - interval '800 days'`);
     await client.query("commit");
@@ -163,4 +260,10 @@ export async function readRecentRppDashboardSnapshots(limit = 2) {
 
 export async function readLatestRppDashboardSnapshot() {
   return (await readRecentRppDashboardSnapshots(1))[0] ?? null;
+}
+
+export async function readRppPerformanceDaily(date: string) {
+  if (!dateOnly(date)) throw new Error("performance date must be YYYY-MM-DD");
+  if (!(await ensureTables()) || !pool) return [];
+  return queryRppPerformanceDaily(pool, date);
 }

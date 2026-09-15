@@ -5,14 +5,22 @@ from __future__ import annotations
 import argparse
 import csv
 import datetime as dt
+import hashlib
+import hmac
 import json
 import os
+import re
 import subprocess
 import sys
 import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
+from rpp_performance_contract import item_set_sha256, parse_performance_csv, parse_receipt_times, receipt_message as performance_receipt_message, rows_sha256, validate_batch_sequence
 
 PROJECT = Path(os.environ.get("RPP_PROJECT_DIR", "/Users/nob/Projects/rpp-8am-notify"))
 OWNER_MAP_PATH = Path(os.environ.get("RPP_OWNER_MAP_PATH", "/Users/nob/Projects/rakuten-mvp-web/src/data/rpp_owner_map.json"))
@@ -41,6 +49,17 @@ def token() -> str:
     if result.returncode != 0 or not result.stdout.strip():
         raise RuntimeError("RPP snapshot sync token is not configured")
     return result.stdout.strip()
+
+
+def performance_receipt_key() -> bytes:
+    value = os.environ.get("RPP_PERFORMANCE_RECEIPT_HMAC_KEY", "").strip()
+    if not value:
+        result = subprocess.run(["security", "find-generic-password", "-s", "hermes.rpp.performance-receipt-hmac", "-w"], text=True, capture_output=True, check=False)
+        value = result.stdout.strip() if result.returncode == 0 else ""
+    if len(value) < 32:
+        raise RuntimeError("RPP performance receipt HMAC key is not configured")
+    return value.encode()
+
 
 
 def latest_recommendation() -> tuple[Path, dict]:
@@ -168,6 +187,59 @@ def _number(value: object) -> float:
         return 0.0
 
 
+def performance_daily(path: Path | None = None) -> dict | None:
+    path = path or (PROJECT / "rpp_item_reports.csv")
+    if not path.exists():
+        return None
+    report_date, rows = parse_performance_csv(path)
+    receipt = performance_receipt(path, report_date, rows)
+    return {
+        "source": receipt["source"],
+        "sourceMtime": receipt["sourceMtime"],
+        "date": report_date,
+        "attribution": {"sales12h": True, "sales720h": True},
+        "rows": rows,
+        "receipt": receipt,
+    }
+
+
+def performance_receipt(path: Path, report_date: str, rows: list[dict]) -> dict:
+    if not path.is_symlink():
+        raise RuntimeError("RPP performance report must be an atomic generation pointer")
+    resolved_report = path.resolve(strict=True)
+    generations = (PROJECT / "rpp_performance_generations").resolve()
+    if resolved_report.name != "rpp_item_reports.csv" or resolved_report.parent.parent != generations or resolved_report.is_symlink():
+        raise RuntimeError("RPP performance generation pointer is outside the attested store")
+    receipt_path = resolved_report.parent / "receipt.json"
+    if not receipt_path.is_file() or receipt_path.is_symlink():
+        raise RuntimeError("RPP performance generation receipt is missing")
+    digest = hashlib.sha256(resolved_report.read_bytes()).hexdigest()
+    row_count = len(rows)
+    source_mtime = dt.datetime.fromtimestamp(resolved_report.stat().st_mtime, dt.timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+    for receipt_path in [receipt_path]:
+        try:
+            receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+            signature = str(receipt.get("signature") or "")
+            expected_signature = hmac.new(performance_receipt_key(), performance_receipt_message(receipt), hashlib.sha256).hexdigest()
+            signature_valid = len(signature) == 64 and hmac.compare_digest(signature, expected_signature)
+            output = Path(str(receipt.get("output") or "")).resolve()
+            complete = receipt.get("ok") is True and receipt.get("download_complete") is True
+            counts_match = receipt.get("expected_count") == receipt.get("actual_count") == row_count
+            dates_match = receipt.get("start_date") == receipt.get("end_date") == report_date
+            hash_matches = receipt.get("output_sha256") == digest
+            fresh = receipt_path.stat().st_mtime >= path.stat().st_mtime
+            provider_manifest_valid = isinstance(receipt.get("source_archive_bytes"), int) and receipt["source_archive_bytes"] > 0 and isinstance(receipt.get("source_csv_compressed_bytes"), int) and receipt["source_csv_compressed_bytes"] > 0 and isinstance(receipt.get("source_csv_uncompressed_bytes"), int) and receipt["source_csv_uncompressed_bytes"] > 0 and bool(re.fullmatch(r"[a-f0-9]{8}", str(receipt.get("source_csv_crc32") or ""))) and len(str(receipt.get("source_csv_name_sha256") or "")) == 64
+            evidence_valid = receipt.get("version") == 1 and len(str(receipt.get("history_row_sha256") or "")) == 64 and len(str(receipt.get("source_archive_sha256") or "")) == 64 and len(str(receipt.get("verification_history_row_sha256") or "")) == 64 and len(str(receipt.get("verification_archive_sha256") or "")) == 64 and receipt.get("history_row_sha256") != receipt.get("verification_history_row_sha256") and receipt.get("expected_item_set_sha256") == item_set_sha256(rows) and receipt.get("source") == path.name and receipt.get("source_mtime") == source_mtime and receipt.get("rows_sha256") == rows_sha256(rows) and provider_manifest_valid
+            verification_receipt = {"request_started_at": receipt.get("verification_request_started_at"), "history_created_at": receipt.get("verification_history_created_at"), "source_mtime": receipt.get("verification_source_mtime"), "completed_at": receipt.get("verification_completed_at")}
+            validate_batch_sequence(verification_receipt, receipt, report_date=report_date)
+            if output == path.resolve() and complete and counts_match and dates_match and hash_matches and fresh and signature_valid and evidence_valid:
+                completed_at = str(receipt.get("completed_at") or "")
+                return {"version": 1, "file": receipt_path.name, "completedAt": completed_at, "sha256": digest, "expectedCount": row_count, "actualCount": row_count, "expectedItemSetSha256": receipt["expected_item_set_sha256"], "requestStartedAt": receipt["request_started_at"], "historyCreatedAt": receipt["history_created_at"], "historyRowSha256": receipt["history_row_sha256"], "sourceArchiveSha256": receipt["source_archive_sha256"], "sourceArchiveBytes": receipt["source_archive_bytes"], "sourceCsvCrc32": receipt["source_csv_crc32"], "sourceCsvCompressedBytes": receipt["source_csv_compressed_bytes"], "sourceCsvUncompressedBytes": receipt["source_csv_uncompressed_bytes"], "sourceCsvNameSha256": receipt["source_csv_name_sha256"], "verificationRequestStartedAt": receipt["verification_request_started_at"], "verificationHistoryCreatedAt": receipt["verification_history_created_at"], "verificationHistoryRowSha256": receipt["verification_history_row_sha256"], "verificationArchiveSha256": receipt["verification_archive_sha256"], "verificationSourceMtime": receipt["verification_source_mtime"], "verificationCompletedAt": receipt["verification_completed_at"], "source": path.name, "sourceMtime": source_mtime, "rowsSha256": receipt["rows_sha256"], "signature": signature, "complete": True}
+        except (OSError, ValueError, json.JSONDecodeError):
+            continue
+    raise RuntimeError("verified product report download receipt was not found")
+
+
 def budget_metrics() -> dict | None:
     path = PROJECT / "rpp_item_reports_7d.csv"
     if not path.exists():
@@ -231,10 +303,10 @@ def cron_status() -> dict:
     }
 
 
-def request(method: str, auth: str, payload: dict | None = None) -> tuple[int, dict]:
+def request(method: str, auth: str, payload: dict | None = None, query: str = "") -> tuple[int, dict]:
     body = json.dumps(payload, ensure_ascii=False).encode("utf-8") if payload is not None else None
     req = urllib.request.Request(
-        f"{API_BASE}/api/rpp/sync-snapshot",
+        f"{API_BASE}/api/rpp/sync-snapshot{query}",
         data=body,
         method=method,
         headers={"Authorization": f"Bearer {auth}", "Content-Type": "application/json", "User-Agent": "rise-rpp-snapshot-sync/1.0"},
@@ -269,6 +341,36 @@ def validate_snapshot_readback(payload: dict, snapshot: dict, read_status: int) 
         raise RuntimeError("snapshot rppData readback mismatch: allConfiguredTargets IDs")
     if actual_rpp_data.get("exclusionObservation") != expected_rpp_data.get("exclusionObservation"):
         raise RuntimeError("snapshot rppData readback mismatch: exclusionObservation")
+    expected_performance = payload.get("performanceDaily")
+    actual_performance = snapshot.get("performanceDaily")
+    if expected_performance is None:
+        if actual_performance is not None:
+            raise RuntimeError("snapshot performanceDaily readback mismatch")
+    elif not isinstance(actual_performance, dict) or actual_performance.get("date") != expected_performance["date"] or len(actual_performance.get("rows") or []) != len(expected_performance["rows"]) or actual_performance.get("receipt") != expected_performance.get("receipt"):
+        raise RuntimeError("snapshot performanceDaily readback mismatch")
+
+
+def validate_performance_readback(expected: dict, response: dict, read_status: int) -> None:
+    if read_status != 200 or response.get("date") != expected["date"] or not isinstance(response.get("rows"), list):
+        raise RuntimeError(f"performance DB readback mismatch: HTTP {read_status}")
+    actual_by_code = {str(row.get("itemCode") or ""): row for row in response["rows"]}
+    expected_by_code = {row["itemCode"]: row for row in expected["rows"]}
+    if set(actual_by_code) != set(expected_by_code):
+        raise RuntimeError("performance DB readback mismatch: item codes")
+    fields = ("clicks", "spend", "ctr", "sales12h", "orders12h", "sales720h", "orders720h")
+    for item_code, wanted in expected_by_code.items():
+        actual = actual_by_code[item_code]
+        for field in fields:
+            if wanted[field] is None and actual.get(field) is None:
+                continue
+            if float(actual.get(field)) != float(wanted[field]):
+                raise RuntimeError(f"performance DB readback mismatch: {item_code} {field}")
+        if actual.get("source") != expected["source"]:
+            raise RuntimeError(f"performance DB readback mismatch: {item_code} source")
+        actual_mtime = dt.datetime.fromisoformat(str(actual.get("sourceMtime") or "").replace("Z", "+00:00"))
+        expected_mtime = dt.datetime.fromisoformat(expected["sourceMtime"].replace("Z", "+00:00"))
+        if actual_mtime != expected_mtime:
+            raise RuntimeError(f"performance DB readback mismatch: {item_code} sourceMtime")
 
 
 def main() -> int:
@@ -285,9 +387,10 @@ def main() -> int:
         "recommendations": recommendations,
         "latestFiles": file_rows(),
         "cronStatus": cron_status(),
+        "performanceDaily": performance_daily(),
         "rppData": rpp_data,
     }
-    summary = {"source": source.name, "recommendations": len(recommendations["recommendations"]), "files": len(payload["latestFiles"]), "configuredTargets": len(rpp_data["configuredTargets"]), "allConfiguredTargets": len(rpp_data["allConfiguredTargets"]), "exclusionProducts": len(rpp_data["exclusionProducts"]), "owners": len(rpp_data["owners"]), "dryRun": args.dry_run}
+    summary = {"source": source.name, "recommendations": len(recommendations["recommendations"]), "files": len(payload["latestFiles"]), "performanceDate": payload["performanceDaily"]["date"] if payload["performanceDaily"] else None, "performanceRows": len(payload["performanceDaily"]["rows"]) if payload["performanceDaily"] else 0, "configuredTargets": len(rpp_data["configuredTargets"]), "allConfiguredTargets": len(rpp_data["allConfiguredTargets"]), "exclusionProducts": len(rpp_data["exclusionProducts"]), "owners": len(rpp_data["owners"]), "dryRun": args.dry_run}
     if args.dry_run:
         print(json.dumps(summary, ensure_ascii=False))
         return 0
@@ -298,6 +401,10 @@ def main() -> int:
     read_status, readback = request("GET", auth)
     snapshot = readback.get("snapshot") or {}
     validate_snapshot_readback(payload, snapshot, read_status)
+    if payload["performanceDaily"] is not None:
+        performance_query = "?resource=performance-daily&date=" + urllib.parse.quote(payload["performanceDaily"]["date"])
+        performance_status, performance_readback = request("GET", auth, query=performance_query)
+        validate_performance_readback(payload["performanceDaily"], performance_readback, performance_status)
     print(json.dumps({**summary, "dryRun": False, "syncedAt": payload["syncedAt"], "readback": "OK"}, ensure_ascii=False))
     return 0
 
