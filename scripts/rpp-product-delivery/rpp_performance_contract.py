@@ -37,7 +37,9 @@ def number(value: object, field: str, *, integer: bool = False, maximum: int | D
     return int(parsed) if integer else float(parsed)
 
 
-def parse_performance_csv(path: Path) -> tuple[str, list[dict]]:
+def parse_performance_csv(path: Path, *, expected_start: dt.date | None = None, expected_end: dt.date | None = None) -> tuple[str, list[dict]]:
+    if (expected_start is None) != (expected_end is None):
+        raise RuntimeError("expected_start and expected_end must be supplied together")
     with path.open("r", encoding="cp932", errors="strict", newline="") as handle:
         records = list(csv.DictReader(handle))
     if not records:
@@ -47,11 +49,17 @@ def parse_performance_csv(path: Path) -> tuple[str, list[dict]]:
         raise RuntimeError(f"item daily report contains multiple date ranges: {sorted(ranges)}")
     label = next(iter(ranges))
     match = re.fullmatch(r"(\d{4})年(\d{2})月(\d{2})日～(\d{4})年(\d{2})月(\d{2})日", label)
-    if not match or match.group(1, 2, 3) != match.group(4, 5, 6):
-        raise RuntimeError(f"item report is not a single-day report: {label}")
-    report_date = dt.date.fromisoformat(f"{match.group(1)}-{match.group(2)}-{match.group(3)}")
-    if report_date > dt.datetime.now(JST).date():
-        raise RuntimeError(f"item daily report date is in the future: {report_date.isoformat()}")
+    if not match:
+        raise RuntimeError(f"item report date range is invalid: {label}")
+    report_start = dt.date.fromisoformat(f"{match.group(1)}-{match.group(2)}-{match.group(3)}")
+    report_end = dt.date.fromisoformat(f"{match.group(4)}-{match.group(5)}-{match.group(6)}")
+    if expected_start is None or expected_end is None:
+        if report_start != report_end:
+            raise RuntimeError(f"item report is not a single-day report: {label}")
+    elif report_start != expected_start or report_end != expected_end or report_start > report_end:
+        raise RuntimeError(f"item report date range does not match request: {label}")
+    if report_end > dt.datetime.now(JST).date():
+        raise RuntimeError(f"item report date is in the future: {report_end.isoformat()}")
     rows: list[dict] = []
     item_codes: set[str] = set()
     for row in records:
@@ -74,7 +82,7 @@ def parse_performance_csv(path: Path) -> tuple[str, list[dict]]:
             "orders720h": number(row.get("売上件数(合計720時間)"), "orders720h", integer=True, maximum=INTEGER_MAX),
         })
     rows.sort(key=lambda row: row["itemCode"])
-    return report_date.isoformat(), rows
+    return report_end.isoformat(), rows
 
 
 def rows_sha256(rows: list[dict]) -> str:

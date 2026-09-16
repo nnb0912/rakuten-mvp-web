@@ -94,6 +94,23 @@ class ProductReportRefreshTest(unittest.TestCase):
                 with self.assertRaises(RuntimeError):
                     module.parse_performance_csv(path)
 
+    def test_performance_parser_allows_only_exact_explicit_range(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'report.csv'
+            headers = ['日付', '商品管理番号', 'CTR(%)', 'クリック数(合計)', '実績額(合計)', '売上金額(合計12時間)', '売上件数(合計12時間)', '売上金額(合計720時間)', '売上件数(合計720時間)']
+            self._write(path, [headers, ['2026年09月09日～2026年09月15日', 'r0406', '1', '1', '1', '1', '1', '1', '1']])
+            with self.assertRaisesRegex(RuntimeError, 'single-day'):
+                module.parse_performance_csv(path)
+            report_date, rows = module.parse_performance_csv(path, expected_start=dt.date(2026, 9, 9), expected_end=dt.date(2026, 9, 15))
+            self.assertEqual('2026-09-15', report_date)
+            self.assertEqual(1, len(rows))
+            with self.assertRaisesRegex(RuntimeError, 'does not match request'):
+                module.parse_performance_csv(path, expected_start=dt.date(2026, 9, 10), expected_end=dt.date(2026, 9, 15))
+            with self.assertRaisesRegex(RuntimeError, 'must be supplied together'):
+                module.parse_performance_csv(path, expected_start=dt.date(2026, 9, 9))
+            with self.assertRaisesRegex(RuntimeError, 'must be supplied together'):
+                module.parse_performance_csv(path, expected_end=dt.date(2026, 9, 15))
+
     def test_verification_batch_must_finish_before_actual_starts(self):
         now = dt.datetime(2026, 9, 14, 12, 10, tzinfo=dt.timezone.utc)
         verification = {'request_started_at': '2026-09-14T12:00:00Z', 'history_created_at': '2026-09-14 21:00:01', 'source_mtime': '2026-09-14T12:00:01Z', 'completed_at': '2026-09-14T12:00:05Z'}
