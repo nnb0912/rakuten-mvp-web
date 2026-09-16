@@ -17,6 +17,10 @@ function actionOf(row: RppRecommendationWithApproval) {
 }
 
 function proposalReason(row: RppRecommendationWithApproval) {
+  const fixedReason = row.reasons.find((reason) => reason.startsWith("固定CPC "));
+  if (fixedReason && row.proposedCpc != null && row.proposedCpc !== row.currentCpc) {
+    return `設定した固定CPC ${Math.round(row.proposedCpc).toLocaleString("ja-JP")}円に対して現在${Math.round(row.currentCpc).toLocaleString("ja-JP")}円のため`;
+  }
   const businessReasons = row.reasons.filter((reason) => !reason.startsWith("最適化モード:") && !reason.startsWith("保護区分:"));
   const reasons = row.blocks.length ? row.blocks : businessReasons.length ? businessReasons : row.reasons;
   const reason = reasons.slice(0, 2).join("・");

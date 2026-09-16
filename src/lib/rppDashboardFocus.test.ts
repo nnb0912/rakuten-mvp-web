@@ -110,4 +110,6 @@ test("調整提案ログはダッシュボードの自動モード商品より�
   assert.match(proposalSource, /reason\.startsWith\("最適化モード:"\)/);
   assert.match(proposalSource, /reason\.startsWith\("保護区分:"\)/);
   assert.match(proposalSource, /<b>理由：<\/b>\{proposalReason\(row\)\}/);
+  assert.match(proposalSource, /設定した固定CPC/);
+  assert.match(proposalSource, /に対して現在/);
 });
