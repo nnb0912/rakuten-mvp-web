@@ -32,7 +32,8 @@ from zoneinfo import ZoneInfo
 import rpp_product_night_pause as legacy
 
 PROJECT = Path(os.environ.get("RPP_PROJECT_DIR", "/Users/nob/Projects/rpp-8am-notify"))
-API_BASE = os.environ.get("RPP_DASHBOARD_URL", "https://rakuten-mvp-web.onrender.com").rstrip("/")
+DEFAULT_API_BASE = "https://rakuten-mvp-web.onrender.com"
+API_BASE = DEFAULT_API_BASE
 STATE_PATH = PROJECT / "rpp_apply_logs" / "rpp_product_delivery_scheduler_state.json"
 WAL_PATH = PROJECT / "rpp_apply_logs" / "rpp_product_delivery_scheduler_wal.json"
 AUDIT_PATH = PROJECT / "rpp_apply_logs" / "rpp_product_delivery_scheduler_audit.jsonl"
@@ -155,6 +156,9 @@ def require_durable_schedule_storage(payload: object) -> None:
 
 
 def fetch_json(url: str, method: str = "GET", body: Optional[dict] = None) -> dict:
+    configured = os.environ.get("RPP_DASHBOARD_URL", DEFAULT_API_BASE).rstrip("/")
+    if configured != DEFAULT_API_BASE or not url.startswith(DEFAULT_API_BASE + "/api/rpp/"):
+        raise RuntimeError("RPP dashboard URL override is forbidden")
     data = None if body is None else json.dumps(body, ensure_ascii=False).encode("utf-8")
     request = urllib.request.Request(url, data=data, method=method, headers={
         "Authorization": "Bearer %s" % legacy.snapshot_token(),
@@ -162,7 +166,7 @@ def fetch_json(url: str, method: str = "GET", body: Optional[dict] = None) -> di
         "User-Agent": "rise-rpp-product-delivery-scheduler/2.0",
     })
     try:
-        with urllib.request.urlopen(request, timeout=45) as response:
+        with legacy.open_exact_url(request, url, timeout=45) as response:
             payload = json.load(response)
             if response.status != 200:
                 raise RuntimeError("schedule API failed: HTTP %s" % response.status)

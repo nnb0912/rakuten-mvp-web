@@ -106,12 +106,14 @@ class ProductDeliverySchedulerTest(unittest.TestCase):
                 scheduler.require_durable_schedule_storage(payload)
 
     def test_exclusion_snapshot_requires_exact_count_and_accepts_zero(self):
-        refresh.validate_exclude_collection([], {"expected_count": 0})
-        refresh.validate_exclude_collection(["r0406"], {"expected_count": 1})
+        refresh.validate_exclude_collection([], {"expected_count": 0, "collected_count": 0, "semantic_complete": True})
+        refresh.validate_exclude_collection(["r0406"], {"expected_count": 1, "collected_count": 1, "semantic_complete": True})
         with self.assertRaises(RuntimeError):
-            refresh.validate_exclude_collection([], {"expected_count": 1})
+            refresh.validate_exclude_collection([], {"expected_count": 1, "collected_count": 0, "semantic_complete": True})
         with self.assertRaises(RuntimeError):
-            refresh.validate_exclude_collection(["r0406"], {"expected_count": None})
+            refresh.validate_exclude_collection(["r0406"], {"expected_count": None, "collected_count": 1, "semantic_complete": True})
+        with self.assertRaises(RuntimeError):
+            refresh.validate_exclude_collection(["unrelated-code"], {"expected_count": 1, "collected_count": 1, "semantic_complete": False})
 
     def test_failed_reservation_write_does_not_commit_intent(self):
         state = scheduler.default_state()

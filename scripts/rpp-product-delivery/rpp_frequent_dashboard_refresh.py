@@ -19,13 +19,34 @@ LOG_DIR = PROJECT / "rpp_logs"
 LOCK_PATH = Path("/tmp/rise-rpp-data-refresh.lock")
 TARGETS_PATH = PROJECT / "rpp_targets" / "rpp_alert_targets.json"
 POSITION_LOG = PROJECT / "rpp_position_adjustment_log.json"
-API_BASE = os.environ.get("RPP_DASHBOARD_URL", "https://rakuten-mvp-web.onrender.com").rstrip("/")
+DEFAULT_API_BASE = "https://rakuten-mvp-web.onrender.com"
+API_BASE = DEFAULT_API_BASE
 PYTHON = "/usr/bin/python3"
 SETTINGS_SCRIPT = os.environ.get("RPP_SETTINGS_REFRESH_SCRIPT", str(PROJECT / "scripts_refresh_rpp_settings_csvs.py"))
 SNAPSHOT_SENDER = os.environ.get("RPP_SNAPSHOT_SENDER", "/Users/nob/.hermes/scripts/rpp_push_dashboard_snapshot.py")
 RECOMMENDATION_SCRIPT = os.environ.get("RPP_RECOMMENDATION_SCRIPT", str(PROJECT / "rpp_auto_recommendations.js"))
 POSITION_MONITOR_SCRIPT = os.environ.get("RPP_POSITION_MONITOR_SCRIPT", str(PROJECT / "rpp_position_monitor.js"))
 BUDGET_OBSERVATION = PROJECT / "rpp_budget_observation.json"
+
+
+class NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+def authenticated_api_url(path: str) -> str:
+    configured = os.environ.get("RPP_DASHBOARD_URL", DEFAULT_API_BASE).rstrip("/")
+    if configured != DEFAULT_API_BASE:
+        raise RuntimeError("RPP dashboard URL override is forbidden")
+    return f"{DEFAULT_API_BASE}{path}"
+
+
+def open_exact_url(request: urllib.request.Request, expected_url: str, timeout: int):
+    response = urllib.request.build_opener(NoRedirectHandler()).open(request, timeout=timeout)
+    if response.geturl() != expected_url:
+        response.close()
+        raise RuntimeError("authenticated request final URL mismatch")
+    return response
 
 
 def run_stage(name: str, command: list[str], timeout: int, env: dict[str, str] | None = None) -> dict:
@@ -73,16 +94,17 @@ def sync_token() -> str:
 
 def refresh_targets() -> dict:
     started = time.monotonic()
+    url = authenticated_api_url("/api/rpp/sync-snapshot?resource=targets")
     req = urllib.request.Request(
-        f"{API_BASE}/api/rpp/sync-snapshot?resource=targets",
+        url,
         headers={"Authorization": f"Bearer {sync_token()}", "Accept": "application/json", "User-Agent": "rise-rpp-position-sync/1.0"},
     )
-    with urllib.request.urlopen(req, timeout=60) as response:
+    with open_exact_url(req, url, timeout=60) as response:
         data = json.load(response)
     targets = data.get("targets")
     if not data.get("ok") or not isinstance(targets, list) or not targets:
         raise RuntimeError("machine target export returned no targets")
-    payload = {"updatedAt": data.get("updatedAt"), "source": f"{API_BASE}/api/rpp/sync-snapshot?resource=targets", "targets": targets}
+    payload = {"updatedAt": data.get("updatedAt"), "source": url, "targets": targets}
     TARGETS_PATH.parent.mkdir(parents=True, exist_ok=True)
     tmp = TARGETS_PATH.with_suffix(".json.tmp")
     tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")

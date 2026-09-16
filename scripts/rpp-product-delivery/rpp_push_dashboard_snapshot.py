@@ -24,7 +24,15 @@ from rpp_performance_contract import item_set_sha256, parse_performance_csv, par
 
 PROJECT = Path(os.environ.get("RPP_PROJECT_DIR", "/Users/nob/Projects/rpp-8am-notify"))
 OWNER_MAP_PATH = Path(os.environ.get("RPP_OWNER_MAP_PATH", "/Users/nob/Projects/rakuten-mvp-web/src/data/rpp_owner_map.json"))
-API_BASE = os.environ.get("RPP_DASHBOARD_URL", "https://rakuten-mvp-web.onrender.com").rstrip("/")
+DEFAULT_API_BASE = "https://rakuten-mvp-web.onrender.com"
+API_BASE = DEFAULT_API_BASE
+
+
+class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
 FILES = [
     "rpp_keyword_settings.csv",
     "rpp_item_settings.csv",
@@ -353,15 +361,21 @@ def cron_status() -> dict:
 
 
 def request(method: str, auth: str, payload: dict | None = None, query: str = "") -> tuple[int, dict]:
+    configured = os.environ.get("RPP_DASHBOARD_URL", DEFAULT_API_BASE).rstrip("/")
+    if configured != DEFAULT_API_BASE:
+        raise RuntimeError("RPP dashboard URL override is forbidden")
+    url = f"{DEFAULT_API_BASE}/api/rpp/sync-snapshot{query}"
     body = json.dumps(payload, ensure_ascii=False).encode("utf-8") if payload is not None else None
     req = urllib.request.Request(
-        f"{API_BASE}/api/rpp/sync-snapshot{query}",
+        url,
         data=body,
         method=method,
         headers={"Authorization": f"Bearer {auth}", "Content-Type": "application/json", "User-Agent": "rise-rpp-snapshot-sync/1.0"},
     )
     try:
-        with urllib.request.urlopen(req, timeout=45) as response:
+        with urllib.request.build_opener(_NoRedirectHandler()).open(req, timeout=45) as response:
+            if response.geturl() != url:
+                raise RuntimeError("authenticated request final URL mismatch")
             return response.status, json.load(response)
     except urllib.error.HTTPError as error:
         try:

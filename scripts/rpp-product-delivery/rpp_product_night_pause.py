@@ -25,7 +25,8 @@ from typing import Dict, Iterable, List, Mapping, Optional, Set
 
 PROJECT = Path(os.environ.get("RPP_PROJECT_DIR", "/Users/nob/Projects/rpp-8am-notify"))
 WEB_PROJECT = Path(os.environ.get("RAKUTEN_MVP_WEB_DIR", "/Users/nob/Projects/rakuten-mvp-web"))
-API_BASE = os.environ.get("RPP_DASHBOARD_URL", "https://rakuten-mvp-web.onrender.com").rstrip("/")
+DEFAULT_API_BASE = "https://rakuten-mvp-web.onrender.com"
+API_BASE = DEFAULT_API_BASE
 EXCLUDE_CSV = PROJECT / "rpp_exclude_items.csv"
 LOG_DIR = PROJECT / "rpp_apply_logs"
 LEDGER_PATH = LOG_DIR / "rpp_product_night_pause_ledger.json"
@@ -38,6 +39,26 @@ LOCK_PATH = Path(os.environ.get("RPP_EXCLUSION_WORKER_LOCK", "/tmp/rise-rpp-excl
 PRODUCTION_CONFIRMATION = "RPP_PRODUCT_NIGHT_PAUSE"
 ITEM_CODE_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,99}$")
 UTC = dt.timezone.utc
+
+
+class NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+def authenticated_api_url(api_base: str, path: str) -> str:
+    configured = os.environ.get("RPP_DASHBOARD_URL", DEFAULT_API_BASE).rstrip("/")
+    if configured != DEFAULT_API_BASE or api_base.rstrip("/") != DEFAULT_API_BASE:
+        raise RuntimeError("RPP dashboard URL override is forbidden")
+    return f"{DEFAULT_API_BASE}{path}"
+
+
+def open_exact_url(request: urllib.request.Request, expected_url: str, timeout: int):
+    response = urllib.request.build_opener(NoRedirectHandler()).open(request, timeout=timeout)
+    if response.geturl() != expected_url:
+        response.close()
+        raise RuntimeError("authenticated request final URL mismatch")
+    return response
 
 
 def utc_now() -> str:
@@ -160,8 +181,9 @@ def snapshot_token() -> str:
 
 def fetch_selection(api_base: str = API_BASE) -> List[str]:
     query = urllib.parse.urlencode({"resource": "night-pause"})
+    url = authenticated_api_url(api_base, "/api/rpp/sync-snapshot?%s" % query)
     request = urllib.request.Request(
-        "%s/api/rpp/sync-snapshot?%s" % (api_base.rstrip("/"), query),
+        url,
         headers={
             "Authorization": "Bearer %s" % snapshot_token(),
             "Accept": "application/json",
@@ -169,7 +191,7 @@ def fetch_selection(api_base: str = API_BASE) -> List[str]:
         },
     )
     try:
-        with urllib.request.urlopen(request, timeout=45) as response:
+        with open_exact_url(request, url, timeout=45) as response:
             if response.status != 200:
                 raise RuntimeError("night-pause fetch failed: HTTP %s" % response.status)
             payload = json.load(response)
