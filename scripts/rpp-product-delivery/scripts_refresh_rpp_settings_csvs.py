@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import csv
+import hashlib
 import json
 import os
 import re
@@ -105,7 +106,54 @@ async def click_by_text(page, text: str) -> bool:
     }''', text)
 
 
+def history_row_identity(row: dict[str, object]) -> tuple[str, str]:
+    row_id = str(row.get('id') or '').strip()
+    text = re.sub(r'\s+', ' ', str(row.get('text') or '')).strip()
+    signature = hashlib.sha256(f'{row_id}\n{text}'.encode('utf-8')).hexdigest()
+    return row_id, signature
+
+
+def select_new_completed_history_row(
+    rows: list[dict[str, object]], menu_label: str, pre_ids: set[str], pre_signatures: set[str]
+) -> str | None:
+    candidates = []
+    for row in rows:
+        row_id, signature = history_row_identity(row)
+        text = re.sub(r'\s+', ' ', str(row.get('text') or '')).strip()
+        cells = [re.sub(r'\s+', ' ', str(cell)).strip() for cell in (row.get('cells') or [])]
+        if not row_id or menu_label not in cells or '完了' not in text:
+            continue
+        if row_id in pre_ids or signature in pre_signatures:
+            continue
+        candidates.append(row_id)
+    if len(candidates) > 1:
+        raise RuntimeError(f'multiple genuinely new completed history rows found for {menu_label}')
+    return candidates[0] if candidates else None
+
+
+async def read_download_history_rows(page) -> list[dict[str, object]]:
+    value = await page.evaluate('''() => [...document.querySelectorAll('tr')].map((row, index) => ({
+      index,
+      id: row.getAttribute('data-id') || row.getAttribute('data-row-id') || row.id || '',
+      text: (row.innerText || '').replace(/\s+/g, ' ').trim(),
+      cells: [...row.querySelectorAll('th,td')].map(cell => (cell.innerText || '').replace(/\s+/g, ' ').trim())
+    }))''')
+    if not isinstance(value, list):
+        raise RuntimeError('settings download history rows are unavailable')
+    return value
+
+
 async def download_settings_csv(page, menu_label: str, kind: str) -> Path:
+    # Snapshot history before the request. A completed row is acceptable only if
+    # its provider ID/signature did not exist in this snapshot.
+    await page.goto('https://ad.rms.rakuten.co.jp/rpp/download', timeout=60000)
+    await page.wait_for_load_state('networkidle', timeout=60000)
+    await page.wait_for_timeout(2000)
+    pre_rows = await read_download_history_rows(page)
+    pre_identities = [history_row_identity(row) for row in pre_rows]
+    pre_ids = {row_id for row_id, _ in pre_identities if row_id}
+    pre_signatures = {signature for _, signature in pre_identities}
+
     await page.goto('https://ad.rms.rakuten.co.jp/rpp/items', timeout=60000)
     await page.wait_for_load_state('networkidle', timeout=60000)
     await page.wait_for_timeout(3000)
@@ -132,52 +180,43 @@ async def download_settings_csv(page, menu_label: str, kind: str) -> Path:
     await page.wait_for_load_state('networkidle', timeout=60000)
     await page.wait_for_timeout(3000)
 
-    row_index = -1
+    row_id = None
     for _ in range(12):
-        row_index = await page.evaluate('''label => {
-          const rows = [...document.querySelectorAll('tr')];
-          // History is newest-first. Wait for the newest matching request rather
-          // than silently selecting an older completed export below it.
-          const idx = rows.findIndex(r => r.innerText.includes(label));
-          if (idx < 0) return -1;
-          return rows[idx].innerText.includes('完了') ? idx : -2;
-        }''', menu_label)
-        if row_index >= 0:
+        rows = await read_download_history_rows(page)
+        row_id = select_new_completed_history_row(rows, menu_label, pre_ids, pre_signatures)
+        if row_id is not None:
             break
         refresh = page.locator('#btnDownloadHistoryRefresh')
         if await refresh.count() > 0:
             await refresh.first.click()
         await page.wait_for_timeout(5000)
-    if row_index == -2:
-        raise RuntimeError(f'newest settings download did not complete for {menu_label}')
-    if row_index < 0:
-        # 履歴文言が短縮される場合に備え、商品/キーワードの広め条件でも探す。
-        fallback_terms = ['商品全件', 'キーワード全件'] if 'キーワード' in menu_label else ['商品全件']
-        row_index = await page.evaluate('''terms => {
-          const rows = [...document.querySelectorAll('tr')];
-          return rows.findIndex(r => terms.some(t => r.innerText.includes(t)) && r.innerText.includes('完了'));
-        }''', fallback_terms)
-    if row_index < 0:
+    if row_id is None:
         sample = await page.evaluate('''() => document.body.innerText.slice(0, 2000)''')
-        raise RuntimeError(f'settings download history row not found for {menu_label}; sample={sample}')
+        raise RuntimeError(f'genuinely new exact settings download history row not found for {menu_label}; sample={sample}')
 
     async with page.expect_download(timeout=60000) as dl_info:
-        clicked = await page.evaluate('''idx => {
-          const row = [...document.querySelectorAll('tr')][idx];
-          const el = [...row.querySelectorAll('a,button')].find(e => (e.innerText || e.value || '').includes('ダウンロード'));
-          if (el) { el.click(); return true; }
-          return false;
-        }''', row_index)
+        clicked = await page.evaluate('''args => {
+          const rows = [...document.querySelectorAll('tr')].filter(row =>
+            (row.getAttribute('data-id') || row.getAttribute('data-row-id') || row.id || '') === args.id
+          );
+          if (rows.length !== 1) return false;
+          const row = rows[0];
+          const cells = [...row.querySelectorAll('th,td')].map(cell => (cell.innerText || '').replace(/\s+/g, ' ').trim());
+          if (!cells.includes(args.label) || !(row.innerText || '').includes('完了')) return false;
+          const buttons = [...row.querySelectorAll('a,button')].filter(e => (e.innerText || e.value || '').includes('ダウンロード'));
+          if (buttons.length !== 1) return false;
+          buttons[0].click(); return true;
+        }''', {'id': row_id, 'label': menu_label})
         if not clicked:
             raise RuntimeError('download button not found in matched settings history row')
     download = await dl_info.value
-    out = DOWNLOADS / f'{kind}_{datetime.now():%Y%m%d_%H%M%S}_{download.suggested_filename}'
+    out = DOWNLOADS / f'{kind}_{datetime.now():%Y%m%d_%H%M%S_%f}_{download.suggested_filename}'
     await download.save_as(str(out))
     return out
 
 
 def normalize_code(s: str) -> str:
-    return re.sub(r'[^0-9A-Za-z_-]', '', s.strip())
+    return re.sub(r'[^0-9A-Za-z._-]', '', s.strip())
 
 
 def parse_yen(value: object) -> int:
@@ -346,29 +385,47 @@ async def collect_exclude_items(page) -> tuple[list[str], dict[str, object]]:
     m = re.search(r'登録済み除外商品[^0-9]*([0-9,]+)件', body)
     expected = int(m.group(1).replace(',', '')) if m else None
 
-    codes: set[str] = set()
+    codes: list[str] = []
+    seen_codes: set[str] = set()
+    seen_pages: set[str] = set()
     pages_seen = 0
     for _ in range(200):
         pages_seen += 1
-        page_codes = await page.evaluate('''() => {
-          const out = [];
-          const headerCells = [...document.querySelectorAll('th')].map((th, i) => ({i, text: th.innerText.trim()}));
-          let codeIndex = headerCells.find(h => h.text.includes('商品管理番号'))?.i;
-          for (const tr of document.querySelectorAll('tr')) {
-            const cells = [...tr.querySelectorAll('td')].map(td => td.innerText.trim());
-            if (!cells.length) continue;
-            let v = codeIndex != null && codeIndex < cells.length ? cells[codeIndex] : '';
-            if (!v) {
-              v = cells.find(c => /^[A-Za-z][0-9A-Za-z_-]{2,}$/.test(c)) || '';
-            }
-            if (v) out.push(v);
+        page_result = await page.evaluate('''() => {
+          const tables = [...document.querySelectorAll('table')].filter(table => {
+            const headers = [...table.querySelectorAll('thead th')].map(th => th.innerText.trim());
+            return headers.filter(text => text === '商品管理番号').length === 1;
+          });
+          if (tables.length !== 1) return {error: `exclude table count=${tables.length}`};
+          const table = tables[0];
+          const headers = [...table.querySelectorAll('thead th')].map(th => th.innerText.trim());
+          const codeIndex = headers.indexOf('商品管理番号');
+          const codes = [];
+          const invalidRows = [];
+          for (const [index, tr] of [...table.querySelectorAll('tbody tr')].entries()) {
+            const cells = [...tr.querySelectorAll('td')];
+            if (!cells.length || cells.every(cell => !cell.innerText.trim())) continue;
+            const value = (cells[codeIndex]?.innerText || '').trim();
+            if (cells.length <= codeIndex || !/^[0-9A-Za-z][0-9A-Za-z._-]{0,99}$/.test(value)) invalidRows.push(index);
+            else codes.push(value);
           }
-          return out;
+          return {codes, invalidRows, headerCount: headers.filter(text => text === '商品管理番号').length};
         }''')
+        if not isinstance(page_result, dict) or page_result.get('error') or page_result.get('invalidRows') or page_result.get('headerCount') != 1:
+            raise RuntimeError(f'exclude table is semantically invalid: {page_result}')
+        page_codes = page_result.get('codes')
+        if not isinstance(page_codes, list):
+            raise RuntimeError('exclude table codes are unavailable')
+        fingerprint = json.dumps(page_codes, ensure_ascii=False)
+        if fingerprint in seen_pages:
+            raise RuntimeError('exclude pagination repeated a previously collected page')
+        seen_pages.add(fingerprint)
         for c in page_codes:
             cc = normalize_code(str(c))
-            if cc and not cc.lower().startswith('http'):
-                codes.add(cc)
+            if cc != str(c).strip() or cc.lower() in seen_codes:
+                raise RuntimeError('exclude item code is invalid or duplicated')
+            seen_codes.add(cc.lower())
+            codes.append(cc)
 
         next_clicked = await page.evaluate('''() => {
           const els = [...document.querySelectorAll('a,button')];
@@ -385,7 +442,7 @@ async def collect_exclude_items(page) -> tuple[list[str], dict[str, object]]:
         if not next_clicked:
             break
         await page.wait_for_timeout(1200)
-    return sorted(codes, key=str.lower), {'expected_count': expected, 'pages_seen': pages_seen}
+    return sorted(codes, key=str.lower), {'expected_count': expected, 'collected_count': len(codes), 'pages_seen': pages_seen, 'semantic_complete': True}
 
 
 def write_exclude_csv(codes: Iterable[str]) -> Path:
@@ -402,6 +459,11 @@ def validate_exclude_collection(codes: list[str], meta: dict[str, object]) -> No
     expected = meta.get('expected_count')
     if not isinstance(expected, int):
         raise RuntimeError('exclude item expected count was not found')
+    if meta.get('semantic_complete') is not True or meta.get('collected_count') != len(codes):
+        raise RuntimeError('exclude item list semantic identity is incomplete')
+    normalized = [normalize_code(str(code)) for code in codes]
+    if any(not code or code != str(original).strip() for code, original in zip(normalized, codes)) or len({code.lower() for code in normalized}) != len(normalized):
+        raise RuntimeError('exclude item list contains invalid or duplicate identities')
     if len(codes) != expected:
         raise RuntimeError(f'exclude item list incomplete: expected={expected}, collected={len(codes)}')
 

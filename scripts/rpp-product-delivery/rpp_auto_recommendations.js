@@ -501,7 +501,9 @@ function buildNotifyText(result) {
 
 async function syncTargetProfiles() {
   if (process.argv.includes('--no-target-sync')) return { skipped: true };
-  const url = arg('targets-url', process.env.RPP_TARGETS_URL || 'https://rakuten-mvp-web.onrender.com/api/rpp/sync-snapshot?resource=targets');
+  const productionTargetsUrl = 'https://rakuten-mvp-web.onrender.com/api/rpp/sync-snapshot?resource=targets';
+  const url = arg('targets-url', process.env.RPP_TARGETS_URL || productionTargetsUrl);
+  if (url !== productionTargetsUrl) throw new Error('RPP target sync URL override is forbidden');
   const targetPath = path.join(PROJECT, arg('targets', 'rpp_targets/rpp_alert_targets.json'));
   try {
     let token = String(process.env.RPP_SNAPSHOT_SYNC_TOKEN || '').trim();
@@ -512,7 +514,8 @@ async function syncTargetProfiles() {
     }
     const headers = { accept: 'application/json' };
     if (token) headers.authorization = `Bearer ${token}`;
-    const response = await fetch(url, { headers, signal: AbortSignal.timeout(30000) });
+    const response = await fetch(url, { headers, redirect: 'manual', signal: AbortSignal.timeout(30000) });
+    if (response.url !== productionTargetsUrl) throw new Error('RPP target sync final URL mismatch');
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const data = await response.json();
     if (!Array.isArray(data.targets)) throw new Error('targets配列なし');

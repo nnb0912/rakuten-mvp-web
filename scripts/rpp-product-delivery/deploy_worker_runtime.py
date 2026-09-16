@@ -49,10 +49,36 @@ ARTIFACTS = {
     "schedulerWrapper": (REPO / "scripts" / "rpp-product-delivery" / "rpp_product_delivery_scheduler_tick.sh", Path("/Users/nob/.hermes/scripts/rpp_product_delivery_scheduler_tick.sh")),
     "runtimeManifestTests": (REPO / "scripts" / "rpp-product-delivery" / "test_rpp_runtime_manifest.py", PROJECT / "test_rpp_runtime_manifest.py"),
     "deployVerifier": (REPO / "scripts" / "rpp-product-delivery" / "deploy_worker_runtime.py", PROJECT / "deploy_worker_runtime.py"),
+    "autoApply": (REPO / "scripts" / "rpp-product-delivery" / "rpp_allowed_auto_apply.py", PROJECT / "rpp_allowed_auto_apply.py"),
+    "autoApplyTests": (REPO / "scripts" / "rpp-product-delivery" / "test_rpp_allowed_auto_apply.py", PROJECT / "test_rpp_allowed_auto_apply.py"),
+    "autoApplyUploader": (REPO / "scripts" / "rpp-product-delivery" / "rpp_apply_approved_cpc_upload.py", PROJECT / "rpp_apply_approved_cpc_upload.py"),
+    "autoApplyUploaderTests": (REPO / "scripts" / "rpp-product-delivery" / "test_rpp_apply_approved_cpc_upload.py", PROJECT / "test_rpp_apply_approved_cpc_upload.py"),
+    "autoApplyWrapper": (REPO / "scripts" / "rpp-product-delivery" / "rpp_allowed_auto_apply.sh", Path("/Users/nob/.hermes/scripts/rpp_allowed_auto_apply.sh")),
 }
 BACKUP_DIR = PROJECT / "rpp_apply_logs" / "worker_backups"
 MANIFEST = PROJECT / "rpp_apply_logs" / "rpp_product_delivery_scheduler_deploy.json"
-API_BASE = os.environ.get("RPP_DASHBOARD_URL", "https://rakuten-mvp-web.onrender.com").rstrip("/")
+DEFAULT_API_BASE = "https://rakuten-mvp-web.onrender.com"
+API_BASE = DEFAULT_API_BASE
+
+
+class NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+def authenticated_api_url(path: str) -> str:
+    configured = os.environ.get("RPP_DASHBOARD_URL", DEFAULT_API_BASE).rstrip("/")
+    if configured != DEFAULT_API_BASE:
+        raise RuntimeError("RPP dashboard URL override is forbidden")
+    return f"{DEFAULT_API_BASE}{path}"
+
+
+def open_exact_url(request: urllib.request.Request, expected_url: str, timeout: int):
+    response = urllib.request.build_opener(NoRedirectHandler()).open(request, timeout=timeout)
+    if response.geturl() != expected_url:
+        response.close()
+        raise RuntimeError("authenticated request final URL mismatch")
+    return response
 
 
 def sha256(path: Path) -> str:
@@ -123,11 +149,12 @@ def snapshot_token() -> str:
 
 
 def verify_web_contract() -> dict:
+    url = authenticated_api_url("/api/rpp/sync-snapshot?resource=contract")
     request = urllib.request.Request(
-        f"{API_BASE}/api/rpp/sync-snapshot?resource=contract",
+        url,
         headers={"Authorization": f"Bearer {snapshot_token()}", "Accept": "application/json", "User-Agent": "rise-rpp-runtime-deploy/1.0"},
     )
-    with urllib.request.urlopen(request, timeout=45) as response:
+    with open_exact_url(request, url, timeout=45) as response:
         payload = json.load(response)
     if response.status != 200 or payload.get("ok") is not True or payload.get("snapshotSchemaMax") != 5 or payload.get("rmsBudget") is not True or payload.get("canonicalSnapshotReadback") is not True:
         raise RuntimeError("live Web snapshot v5 contract is unavailable")
@@ -229,6 +256,43 @@ def run_verified_dashboard_refresh(mode: str) -> int:
         return process.returncode
 
 
+def run_verified_auto_apply() -> int:
+    manifest = json.loads(stable_bytes(MANIFEST).decode("utf-8"))
+    run_root = PROJECT / "rpp_apply_logs" / "runtime_exec"
+    run_root.mkdir(parents=True, exist_ok=True, mode=0o700)
+    with tempfile.TemporaryDirectory(prefix="auto-apply-generation-", dir=run_root) as directory:
+        generation = Path(directory)
+        for name, (_, target) in ARTIFACTS.items():
+            expected = str((manifest.get("artifacts") or {}).get(name) or "")
+            data = verified_bytes(target, expected)
+            destination = generation / target.name
+            if destination.exists():
+                if destination.read_bytes() != data:
+                    raise RuntimeError("runtime execution generation has a filename collision")
+                continue
+            destination.write_bytes(data)
+            destination.chmod(0o500 if destination.suffix in {".py", ".sh", ".js"} else 0o400)
+        env = os.environ.copy()
+        env.update({
+            "PYTHONPATH": str(generation),
+            "RPP_PROJECT_DIR": str(PROJECT),
+            "NODE_PATH": str(PROJECT / "node_modules"),
+            "RPP_UPLOAD_HELPER": str(generation / ARTIFACTS["autoApplyUploader"][1].name),
+            "RPP_POST_REFRESH_SCRIPT": str(generation / ARTIFACTS["dashboardRefreshOrchestrator"][1].name),
+            "RPP_SETTINGS_REFRESH_SCRIPT": str(generation / ARTIFACTS["settingsRefresh"][1].name),
+            "RPP_SNAPSHOT_SENDER": str(generation / ARTIFACTS["snapshotSender"][1].name),
+            "RPP_RECOMMENDATION_SCRIPT": str(generation / ARTIFACTS["recommendationGenerator"][1].name),
+            "RPP_POSITION_MONITOR_SCRIPT": str(generation / ARTIFACTS["positionMonitor"][1].name),
+        })
+        worker = generation / ARTIFACTS["autoApply"][1].name
+        process = subprocess.run([sys.executable, str(worker), "--execute"], env=env, text=True, capture_output=True)
+        if process.stdout:
+            print(process.stdout, end="")
+        if process.stderr:
+            print(process.stderr, end="", file=sys.stderr)
+        return process.returncode
+
+
 def deploy() -> dict:
     if git("branch", "--show-current") != "main":
         raise RuntimeError("worker deploy requires main branch")
@@ -276,6 +340,7 @@ def main() -> int:
     parser.add_argument("--verify-only", action="store_true")
     parser.add_argument("--run-scheduler", action="store_true")
     parser.add_argument("--run-dashboard-refresh", choices=("hourly", "positions"))
+    parser.add_argument("--run-auto-apply", action="store_true")
     parser.add_argument("--verify-web-contract", action="store_true")
     args = parser.parse_args()
     try:
@@ -283,6 +348,8 @@ def main() -> int:
             return run_verified_scheduler()
         if args.run_dashboard_refresh:
             return run_verified_dashboard_refresh(args.run_dashboard_refresh)
+        if args.run_auto_apply:
+            return run_verified_auto_apply()
         if args.verify_web_contract:
             print(json.dumps(verify_web_contract(), sort_keys=True))
             return 0

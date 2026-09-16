@@ -14,6 +14,12 @@ spec.loader.exec_module(module)
 
 
 class FrequentDashboardRefreshTest(unittest.TestCase):
+    def test_authenticated_target_url_is_pinned_and_redirects_are_rejected(self):
+        with patch.dict(module.os.environ, {'RPP_DASHBOARD_URL': 'https://attacker.invalid'}):
+            with self.assertRaisesRegex(RuntimeError, 'override is forbidden'):
+                module.authenticated_api_url('/api/rpp/sync-snapshot?resource=targets')
+        self.assertIsNone(module.NoRedirectHandler().redirect_request(None, None, 302, 'Found', {}, 'https://attacker.invalid'))
+
     def test_initialize_budget_unknown_replaces_previous_complete(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / 'rpp_budget_observation.json'

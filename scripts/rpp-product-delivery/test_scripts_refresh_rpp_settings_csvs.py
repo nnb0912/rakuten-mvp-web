@@ -44,6 +44,36 @@ class FakePage:
 
 
 class BudgetObservationTest(unittest.TestCase):
+    def test_history_selection_accepts_only_genuinely_new_exact_row(self):
+        label = '登録済み商品全件ダウンロード'
+        old = {'index': 1, 'id': 'old-1', 'text': f'{label} 完了 ダウンロード', 'cells': [label, '完了', 'ダウンロード']}
+        old_id, old_signature = module.history_row_identity(old)
+        rows = [
+            old,
+            {'index': 2, 'id': 'new-1', 'text': f'{label} 完了 ダウンロード', 'cells': [label, '完了', 'ダウンロード']},
+            {'index': 3, 'id': 'new-2', 'text': '商品全件 完了 ダウンロード', 'cells': ['商品全件', '完了']},
+        ]
+        selected = module.select_new_completed_history_row(rows, label, {old_id}, {old_signature})
+        self.assertEqual('new-1', selected)
+
+    def test_history_selection_rejects_ambiguous_new_rows_and_has_no_broad_fallback(self):
+        label = '手動登録済みキーワード全件ダウンロード'
+        self.assertIsNone(module.select_new_completed_history_row(
+            [{'index': 1, 'id': 'new', 'text': 'キーワード全件 完了 ダウンロード', 'cells': ['キーワード全件', '完了']}], label, set(), set()
+        ))
+        with self.assertRaisesRegex(RuntimeError, 'multiple genuinely new'):
+            module.select_new_completed_history_row([
+                {'index': 1, 'id': 'new-1', 'text': f'{label} 完了', 'cells': [label, '完了']},
+                {'index': 2, 'id': 'new-2', 'text': f'{label} 完了', 'cells': [label, '完了']},
+            ], label, set(), set())
+
+    def test_history_selection_rejects_idless_preexisting_row_after_status_change(self):
+        label = '登録済み商品全件ダウンロード'
+        pre = {'index': 4, 'id': '', 'text': f'{label} 処理中', 'cells': [label, '処理中']}
+        _, signature = module.history_row_identity(pre)
+        completed = {'index': 4, 'id': '', 'text': f'{label} 完了 ダウンロード', 'cells': [label, '完了', 'ダウンロード']}
+        self.assertIsNone(module.select_new_completed_history_row([completed], label, set(), {signature}))
+
     def test_runtime_project_directory_is_explicit(self):
         with tempfile.TemporaryDirectory() as directory:
             env = {**os.environ, 'RPP_PROJECT_DIR': directory}
