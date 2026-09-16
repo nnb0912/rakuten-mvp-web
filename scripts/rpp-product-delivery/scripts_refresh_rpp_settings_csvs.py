@@ -23,7 +23,7 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Iterable
 
-PROJECT = Path(__file__).resolve().parent
+PROJECT = Path(os.environ.get('RPP_PROJECT_DIR') or Path(__file__).resolve().parent).resolve()
 RAKUTEN_MARKETING = Path('/Users/nob/Projects/rakuten-marketing')
 DOWNLOADS = PROJECT / 'rpp_downloads'
 DOWNLOADS.mkdir(exist_ok=True)
