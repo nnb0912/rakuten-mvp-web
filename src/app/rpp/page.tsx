@@ -13,7 +13,7 @@ import { readRppNightPauseProducts } from "@/lib/rppNightPause";
 import { isAutomaticRppOptimizationMode } from "@/lib/rppCpcModePolicy";
 import { shortRppItemName } from "@/lib/rppItemShortNames";
 import { readLatestRppDashboardSnapshot } from "@/lib/rppDashboardSnapshots";
-import { buildRppDeliveryComposition } from "@/lib/rppDashboardCharts";
+import { buildRppDashboardPeriodSeries, buildRppDeliveryComposition } from "@/lib/rppDashboardCharts";
 import { resolveRppRmsBudget } from "@/lib/rppRmsBudget";
 import RppAutoAdjustmentSettingsPanel from "./RppAutoAdjustmentSettingsPanel";
 import RppConsoleNav from "./RppConsoleNav";
@@ -179,6 +179,8 @@ export default async function RppPage({ searchParams }: { searchParams: Promise<
   const unknownAutomaticProducts = Math.max(0, automaticItemCodes.size - activeAutomaticProducts - excludedAutomaticProducts);
   const allRppDelivery = buildRppDeliveryComposition(latestDashboardSnapshot);
   const rmsBudget = resolveRppRmsBudget(latestDashboardSnapshot?.rmsBudget);
+  const currentMonthPerformance = buildRppDashboardPeriodSeries(dashboardDailyMetrics, "MONTH").at(-1) ?? null;
+  const currentMonthLabel = currentMonthPerformance ? `${Number(currentMonthPerformance.date.slice(5, 7))}月` : "当月";
   const dashboardSpend = automaticRecommendations.reduce((sum, row) => sum + (row.spend ?? 0), 0);
   const dashboardSales = automaticRecommendations.reduce((sum, row) => sum + (row.salesAmount ?? 0), 0);
   const dashboardRoas = dashboardSpend > 0 ? (dashboardSales / dashboardSpend) * 100 : null;
@@ -291,7 +293,7 @@ export default async function RppPage({ searchParams }: { searchParams: Promise<
       </section> : null}
 
       {view === "budget" ? <>
-        <RppBudgetPanel initialSettings={budgetData.settings} source={budgetData.source} metrics={{ ...(summary?.budgetMetrics ?? {}), dailyActuals }} rmsBudget={rmsBudget} />
+        <RppBudgetPanel initialSettings={budgetData.settings} source={budgetData.source} metrics={{ ...(summary?.budgetMetrics ?? {}), dailyActuals }} rmsBudget={rmsBudget} monthPerformance={currentMonthPerformance ? { label: currentMonthLabel, spend: currentMonthPerformance.spend, sales: currentMonthPerformance.sales, roas: currentMonthPerformance.roas } : null} />
         <RppPeriodComparison />
         <RppStrategyPanel initialSettings={strategyData.settings} source={strategyData.source} />
       </> : null}

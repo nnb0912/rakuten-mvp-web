@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 const source = readFileSync(new URL("../app/rpp/RppBudgetPanel.tsx", import.meta.url), "utf8");
+const pageSource = readFileSync(new URL("../app/rpp/page.tsx", import.meta.url), "utf8");
 const routeSource = readFileSync(new URL("../app/api/rpp/budget-settings/route.ts", import.meta.url), "utf8");
 
 test("予算管理はRMS有効予算を表示し、当月・翌月予算の入力欄を持たない", () => {
@@ -15,6 +16,11 @@ test("予算管理はRMS有効予算を表示し、当月・翌月予算の入�
   assert.match(source, /current\.at\(-1\)!\.day \+ 1 !== row\.day/);
   assert.match(source, /actualSegments\.map/);
   assert.match(source, /`¥\$\{Math\.round\(value\)/);
+  assert.match(source, /当月予算サマリー/);
+  assert.match(source, /予算消化率/);
+  assert.match(source, /広告経由売上（720時間帰属）/);
+  assert.match(source, /actualMonthSpend \/ monthlyBudget \* 100/);
+  assert.match(pageSource, /buildRppDashboardPeriodSeries\(dashboardDailyMetrics, "MONTH"\)/);
   assert.doesNotMatch(source, /label="当月予算"/);
   assert.doesNotMatch(source, /label="翌月予算"/);
   assert.match(source, /rmsBudget\.state === "READY"/);
