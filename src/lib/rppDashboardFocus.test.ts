@@ -6,6 +6,7 @@ import test from "node:test";
 const source = readFileSync(path.join(process.cwd(), "src/app/rpp/page.tsx"), "utf8");
 const chartSource = readFileSync(path.join(process.cwd(), "src/app/rpp/RppDashboardCharts.tsx"), "utf8");
 const proposalSource = readFileSync(path.join(process.cwd(), "src/app/rpp/RppProposalLog.tsx"), "utf8");
+const generatorSource = readFileSync(path.join(process.cwd(), "scripts/rpp-product-delivery/rpp_auto_recommendations.js"), "utf8");
 const styles = readFileSync(path.join(process.cwd(), "src/app/globals.css"), "utf8");
 
 test("ダッシュボードは固定以外の選択モードを主表示する", () => {
@@ -92,6 +93,13 @@ test("調整提案ログはダッシュボードの自動モード商品より�
   assert.ok(budgetPosition > automaticProductsPosition);
   assert.match(proposalSource, /調整提案ログ/);
   assert.match(proposalSource, /RMS反映前の調整候補/);
+  assert.match(proposalSource, /RPP広告ONの全商品を判定/);
+  assert.match(proposalSource, /判定対象：広告ON/);
+  assert.match(source, /rppOnRecommendations = data\.recommendations\.filter/);
+  assert.match(source, /<RppProposalLog rows=\{rppOnRecommendations\}/);
+  assert.match(generatorSource, /analyze\(eligibleByExclusion, perfMap\)/);
+  assert.match(generatorSource, /activeRows: automatic\.length/);
+  assert.match(generatorSource, /proposalScopeRows: eligibleByExclusion\.length/);
   assert.match(proposalSource, /全て/);
   assert.match(proposalSource, /引き上げ/);
   assert.match(proposalSource, /引き下げ/);

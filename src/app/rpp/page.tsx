@@ -154,6 +154,8 @@ export default async function RppPage({ searchParams }: { searchParams: Promise<
   const automaticTargets = targetData.targets.filter((row) => isAutomaticRppOptimizationMode(row.optimizationMode));
   const automaticTargetKeys = new Set(automaticTargets.map((row) => `${row.itemCode}\t${row.keyword}`));
   const automaticRecommendations = data.recommendations.filter((row) => automaticTargetKeys.has(`${row.itemCode}\t${row.keyword}`));
+  const rppOnItemCodes = new Set(targetData.exclusionProducts.filter((row) => !row.excluded).map((row) => row.itemCode));
+  const rppOnRecommendations = data.recommendations.filter((row) => rppOnItemCodes.has(row.itemCode));
   type AutomaticDashboardRow = {
     itemCode: string;
     recommendation: (typeof data.recommendations)[number] | null;
@@ -212,7 +214,7 @@ export default async function RppPage({ searchParams }: { searchParams: Promise<
           {anomalyData.anomalies.length ? <ul className="rpp-alert-list">{anomalyData.anomalies.map((row) => <li key={row.type}><span className={`status-pill ${row.severity === "CRITICAL" ? "approval-rejected" : "status-hold"}`}>{row.label}</span><b>{row.detail}</b></li>)}</ul> : <p className="ok-text">現在、閾値を超えた異常はありません。</p>}
           <small>最終観測: {anomalyData.current?.observedAt ? fmtDate(anomalyData.current.observedAt) : "未取得"}</small>
         </section>
-        <RppProposalLog rows={automaticRecommendations} generatedAt={summary?.generatedAt} />
+        <RppProposalLog rows={rppOnRecommendations} generatedAt={summary?.generatedAt} targetCount={rppOnItemCodes.size} />
         <section className="panel history-panel hold-detail-panel">
           <div className="section-heading compact-heading">
             <div>

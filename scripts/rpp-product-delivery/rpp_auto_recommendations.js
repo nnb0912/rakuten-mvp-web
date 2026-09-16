@@ -362,9 +362,9 @@ function buildRecommendations() {
   const autoSettings = loadAutoSettings();
   const eligibleByExclusion = settings.filter(s => !(autoSettings.excludeRmsExcluded && (s.settingExcluded || exclude.has(s.itemCode))));
   const excludedCount = settings.length - eligibleByExclusion.length;
-  const active = eligibleByExclusion.filter(s => isAutoAdjustmentActive(s, profiles, autoSettings));
-  const skippedByAutoSettings = eligibleByExclusion.length - active.length;
-  const { down, under, ok } = analyze(active, perfMap);
+  const automatic = eligibleByExclusion.filter(s => isAutoAdjustmentActive(s, profiles, autoSettings));
+  const skippedByAutoSettings = eligibleByExclusion.length - automatic.length;
+  const { down, under, ok } = analyze(eligibleByExclusion, perfMap);
   const posMap = latestPositionMap();
   const roasBar = autoSettings.roasFloor;
   const recs = [];
@@ -434,7 +434,8 @@ function buildRecommendations() {
   const summary = {
     generatedAt: new Date().toISOString(),
     settingsRows: settings.length,
-    activeRows: active.length,
+    activeRows: automatic.length,
+    proposalScopeRows: eligibleByExclusion.length,
     excludedRows: excludedCount,
     skippedByAutoSettings,
     performanceRows: perfMap.size,
@@ -478,7 +479,7 @@ function buildNotifyText(result) {
   const actionable = recommendations.filter(r => r.action === 'RAISE' || r.action === 'LOWER');
   const hold = recommendations.filter(r => r.action === 'HOLD');
   const lines = [];
-  lines.push(`自動運用候補: 上げ${summary.counts.raise} / 下げ${summary.counts.lower} / 保留${summary.counts.hold}`);
+  lines.push(`RPP広告ON調整候補: 上げ${summary.counts.raise} / 下げ${summary.counts.lower} / 保留${summary.counts.hold}`);
   lines.push('※RMS反映なし。確認用候補の生成のみ。');
   if (actionable.length) {
     lines.push('▼変更候補');
@@ -549,7 +550,7 @@ async function main() {
 
   if (process.argv.some(a => a.startsWith('--out=')) || process.argv.includes('--notify')) {
     const text = buildNotifyText(result);
-    const summary = `自動運用候補 上げ${result.summary.counts.raise}・下げ${result.summary.counts.lower}・保留${result.summary.counts.hold}`;
+    const summary = `RPP広告ON調整候補 上げ${result.summary.counts.raise}・下げ${result.summary.counts.lower}・保留${result.summary.counts.hold}`;
     if (process.argv.includes('--notify')) {
       const { sendChatwork } = require('./chatwork_notify');
       await emit(text, () => sendChatwork(text), { summary });
