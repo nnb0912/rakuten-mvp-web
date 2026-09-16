@@ -32,6 +32,9 @@ export async function GET(request: Request) {
       const date = searchParams.get("date") ?? "";
       return Response.json({ ok: true, date, rows: await readRppPerformanceDaily(date) });
     }
+    if (searchParams.get("resource") === "contract") {
+      return Response.json({ ok: true, snapshotSchemaMax: 5, rmsBudget: true, canonicalSnapshotReadback: true });
+    }
     if (searchParams.get("resource") === "delivery-schedules") {
       const data = await readRppDeliverySchedules({ reservationLimitPerItem: 0 });
       const storage = rppDeliveryStorageStatus(data.source);
@@ -107,7 +110,7 @@ export async function POST(request: Request) {
       return Response.json({ ok: true, reservation });
     }
     const snapshot = await saveRppDashboardSnapshot(body);
-    return Response.json({ ok: true, syncedAt: snapshot.syncedAt, recommendationCount: snapshot.recommendations.recommendations.length }, { status: 201 });
+    return Response.json({ ok: true, syncedAt: snapshot.syncedAt, recommendationCount: snapshot.recommendations.recommendations.length, snapshot }, { status: 201 });
   } catch (error) {
     return Response.json({ error: error instanceof Error ? error.message : String(error) }, { status: 400 });
   }

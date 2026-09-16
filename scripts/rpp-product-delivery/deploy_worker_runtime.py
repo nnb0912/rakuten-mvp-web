@@ -13,6 +13,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import urllib.request
 
 REPO = Path(__file__).resolve().parents[2]
 PROJECT = Path(os.environ.get("RPP_PROJECT_DIR", "/Users/nob/Projects/rpp-8am-notify"))
@@ -22,6 +23,20 @@ ARTIFACTS = {
     "nightPause": (REPO / "scripts" / "rpp-product-delivery" / "rpp_product_night_pause.py", PROJECT / "rpp_product_night_pause.py"),
     "nightPauseTests": (REPO / "scripts" / "rpp-product-delivery" / "test_rpp_product_night_pause.py", PROJECT / "test_rpp_product_night_pause.py"),
     "settingsRefresh": (REPO / "scripts" / "rpp-product-delivery" / "scripts_refresh_rpp_settings_csvs.py", PROJECT / "scripts_refresh_rpp_settings_csvs.py"),
+    "settingsRefreshTests": (REPO / "scripts" / "rpp-product-delivery" / "test_scripts_refresh_rpp_settings_csvs.py", PROJECT / "test_scripts_refresh_rpp_settings_csvs.py"),
+    "dashboardRefreshOrchestrator": (REPO / "scripts" / "rpp-product-delivery" / "rpp_frequent_dashboard_refresh.py", Path("/Users/nob/.hermes/scripts/rpp_frequent_dashboard_refresh.py")),
+    "dashboardRefreshTests": (REPO / "scripts" / "rpp-product-delivery" / "test_rpp_frequent_dashboard_refresh.py", PROJECT / "test_rpp_frequent_dashboard_refresh.py"),
+    "recommendationGenerator": (REPO / "scripts" / "rpp-product-delivery" / "rpp_auto_recommendations.js", PROJECT / "rpp_auto_recommendations.js"),
+    "recommendationCpcAdvisor": (REPO / "scripts" / "rpp-product-delivery" / "rpp_cpc_advisor.js", PROJECT / "rpp_cpc_advisor.js"),
+    "recommendationAdStatus": (REPO / "scripts" / "rpp-product-delivery" / "rpp_ad_status_report.js", PROJECT / "rpp_ad_status_report.js"),
+    "recommendationPositionData": (REPO / "scripts" / "rpp-product-delivery" / "rpp_position_data.js", PROJECT / "rpp_position_data.js"),
+    "recommendationDisplayNames": (REPO / "scripts" / "rpp-product-delivery" / "rpp_display_names.js", PROJECT / "rpp_display_names.js"),
+    "recommendationNotifyOut": (REPO / "scripts" / "rpp-product-delivery" / "rpp_notify_out.js", PROJECT / "rpp_notify_out.js"),
+    "recommendationDataGuards": (REPO / "scripts" / "rpp-product-delivery" / "rpp_data_guards.js", PROJECT / "rpp_data_guards.js"),
+    "recommendationChatwork": (REPO / "scripts" / "rpp-product-delivery" / "chatwork_notify.js", PROJECT / "chatwork_notify.js"),
+    "positionMonitor": (REPO / "scripts" / "rpp-product-delivery" / "rpp_position_monitor.js", PROJECT / "rpp_position_monitor.js"),
+    "hourlyDashboardWrapper": (REPO / "scripts" / "rpp-product-delivery" / "rpp_hourly_dashboard_refresh.sh", Path("/Users/nob/.hermes/scripts/rpp_hourly_dashboard_refresh.sh")),
+    "positionDashboardWrapper": (REPO / "scripts" / "rpp-product-delivery" / "rpp_position_dashboard_refresh.sh", Path("/Users/nob/.hermes/scripts/rpp_position_dashboard_refresh.sh")),
     "snapshotSender": (REPO / "scripts" / "rpp-product-delivery" / "rpp_push_dashboard_snapshot.py", Path("/Users/nob/.hermes/scripts/rpp_push_dashboard_snapshot.py")),
     "snapshotSenderTests": (REPO / "scripts" / "rpp-product-delivery" / "test_rpp_push_dashboard_snapshot.py", Path("/Users/nob/.hermes/scripts/test_rpp_push_dashboard_snapshot.py")),
     "productReportDownloader": (REPO / "scripts" / "rpp-product-delivery" / "scripts_refresh_rpp_product_report.py", PROJECT / "scripts_refresh_rpp_product_report.py"),
@@ -37,6 +52,7 @@ ARTIFACTS = {
 }
 BACKUP_DIR = PROJECT / "rpp_apply_logs" / "worker_backups"
 MANIFEST = PROJECT / "rpp_apply_logs" / "rpp_product_delivery_scheduler_deploy.json"
+API_BASE = os.environ.get("RPP_DASHBOARD_URL", "https://rakuten-mvp-web.onrender.com").rstrip("/")
 
 
 def sha256(path: Path) -> str:
@@ -96,6 +112,28 @@ def git(*args: str) -> str:
     return subprocess.check_output(["git", *args], cwd=REPO, text=True).strip()
 
 
+def snapshot_token() -> str:
+    value = os.environ.get("RPP_SNAPSHOT_SYNC_TOKEN", "").strip()
+    if value:
+        return value
+    result = subprocess.run(["security", "find-generic-password", "-s", "hermes.rpp.snapshot-sync", "-w"], text=True, capture_output=True)
+    if result.returncode or not result.stdout.strip():
+        raise RuntimeError("RPP snapshot sync token is unavailable")
+    return result.stdout.strip()
+
+
+def verify_web_contract() -> dict:
+    request = urllib.request.Request(
+        f"{API_BASE}/api/rpp/sync-snapshot?resource=contract",
+        headers={"Authorization": f"Bearer {snapshot_token()}", "Accept": "application/json", "User-Agent": "rise-rpp-runtime-deploy/1.0"},
+    )
+    with urllib.request.urlopen(request, timeout=45) as response:
+        payload = json.load(response)
+    if response.status != 200 or payload.get("ok") is not True or payload.get("snapshotSchemaMax") != 5 or payload.get("rmsBudget") is not True or payload.get("canonicalSnapshotReadback") is not True:
+        raise RuntimeError("live Web snapshot v5 contract is unavailable")
+    return {"ok": True, "snapshotSchemaMax": 5, "rmsBudget": True, "canonicalSnapshotReadback": True}
+
+
 def atomic_json(path: Path, payload: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, temp_name = tempfile.mkstemp(prefix=path.name + ".", suffix=".tmp", dir=path.parent)
@@ -152,6 +190,45 @@ def run_verified_scheduler() -> int:
         return process.returncode
 
 
+def run_verified_dashboard_refresh(mode: str) -> int:
+    manifest = json.loads(stable_bytes(MANIFEST).decode("utf-8"))
+    run_root = PROJECT / "rpp_apply_logs" / "runtime_exec"
+    run_root.mkdir(parents=True, exist_ok=True, mode=0o700)
+    with tempfile.TemporaryDirectory(prefix="dashboard-generation-", dir=run_root) as directory:
+        generation = Path(directory)
+        for name, (_, target) in ARTIFACTS.items():
+            expected = str((manifest.get("artifacts") or {}).get(name) or "")
+            data = verified_bytes(target, expected)
+            destination = generation / target.name
+            if destination.exists():
+                if destination.read_bytes() != data:
+                    raise RuntimeError("runtime execution generation has a filename collision")
+                continue
+            destination.write_bytes(data)
+            destination.chmod(0o500 if destination.suffix in {".py", ".sh", ".js"} else 0o400)
+        env = os.environ.copy()
+        env.update({
+            "PYTHONPATH": str(generation),
+            "RPP_PROJECT_DIR": str(PROJECT),
+            "NODE_PATH": str(PROJECT / "node_modules"),
+            "RPP_SETTINGS_REFRESH_SCRIPT": str(generation / ARTIFACTS["settingsRefresh"][1].name),
+            "RPP_SNAPSHOT_SENDER": str(generation / ARTIFACTS["snapshotSender"][1].name),
+            "RPP_RECOMMENDATION_SCRIPT": str(generation / ARTIFACTS["recommendationGenerator"][1].name),
+            "RPP_POSITION_MONITOR_SCRIPT": str(generation / ARTIFACTS["positionMonitor"][1].name),
+        })
+        recommendation = generation / ARTIFACTS["recommendationGenerator"][1].name
+        preflight = subprocess.run(["node", str(recommendation), "--runtime-preflight"], cwd=PROJECT, env=env, text=True, capture_output=True)
+        if preflight.returncode != 0:
+            raise RuntimeError("recommendation private-generation preflight failed")
+        orchestrator = generation / ARTIFACTS["dashboardRefreshOrchestrator"][1].name
+        process = subprocess.run([sys.executable, str(orchestrator), mode], env=env, text=True, capture_output=True)
+        if process.stdout:
+            print(process.stdout, end="")
+        if process.stderr:
+            print(process.stderr, end="", file=sys.stderr)
+        return process.returncode
+
+
 def deploy() -> dict:
     if git("branch", "--show-current") != "main":
         raise RuntimeError("worker deploy requires main branch")
@@ -160,12 +237,15 @@ def deploy() -> dict:
     head = git("rev-parse", "HEAD")
     if head != git("rev-parse", "origin/main"):
         raise RuntimeError("worker deploy requires HEAD to equal origin/main")
+    verify_web_contract()
     source_hashes = {}
     for name, (source, _) in ARTIFACTS.items():
         if source.suffix == ".py":
             compile(source.read_text(encoding="utf-8"), str(source), "exec")
         elif source.suffix == ".sh":
             subprocess.run(["/bin/bash", "-n", str(source)], check=True, capture_output=True, text=True)
+        elif source.suffix == ".js":
+            subprocess.run(["node", "--check", str(source)], check=True, capture_output=True, text=True)
         source_hashes[name] = sha256(source)
     PROJECT.mkdir(parents=True, exist_ok=True)
     BACKUP_DIR.mkdir(parents=True, exist_ok=True)
@@ -195,10 +275,17 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--verify-only", action="store_true")
     parser.add_argument("--run-scheduler", action="store_true")
+    parser.add_argument("--run-dashboard-refresh", choices=("hourly", "positions"))
+    parser.add_argument("--verify-web-contract", action="store_true")
     args = parser.parse_args()
     try:
         if args.run_scheduler:
             return run_verified_scheduler()
+        if args.run_dashboard_refresh:
+            return run_verified_dashboard_refresh(args.run_dashboard_refresh)
+        if args.verify_web_contract:
+            print(json.dumps(verify_web_contract(), sort_keys=True))
+            return 0
         print(json.dumps(verify_runtime() if args.verify_only else deploy(), ensure_ascii=False, sort_keys=True))
         return 0
     except Exception as exc:

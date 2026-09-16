@@ -274,6 +274,53 @@ def budget_metrics() -> dict | None:
     }
 
 
+def _aware_datetime(value: object, field: str) -> dt.datetime:
+    try:
+        parsed = dt.datetime.fromisoformat(str(value or "").replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise RuntimeError(f"RMS budget {field} is invalid") from exc
+    if parsed.tzinfo is None:
+        raise RuntimeError(f"RMS budget {field} must include timezone")
+    return parsed
+
+
+def _canonical_rms_budget(value: dict | None) -> dict | None:
+    if value is None:
+        return None
+    canonical = dict(value)
+    for field in ("attemptedAt", "observedAt"):
+        if canonical.get(field) is not None:
+            canonical[field] = _aware_datetime(canonical[field], field).astimezone(dt.timezone.utc).isoformat().replace("+00:00", "Z")
+    return canonical
+
+
+def rms_budget_observation() -> dict | None:
+    path = PROJECT / "rpp_budget_observation.json"
+    if not path.is_file() or path.is_symlink():
+        return None
+    value = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(value, dict) or value.get("version") != 1 or value.get("status") not in {"COMPLETE", "UNKNOWN"} or value.get("source") != "RMS_RPP_TOP_AND_CAMPAIGNS" or value.get("currency") != "JPY":
+        raise RuntimeError("RMS budget observation is invalid")
+    attempted = _aware_datetime(value.get("attemptedAt"), "attemptedAt")
+    now = dt.datetime.now(dt.timezone.utc)
+    if attempted > now:
+        raise RuntimeError("RMS budget attemptedAt must not be in the future")
+    if value["status"] == "COMPLETE":
+        observed = _aware_datetime(value.get("observedAt"), "observedAt")
+        numeric = [value.get(key) for key in ("campaignCount", "activeCampaignCount", "effectiveBudget", "continuingBudget", "activeCampaignBudgetTotal", "allCampaignBudgetTotal")]
+        try:
+            dt.date.fromisoformat(str(value.get("asOfDate") or ""))
+        except ValueError as exc:
+            raise RuntimeError("RMS COMPLETE asOfDate is invalid") from exc
+        if observed < attempted or observed - attempted > dt.timedelta(minutes=15) or observed > now or value.get("complete") is not True or any(not isinstance(v, int) or isinstance(v, bool) or v < 0 for v in numeric):
+            raise RuntimeError("RMS COMPLETE budget observation is invalid")
+        if value["activeCampaignCount"] > value["campaignCount"] or value["effectiveBudget"] != value["activeCampaignBudgetTotal"] or value["continuingBudget"] != value["allCampaignBudgetTotal"]:
+            raise RuntimeError("RMS budget observation totals do not match")
+    elif value.get("complete") is not False or any(value.get(key) is not None for key in ("observedAt", "asOfDate", "campaignCount", "activeCampaignCount", "effectiveBudget", "continuingBudget", "activeCampaignBudgetTotal", "allCampaignBudgetTotal")):
+        raise RuntimeError("RMS UNKNOWN budget observation must not contain amounts")
+    return value
+
+
 def performance_date_range() -> str | None:
     rows = _read_cp932_csv("rpp_item_reports.csv")
     if not rows:
@@ -322,13 +369,16 @@ def request(method: str, auth: str, payload: dict | None = None, query: str = ""
         return error.code, detail
 
 
-def validate_snapshot_readback(payload: dict, snapshot: dict, read_status: int) -> None:
+def validate_snapshot_readback(payload: dict, snapshot: dict, read_status: int, posted_snapshot: dict | None = None) -> None:
+    if posted_snapshot is not None and snapshot != posted_snapshot:
+        raise RuntimeError("snapshot full readback mismatch")
     expected_at = dt.datetime.fromisoformat(payload["syncedAt"].replace("Z", "+00:00"))
     actual_value = snapshot.get("syncedAt")
     actual_at = dt.datetime.fromisoformat(actual_value.replace("Z", "+00:00")) if isinstance(actual_value, str) else None
     if read_status != 200 or actual_at is None or abs((actual_at - expected_at).total_seconds()) >= 0.001:
         raise RuntimeError(f"snapshot readback mismatch: HTTP {read_status}")
-    if snapshot.get("schemaVersion") != 4:
+    expected_schema = 5 if payload.get("rmsBudget") is not None else 4
+    if snapshot.get("schemaVersion") != expected_schema:
         raise RuntimeError("snapshot readback mismatch: schemaVersion")
     expected_rpp_data = payload["rppData"]
     actual_rpp_data = snapshot.get("rppData") or {}
@@ -341,6 +391,8 @@ def validate_snapshot_readback(payload: dict, snapshot: dict, read_status: int) 
         raise RuntimeError("snapshot rppData readback mismatch: allConfiguredTargets IDs")
     if actual_rpp_data.get("exclusionObservation") != expected_rpp_data.get("exclusionObservation"):
         raise RuntimeError("snapshot rppData readback mismatch: exclusionObservation")
+    if _canonical_rms_budget(snapshot.get("rmsBudget")) != _canonical_rms_budget(payload.get("rmsBudget")):
+        raise RuntimeError("snapshot RMS budget readback mismatch")
     expected_performance = payload.get("performanceDaily")
     actual_performance = snapshot.get("performanceDaily")
     if expected_performance is None:
@@ -376,12 +428,18 @@ def validate_performance_readback(expected: dict, response: dict, read_status: i
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--failure-reason", choices=("settings_failed", "recommendations_failed", "positions_failed"))
     args = parser.parse_args()
-    source, recommendations = latest_recommendation()
+    if args.failure_reason:
+        source = None
+        recommendations = {"summary": {"degraded": True, "failureReason": args.failure_reason}, "recommendations": []}
+    else:
+        source, recommendations = latest_recommendation()
     summary_data = recommendations.setdefault("summary", {})
     summary_data["budgetMetrics"] = budget_metrics()
     summary_data["performanceDateRange"] = performance_date_range()
     rpp_data = operational_data()
+    rms_budget = rms_budget_observation()
     payload = {
         "syncedAt": dt.datetime.now(dt.timezone.utc).isoformat().replace("+00:00", "Z"),
         "recommendations": recommendations,
@@ -389,8 +447,9 @@ def main() -> int:
         "cronStatus": cron_status(),
         "performanceDaily": performance_daily(),
         "rppData": rpp_data,
+        "rmsBudget": rms_budget,
     }
-    summary = {"source": source.name, "recommendations": len(recommendations["recommendations"]), "files": len(payload["latestFiles"]), "performanceDate": payload["performanceDaily"]["date"] if payload["performanceDaily"] else None, "performanceRows": len(payload["performanceDaily"]["rows"]) if payload["performanceDaily"] else 0, "configuredTargets": len(rpp_data["configuredTargets"]), "allConfiguredTargets": len(rpp_data["allConfiguredTargets"]), "exclusionProducts": len(rpp_data["exclusionProducts"]), "owners": len(rpp_data["owners"]), "dryRun": args.dry_run}
+    summary = {"source": source.name if source else "FAILURE_SNAPSHOT", "failureReason": args.failure_reason, "recommendations": len(recommendations["recommendations"]), "files": len(payload["latestFiles"]), "performanceDate": payload["performanceDaily"]["date"] if payload["performanceDaily"] else None, "performanceRows": len(payload["performanceDaily"]["rows"]) if payload["performanceDaily"] else 0, "configuredTargets": len(rpp_data["configuredTargets"]), "allConfiguredTargets": len(rpp_data["allConfiguredTargets"]), "exclusionProducts": len(rpp_data["exclusionProducts"]), "owners": len(rpp_data["owners"]), "rmsBudgetStatus": rms_budget.get("status") if rms_budget else "MISSING", "rmsEffectiveBudget": rms_budget.get("effectiveBudget") if rms_budget else None, "dryRun": args.dry_run}
     if args.dry_run:
         print(json.dumps(summary, ensure_ascii=False))
         return 0
@@ -400,7 +459,10 @@ def main() -> int:
         raise RuntimeError(f"snapshot POST failed: HTTP {status} {posted.get('error', 'unknown error')}")
     read_status, readback = request("GET", auth)
     snapshot = readback.get("snapshot") or {}
-    validate_snapshot_readback(payload, snapshot, read_status)
+    posted_snapshot = posted.get("snapshot")
+    if not isinstance(posted_snapshot, dict):
+        raise RuntimeError("snapshot POST did not return canonical snapshot")
+    validate_snapshot_readback(payload, snapshot, read_status, posted_snapshot)
     if payload["performanceDaily"] is not None:
         performance_query = "?resource=performance-daily&date=" + urllib.parse.quote(payload["performanceDaily"]["date"])
         performance_status, performance_readback = request("GET", auth, query=performance_query)

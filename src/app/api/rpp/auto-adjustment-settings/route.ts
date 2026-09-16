@@ -15,7 +15,18 @@ export async function POST(request: Request) {
   if (!access.ok) return access.response;
   try {
     const body = (await request.json()) as RppAutoAdjustmentSettingsInput;
-    const result = await writeRppAutoAdjustmentSettings(body);
+    const current = await readRppAutoAdjustmentSettings();
+    const result = await writeRppAutoAdjustmentSettings({
+      ...body,
+      // These product-specific fallback values are intentionally hidden from this
+      // screen. Preserve the latest server values so a stale tab cannot rewind them.
+      floorCpc: current.settings.floorCpc,
+      itemCpcMax: current.settings.itemCpcMax,
+      keywordCpcMax: current.settings.keywordCpcMax,
+      roasFloor: current.settings.roasFloor,
+      itemEnabledDefault: current.settings.itemEnabledDefault,
+      keywordEnabledDefault: current.settings.keywordEnabledDefault,
+    });
     return Response.json({ ok: true, ...result });
   } catch (error) {
     return Response.json({ error: error instanceof Error ? error.message : String(error) }, { status: 400 });

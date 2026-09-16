@@ -10,14 +10,31 @@ export type RppSnapshotConfiguredTarget = { id: string; itemCode: string; itemNa
 export type RppSnapshotExclusionProduct = { itemCode: string; itemName: string; itemCpc: number | null; excluded: boolean; owner?: string };
 export type RppExclusionObservation = { observedAt: string; expectedCount: number; actualCount: number; complete: boolean };
 export type RppSnapshotOperationalData = { configuredTargets: RppSnapshotConfiguredTarget[]; allConfiguredTargets?: RppSnapshotConfiguredTarget[]; exclusionProducts: RppSnapshotExclusionProduct[]; exclusionObservation?: RppExclusionObservation; owners: string[] };
+export type RppRmsBudgetObservation = {
+  version: 1;
+  status: "COMPLETE" | "UNKNOWN";
+  attemptedAt: string;
+  observedAt: string | null;
+  asOfDate: string | null;
+  source: "RMS_RPP_TOP_AND_CAMPAIGNS";
+  currency: "JPY";
+  campaignCount: number | null;
+  activeCampaignCount: number | null;
+  effectiveBudget: number | null;
+  continuingBudget: number | null;
+  activeCampaignBudgetTotal: number | null;
+  allCampaignBudgetTotal: number | null;
+  complete: boolean;
+};
 export type RppDashboardSnapshot = {
-  schemaVersion: 1 | 2 | 3 | 4;
+  schemaVersion: 1 | 2 | 3 | 4 | 5;
   syncedAt: string;
   recommendations: { summary: Record<string, unknown>; recommendations: Record<string, unknown>[] };
   latestFiles: RppSnapshotFile[];
   cronStatus?: Record<string, unknown> | null;
   performanceDaily?: RppPerformanceDaily | null;
   rppData?: RppSnapshotOperationalData | null;
+  rmsBudget?: RppRmsBudgetObservation | null;
 };
 const TABLE = "rpp_dashboard_snapshots";
 const PERFORMANCE_TABLE = "rpp_performance_daily";
@@ -158,6 +175,36 @@ function normalizeOperationalData(value: unknown): RppSnapshotOperationalData | 
   return { configuredTargets, allConfiguredTargets, exclusionProducts, exclusionObservation, owners };
 }
 
+function normalizeNonNegativeInteger(value: unknown, field: string) {
+  if (!Number.isSafeInteger(value) || Number(value) < 0) throw new Error(`rmsBudget ${field} is invalid`);
+  return Number(value);
+}
+
+function normalizeRmsBudget(value: unknown): RppRmsBudgetObservation | null {
+  if (value == null) return null;
+  if (!value || typeof value !== "object") throw new Error("rmsBudget must be an object");
+  const input = value as Partial<RppRmsBudgetObservation>;
+  if (input.version !== 1 || !["COMPLETE", "UNKNOWN"].includes(String(input.status)) || input.source !== "RMS_RPP_TOP_AND_CAMPAIGNS" || input.currency !== "JPY") throw new Error("rmsBudget metadata is invalid");
+  const attempted = new Date(String(input.attemptedAt ?? ""));
+  if (Number.isNaN(attempted.getTime()) || attempted.getTime() > Date.now()) throw new Error("rmsBudget attemptedAt is invalid");
+  const base = { version: 1 as const, status: input.status as "COMPLETE" | "UNKNOWN", attemptedAt: attempted.toISOString(), source: "RMS_RPP_TOP_AND_CAMPAIGNS" as const, currency: "JPY" as const };
+  if (input.status === "UNKNOWN") {
+    const valueFields: Array<keyof RppRmsBudgetObservation> = ["observedAt", "asOfDate", "campaignCount", "activeCampaignCount", "effectiveBudget", "continuingBudget", "activeCampaignBudgetTotal", "allCampaignBudgetTotal"];
+    if (input.complete !== false || valueFields.some((field) => input[field] != null)) throw new Error("rmsBudget UNKNOWN observation must not contain amounts");
+    return { ...base, status: "UNKNOWN", observedAt: null, asOfDate: null, campaignCount: null, activeCampaignCount: null, effectiveBudget: null, continuingBudget: null, activeCampaignBudgetTotal: null, allCampaignBudgetTotal: null, complete: false };
+  }
+  const observed = new Date(String(input.observedAt ?? ""));
+  if (Number.isNaN(observed.getTime()) || observed.getTime() < attempted.getTime() || observed.getTime() - attempted.getTime() > 15 * 60_000 || observed.getTime() > Date.now() || input.complete !== true || !/^\d{4}-\d{2}-\d{2}$/.test(String(input.asOfDate ?? ""))) throw new Error("rmsBudget COMPLETE observation timing is invalid");
+  const campaignCount = normalizeNonNegativeInteger(input.campaignCount, "campaignCount");
+  const activeCampaignCount = normalizeNonNegativeInteger(input.activeCampaignCount, "activeCampaignCount");
+  const effectiveBudget = normalizeNonNegativeInteger(input.effectiveBudget, "effectiveBudget");
+  const continuingBudget = normalizeNonNegativeInteger(input.continuingBudget, "continuingBudget");
+  const activeCampaignBudgetTotal = normalizeNonNegativeInteger(input.activeCampaignBudgetTotal, "activeCampaignBudgetTotal");
+  const allCampaignBudgetTotal = normalizeNonNegativeInteger(input.allCampaignBudgetTotal, "allCampaignBudgetTotal");
+  if (activeCampaignCount > campaignCount || effectiveBudget !== activeCampaignBudgetTotal || continuingBudget !== allCampaignBudgetTotal) throw new Error("rmsBudget totals do not match");
+  return { ...base, status: "COMPLETE", observedAt: observed.toISOString(), asOfDate: String(input.asOfDate), campaignCount, activeCampaignCount, effectiveBudget, continuingBudget, activeCampaignBudgetTotal, allCampaignBudgetTotal, complete: true };
+}
+
 function normalizeRecommendationRows(value: unknown) {
   if (!Array.isArray(value)) throw new Error("recommendations.recommendations must be an array");
   return value.map((raw, index) => {
@@ -188,7 +235,8 @@ export function normalizeRppDashboardSnapshot(value: unknown): RppDashboardSnaps
   });
   const performanceDaily = normalizePerformanceDaily(input.performanceDaily);
   const rppData = normalizeOperationalData(input.rppData);
-  return { schemaVersion: rppData?.allConfiguredTargets ? 4 : rppData ? 3 : performanceDaily ? 2 : 1, syncedAt, recommendations: { summary: input.recommendations.summary && typeof input.recommendations.summary === "object" ? input.recommendations.summary : {}, recommendations: recommendationRows }, latestFiles, cronStatus: input.cronStatus && typeof input.cronStatus === "object" ? input.cronStatus : null, performanceDaily, rppData };
+  const rmsBudget = normalizeRmsBudget(input.rmsBudget);
+  return { schemaVersion: rmsBudget ? 5 : rppData?.allConfiguredTargets ? 4 : rppData ? 3 : performanceDaily ? 2 : 1, syncedAt, recommendations: { summary: input.recommendations.summary && typeof input.recommendations.summary === "object" ? input.recommendations.summary : {}, recommendations: recommendationRows }, latestFiles, cronStatus: input.cronStatus && typeof input.cronStatus === "object" ? input.cronStatus : null, performanceDaily, rppData, rmsBudget };
 }
 
 async function ensureTables(client: Pool | PoolClient | null = pool) {

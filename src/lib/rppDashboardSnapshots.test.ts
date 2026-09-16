@@ -163,3 +163,27 @@ test("RMS除外観測は表示件数と収集件数が不一致ならcompleteに
   });
   assert.equal(snapshot.rppData?.exclusionObservation?.complete, false);
 });
+
+test("RMS予算はトップとキャンペーン合計が一致した完全観測だけschema v5で保持する", () => {
+  const attemptedAt = new Date(Date.now() - 60_000).toISOString();
+  const observedAt = new Date(Date.now() - 30_000).toISOString();
+  const base = { syncedAt: new Date().toISOString(), recommendations: { summary: {}, recommendations: [] }, latestFiles: [] };
+  const rmsBudget = { version: 1, status: "COMPLETE", attemptedAt, observedAt, asOfDate: "2026-09-15", source: "RMS_RPP_TOP_AND_CAMPAIGNS", currency: "JPY", campaignCount: 4, activeCampaignCount: 1, effectiveBudget: 5_000_000, continuingBudget: 8_253_154, activeCampaignBudgetTotal: 5_000_000, allCampaignBudgetTotal: 8_253_154, complete: true };
+  const snapshot = normalizeRppDashboardSnapshot({ ...base, rmsBudget });
+  assert.equal(snapshot.schemaVersion, 5);
+  assert.equal(snapshot.rmsBudget?.effectiveBudget, 5_000_000);
+  assert.equal(snapshot.rmsBudget?.continuingBudget, 8_253_154);
+  assert.deepEqual(normalizeRppDashboardSnapshot(snapshot), snapshot);
+  assert.throws(() => normalizeRppDashboardSnapshot({ ...base, rmsBudget: { ...rmsBudget, effectiveBudget: 4_999_999 } }), /totals do not match/);
+  assert.throws(() => normalizeRppDashboardSnapshot({ ...base, rmsBudget: { ...rmsBudget, observedAt: new Date(Date.now() + 1_000).toISOString() } }), /timing is invalid/);
+});
+
+test("RMS予算UNKNOWNは金額を持たずschema v5で保持し、旧snapshotは予算なしで読める", () => {
+  const base = { syncedAt: new Date().toISOString(), recommendations: { summary: {}, recommendations: [] }, latestFiles: [] };
+  const unknown = { version: 1, status: "UNKNOWN", attemptedAt: new Date().toISOString(), observedAt: null, asOfDate: null, source: "RMS_RPP_TOP_AND_CAMPAIGNS", currency: "JPY", campaignCount: null, activeCampaignCount: null, effectiveBudget: null, continuingBudget: null, activeCampaignBudgetTotal: null, allCampaignBudgetTotal: null, complete: false };
+  const snapshot = normalizeRppDashboardSnapshot({ ...base, rmsBudget: unknown });
+  assert.equal(snapshot.schemaVersion, 5);
+  assert.equal(snapshot.rmsBudget?.status, "UNKNOWN");
+  assert.equal(normalizeRppDashboardSnapshot(base).rmsBudget, null);
+  assert.throws(() => normalizeRppDashboardSnapshot({ ...base, rmsBudget: { ...unknown, effectiveBudget: 1 } }), /must not contain amounts/);
+});

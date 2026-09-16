@@ -27,3 +27,9 @@ test("machine exports remain behind the existing bearer authorization", () => {
   assert.match(getBody, /if \(!authorized\(request\)\)/);
   assert.ok(getBody.indexOf("if (!authorized(request))") < getBody.indexOf('resource") === "night-pause"'));
 });
+
+test("machine endpoint exposes read-only snapshot v5 deployment contract", () => {
+  assert.match(route, /searchParams\.get\("resource"\) === "contract"/);
+  assert.match(route, /snapshotSchemaMax: 5/);
+  assert.match(route, /canonicalSnapshotReadback: true/);
+});

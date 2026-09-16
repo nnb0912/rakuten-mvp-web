@@ -9,19 +9,13 @@ type Props = {
   source: string;
 };
 
-type FormState = Omit<RppAutoAdjustmentSettings, "updatedAt">;
+type FormState = Pick<RppAutoAdjustmentSettings, "enabled" | "maxRaisePerDay" | "maxLowerPerDay" | "onlyRaiseWhenPageOut" | "excludeChangeLocked" | "excludeRmsExcluded">;
 
 function toForm(settings: RppAutoAdjustmentSettings): FormState {
   return {
     enabled: settings.enabled,
-    itemEnabledDefault: settings.itemEnabledDefault,
-    keywordEnabledDefault: settings.keywordEnabledDefault,
-    floorCpc: settings.floorCpc,
-    itemCpcMax: settings.itemCpcMax,
-    keywordCpcMax: settings.keywordCpcMax,
     maxRaisePerDay: settings.maxRaisePerDay,
     maxLowerPerDay: settings.maxLowerPerDay,
-    roasFloor: settings.roasFloor,
     onlyRaiseWhenPageOut: settings.onlyRaiseWhenPageOut,
     excludeChangeLocked: settings.excludeChangeLocked,
     excludeRmsExcluded: settings.excludeRmsExcluded,
@@ -103,13 +97,9 @@ export default function RppAutoAdjustmentSettingsPanel({ initialSettings, source
         <div className="auto-switch-row">
           <label className="checkbox-field"><input type="checkbox" checked={form.enabled} onChange={(e) => patch("enabled", e.target.checked)} /> <RppInfoTip label="選択モードの自動調整を有効化" /></label>
         </div>
-        <div className="form-row six-cols auto-number-grid">
-          <label><RppInfoTip label="最低CPC" /><input type="number" min="1" value={form.floorCpc} onChange={(e) => patch("floorCpc", Number(e.target.value))} /></label>
-          <label><RppInfoTip label="商品CPC上限" /><input type="number" min="1" value={form.itemCpcMax} onChange={(e) => patch("itemCpcMax", Number(e.target.value))} /></label>
-          <label><RppInfoTip label="KW CPC上限" /><input type="number" min="1" value={form.keywordCpcMax} onChange={(e) => patch("keywordCpcMax", Number(e.target.value))} /></label>
+        <div className="form-row two-cols auto-common-safety-grid">
           <label><RppInfoTip label="1回最大上げ" /><input type="number" min="0" value={form.maxRaisePerDay} onChange={(e) => patch("maxRaisePerDay", Number(e.target.value))} /></label>
           <label><RppInfoTip label="1回最大下げ" /><input type="number" min="0" value={form.maxLowerPerDay} onChange={(e) => patch("maxLowerPerDay", Number(e.target.value))} /></label>
-          <label><RppInfoTip label="ROAS最低" /><input type="number" min="0" step="10" value={form.roasFloor} onChange={(e) => patch("roasFloor", Number(e.target.value))} /></label>
         </div>
         <div className="auto-switch-row guard-row">
           <label className="checkbox-field"><input type="checkbox" checked={form.onlyRaiseWhenPageOut} onChange={(e) => patch("onlyRaiseWhenPageOut", e.target.checked)} /> <RppInfoTip label="上げは検索位置が悪い時だけ" /></label>

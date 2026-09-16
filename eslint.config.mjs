@@ -12,6 +12,9 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Stable CommonJS worker artifacts are syntax-checked by node --check and
+    // attested by the runtime manifest; they are not Next.js application code.
+    "scripts/rpp-product-delivery/*.js",
   ]),
 ]);
 
