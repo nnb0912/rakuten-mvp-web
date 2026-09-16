@@ -18,6 +18,7 @@ import { resolveRppRmsBudget } from "@/lib/rppRmsBudget";
 import RppAutoAdjustmentSettingsPanel from "./RppAutoAdjustmentSettingsPanel";
 import RppConsoleNav from "./RppConsoleNav";
 import RppDashboardCharts from "./RppDashboardCharts";
+import RppProposalLog from "./RppProposalLog";
 
 import RppBudgetPanel from "./RppBudgetPanel";
 import RppPeriodComparison from "./RppPeriodComparison";
@@ -173,17 +174,11 @@ export default async function RppPage({ searchParams }: { searchParams: Promise<
       excluded: product?.excluded === true,
     };
   });
-  const automaticItemCodes = new Set(automaticTargets.map((row) => row.itemCode));
-  const activeAutomaticProducts = new Set(automaticRows.filter((row) => row.product && !row.excluded).map((row) => row.itemCode)).size;
-  const excludedAutomaticProducts = [...automaticItemCodes].filter((itemCode) => targetData.exclusionProducts.some((row) => row.itemCode === itemCode && row.excluded)).length;
-  const unknownAutomaticProducts = Math.max(0, automaticItemCodes.size - activeAutomaticProducts - excludedAutomaticProducts);
   const allRppDelivery = buildRppDeliveryComposition(latestDashboardSnapshot);
   const rmsBudget = resolveRppRmsBudget(latestDashboardSnapshot?.rmsBudget);
   const currentMonthPerformance = buildRppDashboardPeriodSeries(dashboardDailyMetrics, "MONTH").at(-1) ?? null;
   const currentMonthLabel = currentMonthPerformance ? `${Number(currentMonthPerformance.date.slice(5, 7))}月` : "当月";
-  const dashboardSpend = automaticRecommendations.reduce((sum, row) => sum + (row.spend ?? 0), 0);
-  const dashboardSales = automaticRecommendations.reduce((sum, row) => sum + (row.salesAmount ?? 0), 0);
-  const dashboardRoas = dashboardSpend > 0 ? (dashboardSales / dashboardSpend) * 100 : null;
+
 
   return (
     <div className="rpp-console-shell">
@@ -207,17 +202,7 @@ export default async function RppPage({ searchParams }: { searchParams: Promise<
       </section>
 
       {view === "dashboard" ? <>
-        <section className="grid cards rpp-kpi-strip" aria-label="自動モード商品の概要">
-          <div className="card"><span>自動モード商品</span><strong>{automaticItemCodes.size}</strong></div>
-          <div className="card"><span>現在稼働</span><strong>{activeAutomaticProducts}</strong></div>
-          <div className="card"><span>除外中</span><strong>{excludedAutomaticProducts}</strong></div>
-          <div className={`card ${unknownAutomaticProducts ? "status-hold" : ""}`}><span>未確認</span><strong>{unknownAutomaticProducts}</strong></div>
-          <div className="card"><span>自動 前日広告費</span><strong>{fmtYen(dashboardSpend)}</strong></div>
-          <div className="card"><span>自動 前日売上</span><strong>{fmtYen(dashboardSales)}</strong></div>
-          <div className="card"><span>自動 前日ROAS</span><strong>{dashboardRoas == null ? "未取得" : `${Math.round(dashboardRoas)}%`}</strong></div>
-          <div className={`card ${anomalyData.anomalies.length ? "approval-rejected" : "status-approved"}`}><span>異常チェック</span><strong>{anomalyData.anomalies.length ? `${anomalyData.anomalies.length}件` : "異常なし"}</strong></div>
-        </section>
-        <RppDashboardCharts daily={dashboardDailyMetrics} delivery={allRppDelivery} />
+        <RppDashboardCharts daily={dashboardDailyMetrics} delivery={allRppDelivery} targetRoas={budgetData.settings.targetRoas} />
         <section className="panel history-panel compact-status-panel" id="rpp-dashboard-anomalies">
           <div className="section-heading compact-heading">
             <div><h2>異常チェック</h2><p>CPC・ROAS・広告費・データ鮮度・取得件数を前回データと比較します。</p></div>
@@ -227,6 +212,7 @@ export default async function RppPage({ searchParams }: { searchParams: Promise<
           {anomalyData.anomalies.length ? <ul className="rpp-alert-list">{anomalyData.anomalies.map((row) => <li key={row.type}><span className={`status-pill ${row.severity === "CRITICAL" ? "approval-rejected" : "status-hold"}`}>{row.label}</span><b>{row.detail}</b></li>)}</ul> : <p className="ok-text">現在、閾値を超えた異常はありません。</p>}
           <small>最終観測: {anomalyData.current?.observedAt ? fmtDate(anomalyData.current.observedAt) : "未取得"}</small>
         </section>
+        <RppProposalLog rows={automaticRecommendations} generatedAt={summary?.generatedAt} />
         <section className="panel history-panel hold-detail-panel">
           <div className="section-heading compact-heading">
             <div>

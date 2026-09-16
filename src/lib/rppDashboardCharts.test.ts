@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildRppCurrentMonthKpis, buildRppDashboardChartSeries, buildRppDashboardPeriodSeries, buildRppDeliveryComposition, chartPolyline, type RppDashboardDailyMetric } from "./rppDashboardCharts.ts";
+import { buildRppCurrentMonthKpis, buildRppDashboardChartSeries, buildRppDashboardPeriodSeries, buildRppDeliveryComposition, buildRppKpiSummary, chartPolyline, type RppDashboardDailyMetric } from "./rppDashboardCharts.ts";
 
 const day = (delta: number) => {
   const value = new Date(Date.now() + 9 * 60 * 60_000 + delta * 86_400_000);
@@ -134,4 +134,24 @@ test("当月クリックと720時間CV・CVRは欠損を0にせず集計する",
     { date: "2026-08-31", spend: 1, sales: 1, clicks: 999, orders: 999 },
   ], now), { clicks: 100, orders: 10, cvr: 10 });
   assert.deepEqual(buildRppCurrentMonthKpis([], now), { clicks: null, orders: null, cvr: null });
+});
+
+test("KPIは最新実績日までの当月全日を集計し720時間と12時間を切り替える", () => {
+  const rows: RppDashboardDailyMetric[] = [
+    { date: "2026-09-01", spend: 2_000_000, sales: 10_000_000, clicks: 40_000, orders: 800, sales12h: 8_000_000, orders12h: 700, sales720h: 10_000_000, orders720h: 800 },
+    { date: "2026-09-15", spend: 2_635_973, sales: 19_122_920, clicks: 60_611, orders: 1_505, sales12h: 18_276_042, orders12h: 1_400, sales720h: 19_122_920, orders720h: 1_505 },
+    { date: "2026-09-16", spend: null, sales: null, clicks: null, orders: null },
+  ];
+  const result720 = buildRppKpiSummary(rows, "MONTH", "720H", new Date("2026-09-16T06:00:00Z"));
+  assert.equal(result720.start, "2026-09-01");
+  assert.equal(result720.end, "2026-09-15");
+  assert.equal(result720.spend, 4_635_973);
+  assert.equal(result720.sales, 29_122_920);
+  assert.equal(result720.orders, 2_305);
+  assert.equal(result720.clicks, 100_611);
+  assert.equal(Math.round(result720.averageCpc! * 100) / 100, 46.08);
+  const result12 = buildRppKpiSummary(rows, "MONTH", "12H", new Date("2026-09-16T06:00:00Z"));
+  assert.equal(result12.sales, 26_276_042);
+  assert.equal(result12.orders, 2_100);
+  assert.equal(result12.spend, result720.spend);
 });
