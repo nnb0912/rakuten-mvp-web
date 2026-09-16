@@ -302,12 +302,16 @@ def validate_recommendations_against_targets(data: dict[str, Any], targets: dict
         if row.get("optimizationMode") != target.get("optimizationMode"):
             raise RuntimeError(f"recommendation mode does not match current target: {key!r}")
         if target.get("optimizationMode") == FIXED_MODE:
-            try:
-                proposed = strict_integer(row.get("proposedCpc"), "FIXED proposedCpc")
-            except RuntimeError as error:
-                raise RuntimeError(f"FIXED recommendation proposedCpc is invalid: {key!r}") from error
-            if proposed != target["fixedCpc"]:
-                raise RuntimeError(f"FIXED recommendation does not equal configured fixedCpc: {key!r}")
+            if action == "HOLD":
+                if row.get("proposedCpc") is not None:
+                    raise RuntimeError(f"FIXED HOLD recommendation proposedCpc must be null: {key!r}")
+            else:
+                try:
+                    proposed = strict_integer(row.get("proposedCpc"), "FIXED proposedCpc")
+                except RuntimeError as error:
+                    raise RuntimeError(f"FIXED recommendation proposedCpc is invalid: {key!r}") from error
+                if proposed != target["fixedCpc"]:
+                    raise RuntimeError(f"FIXED recommendation does not equal configured fixedCpc: {key!r}")
 
 
 def change_type(row: dict[str, Any]) -> str:
