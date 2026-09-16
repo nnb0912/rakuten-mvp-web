@@ -30,7 +30,7 @@ function timeLabel(value: string | null | undefined) {
   return date.toLocaleTimeString("ja-JP", { timeZone: "Asia/Tokyo", hour: "2-digit", minute: "2-digit" });
 }
 
-export default function RppProposalLog({ rows, generatedAt }: { rows: RppRecommendationWithApproval[]; generatedAt?: string | null }) {
+export default function RppProposalLog({ rows, generatedAt, targetCount }: { rows: RppRecommendationWithApproval[]; generatedAt?: string | null; targetCount: number }) {
   const [filter, setFilter] = useState<ProposalFilter>("ALL");
   const proposals = useMemo(() => rows
     .filter((row) => row.action === "RAISE" || row.action === "LOWER" || isExclusionCandidate(row))
@@ -46,7 +46,7 @@ export default function RppProposalLog({ rows, generatedAt }: { rows: RppRecomme
 
   return <section className="panel rpp-proposal-log" aria-labelledby="rpp-proposal-log-title">
     <div className="rpp-proposal-log-head">
-      <div><h2 id="rpp-proposal-log-title">調整提案ログ</h2><p>最新の計算によるRMS反映前の調整候補です。</p></div>
+      <div><h2 id="rpp-proposal-log-title">調整提案ログ</h2><p>RPP広告ONの全商品を判定した、RMS反映前の調整候補です。<b>判定対象：広告ON {targetCount.toLocaleString("ja-JP")}商品</b></p></div>
       <div className="rpp-proposal-tabs" role="group" aria-label="調整提案の種別">
         {filters.map((item) => <button type="button" key={item.value} className={filter === item.value ? "active" : ""} aria-pressed={filter === item.value} onClick={() => setFilter(item.value)}>{item.label}</button>)}
       </div>
