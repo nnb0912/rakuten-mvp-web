@@ -2,6 +2,9 @@
 import asyncio
 import importlib.util
 import json
+import os
+import subprocess
+import sys
 import tempfile
 import unittest
 from datetime import date
@@ -41,6 +44,22 @@ class FakePage:
 
 
 class BudgetObservationTest(unittest.TestCase):
+    def test_runtime_project_directory_is_explicit(self):
+        with tempfile.TemporaryDirectory() as directory:
+            env = {**os.environ, 'RPP_PROJECT_DIR': directory}
+            command = [
+                sys.executable,
+                '-c',
+                (
+                    'import importlib.util; '
+                    f's=importlib.util.spec_from_file_location("collector", {str(SCRIPT)!r}); '
+                    'm=importlib.util.module_from_spec(s); s.loader.exec_module(m); print(m.PROJECT)'
+                ),
+            ]
+            result = subprocess.run(command, env=env, text=True, capture_output=True, check=True)
+            self.assertEqual(Path(result.stdout.strip()), Path(directory).resolve())
+            self.assertTrue((Path(directory) / 'rpp_downloads').is_dir())
+
     def test_collects_only_fully_reconciled_budget(self):
         result = asyncio.run(module.collect_budget_observation(FakePage(), '2026-09-16T13:15:30+09:00'))
         self.assertEqual(result['status'], 'COMPLETE')
