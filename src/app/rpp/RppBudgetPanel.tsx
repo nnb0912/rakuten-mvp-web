@@ -6,7 +6,8 @@ import type { RppBudgetMetrics, RppBudgetSettings } from "@/lib/rppBudgetSetting
 import type { ResolvedRppRmsBudget } from "@/lib/rppRmsBudget";
 
 import { RppInfoTip } from "./RppInfoTip";
-type Props = { initialSettings: RppBudgetSettings; metrics: RppBudgetMetrics | null; source: string; rmsBudget: ResolvedRppRmsBudget };
+type MonthPerformance = { label: string; spend: number | null; sales: number | null; roas: number | null };
+type Props = { initialSettings: RppBudgetSettings; metrics: RppBudgetMetrics | null; source: string; rmsBudget: ResolvedRppRmsBudget; monthPerformance: MonthPerformance | null };
 const yen = (value: number) => `¥${Math.round(value).toLocaleString("ja-JP")}`;
 const stateLabel = { future: "予定", ok: "計画内", over: "超過", under: "未消化", unmeasured: "実績未同期" } as const;
 
@@ -14,7 +15,7 @@ function linePath(points: Array<{ x: number; y: number }>) {
   return points.map((point, index) => `${index ? "L" : "M"}${point.x.toFixed(1)},${point.y.toFixed(1)}`).join(" ");
 }
 
-export default function RppBudgetPanel({ initialSettings, metrics, source, rmsBudget }: Props) {
+export default function RppBudgetPanel({ initialSettings, metrics, source, rmsBudget, monthPerformance }: Props) {
   const [settings, setSettings] = useState(initialSettings);
   const [draft, setDraft] = useState(initialSettings);
   const [editing, setEditing] = useState(false);
@@ -27,6 +28,9 @@ export default function RppBudgetPanel({ initialSettings, metrics, source, rmsBu
   const continuingBudget = rmsBudget.state === "READY" ? rmsBudget.observation?.continuingBudget ?? null : null;
   const usage = monthlyBudget == null ? null : monthlyBudget === 0 ? (projection > 0 ? Number.POSITIVE_INFINITY : 0) : projection / monthlyBudget * 100;
   const projectedVariance = monthlyBudget == null || !metricsReady ? null : monthlyBudget - projection;
+  const actualMonthSpend = monthPerformance?.spend ?? null;
+  const actualUsage = monthlyBudget == null || actualMonthSpend == null ? null : monthlyBudget === 0 ? (actualMonthSpend > 0 ? Number.POSITIVE_INFINITY : 0) : actualMonthSpend / monthlyBudget * 100;
+  const actualVariance = monthlyBudget == null || actualMonthSpend == null ? null : monthlyBudget - actualMonthSpend;
   const effectiveSettings = useMemo(() => ({ ...settings, monthlyBudget: monthlyBudget ?? 0 }), [settings, monthlyBudget]);
   const plan = useMemo(() => monthlyBudget == null ? [] : calculateRppDailyBudgetPlan(effectiveSettings, metrics), [effectiveSettings, metrics, monthlyBudget]);
   const visiblePlan = plan.filter((row) => row.day <= new Date().getDate() + 7);
@@ -94,6 +98,16 @@ export default function RppBudgetPanel({ initialSettings, metrics, source, rmsBu
       </div> : null}
     </div> : null}
     {message ? <p className="budget-message">{message}</p> : null}
+    <div className={`budget-month-summary ${actualUsage != null && actualUsage >= settings.warningPercent ? "danger" : actualUsage == null ? "unknown" : "ok"}`} aria-label="当月予算サマリー">
+      <span className="budget-month-summary-icon" aria-hidden="true">¥</span>
+      <div className="budget-month-summary-copy">
+        {monthlyBudget != null && actualMonthSpend != null ? <>
+          <strong>当月予算 {yen(monthlyBudget)} に対し、{monthPerformance?.label ?? "当月"}の消化は {yen(actualMonthSpend)}（{Number.isFinite(actualUsage) ? `${Math.round((actualUsage ?? 0) * 10) / 10}%` : "超過"}）</strong>
+          <span>{actualVariance == null ? "差額未判定" : actualVariance >= 0 ? `予算上限に ${yen(actualVariance)} の余力。` : `予算上限を ${yen(Math.abs(actualVariance))} 超過。`} {monthPerformance?.label ?? "当月"}の広告経由売上（720時間帰属） {monthPerformance?.sales == null ? "未取得" : yen(monthPerformance.sales)}・ROAS {monthPerformance?.roas == null ? "未取得" : `${Math.round(monthPerformance.roas)}%`}。</span>
+        </> : <><strong>当月予算サマリーは判定できません</strong><span>RMS予算と当月実績が揃い次第、自動表示します。</span></>}
+      </div>
+      <div className="budget-month-summary-rate"><small>予算消化率</small><strong>{actualUsage == null ? "-" : Number.isFinite(actualUsage) ? `${Math.round(actualUsage * 10) / 10}%` : "超過"}</strong></div>
+    </div>
     <div className="budget-metric-grid">
       <span><small><RppInfoTip label="RMS有効予算" /></small><strong>{monthlyBudget == null ? "未取得" : yen(monthlyBudget)}</strong></span>
       <span><small><RppInfoTip label="7日広告費" /></small><strong>{yen(spend)}</strong></span>
