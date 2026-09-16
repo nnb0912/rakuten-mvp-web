@@ -92,6 +92,19 @@ class AllowedAutoApplyTest(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "proposedCpc must be a JSON integer"):
             auto.validate_recommendations_against_targets({"recommendations": [rec]}, targets)
 
+    def test_fixed_hold_with_null_proposal_is_validated_but_never_eligible(self):
+        target = {"itemCode": "r0606", "keyword": "商品CPC", "optimizationMode": "FIXED", "fixedCpc": 20}
+        targets = auto.load_current_targets(self.write_targets([target]))
+        rec = self.rec("r0606", mode="FIXED", action="HOLD")
+        rec["currentCpc"], rec["proposedCpc"], rec["uploadReady"] = 20, None, False
+        auto.validate_recommendations_against_targets({"recommendations": [rec]}, targets)
+        eligible, skipped = auto.eligible_recommendations({"recommendations": [rec]}, self.settings)
+        self.assertEqual([], eligible)
+        self.assertEqual("action is not RAISE/LOWER", skipped[0]["reason"])
+        for malformed in ("20", -1, 20, {}, []):
+            with self.assertRaisesRegex(RuntimeError, "must be null"):
+                auto.validate_recommendations_against_targets({"recommendations": [{**rec, "proposedCpc": malformed}]}, targets)
+
     def test_duplicate_recommendations_and_invalid_sources_fail_whole_tick(self):
         target = {"itemCode": "r0001", "keyword": "商品CPC", "optimizationMode": "ROAS"}
         targets = auto.load_current_targets(self.write_targets([target]))
