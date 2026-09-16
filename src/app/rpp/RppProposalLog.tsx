@@ -17,7 +17,8 @@ function actionOf(row: RppRecommendationWithApproval) {
 }
 
 function proposalReason(row: RppRecommendationWithApproval) {
-  const reasons = row.blocks.length ? row.blocks : row.reasons;
+  const businessReasons = row.reasons.filter((reason) => !reason.startsWith("最適化モード:") && !reason.startsWith("保護区分:"));
+  const reasons = row.blocks.length ? row.blocks : businessReasons.length ? businessReasons : row.reasons;
   const reason = reasons.slice(0, 2).join("・");
   const roas = row.roas == null ? "" : `ROAS ${Math.round(row.roas).toLocaleString("ja-JP")}%`;
   return [roas, reason || row.note || "調整条件に一致"].filter(Boolean).join("・");
@@ -53,18 +54,17 @@ export default function RppProposalLog({ rows, generatedAt, targetCount }: { row
     </div>
     <div className="rpp-proposal-table-wrap">
       <table className="rpp-proposal-table">
-        <thead><tr><th>時刻</th><th>対象</th><th>アクション</th><th>調整前CPC</th><th>調整後CPC</th><th>理由</th></tr></thead>
+        <thead><tr><th>時刻</th><th>対象・理由</th><th>アクション</th><th>調整前CPC</th><th>調整後CPC</th></tr></thead>
         <tbody>{proposals.length ? proposals.map((row) => {
           const action = actionOf(row);
           return <tr key={row.id}>
             <td>{timeLabel(generatedAt)}</td>
-            <td><b>{row.itemName || row.itemCode}</b><small>{row.itemCode}{row.keyword ? ` / ${row.keyword}` : ""}</small></td>
+            <td><b>{row.itemName || row.itemCode}</b><small>{row.itemCode}{row.keyword ? ` / ${row.keyword}` : ""}</small><small className="rpp-proposal-reason"><b>理由：</b>{proposalReason(row)}</small></td>
             <td><span className={`rpp-proposal-action ${action.className}`}>{action.label}</span></td>
             <td><b>¥{Math.round(row.currentCpc).toLocaleString("ja-JP")}</b></td>
             <td><b>{row.proposedCpc == null ? "—" : `¥${Math.round(row.proposedCpc).toLocaleString("ja-JP")}`}</b></td>
-            <td><small>{proposalReason(row)}</small></td>
           </tr>;
-        }) : <tr><td colSpan={6} className="rpp-proposal-empty">該当する調整候補はありません</td></tr>}</tbody>
+        }) : <tr><td colSpan={5} className="rpp-proposal-empty">該当する調整候補はありません</td></tr>}</tbody>
       </table>
     </div>
     <small className="rpp-proposal-scroll-note">← → 横にスクロールすると続きの列を確認できます</small>
