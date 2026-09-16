@@ -970,17 +970,19 @@ small { color: var(--muted); line-height: 1.45; }
 .rpp-proposal-tabs button:last-child { border-right: 0; }
 .rpp-proposal-tabs button.active { background: #fff5f5; color: #ef4747; box-shadow: inset 0 -2px #ef4747; }
 .rpp-proposal-table-wrap { width: 100%; overflow-x: auto; scrollbar-color: #9d9d9d #f1f1f1; }
-.rpp-proposal-table { width: 100%; min-width: 820px; border-collapse: collapse; table-layout: fixed; }
+.rpp-proposal-table { width: 100%; min-width: 720px; border-collapse: collapse; table-layout: fixed; }
 .rpp-proposal-table th { padding: 9px 12px; border-bottom: 1px solid #e8e3e0; color: #9a938f; font-size: 10px; font-weight: 800; text-align: left; }
 .rpp-proposal-table td { padding: 12px; border-bottom: 1px solid #eeeae7; color: #312e2c; font-size: 11px; vertical-align: middle; }
 .rpp-proposal-table tr:last-child td { border-bottom: 0; }
 .rpp-proposal-table th:nth-child(1), .rpp-proposal-table td:nth-child(1) { width: 70px; }
-.rpp-proposal-table th:nth-child(2), .rpp-proposal-table td:nth-child(2) { width: 235px; }
+.rpp-proposal-table th:nth-child(2), .rpp-proposal-table td:nth-child(2) { width: 370px; }
 .rpp-proposal-table th:nth-child(3), .rpp-proposal-table td:nth-child(3) { width: 92px; }
 .rpp-proposal-table th:nth-child(4), .rpp-proposal-table td:nth-child(4),
 .rpp-proposal-table th:nth-child(5), .rpp-proposal-table td:nth-child(5) { width: 90px; text-align: right; }
 .rpp-proposal-table td:nth-child(2) b { display: block; overflow: hidden; color: #272321; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
 .rpp-proposal-table td small { display: block; margin-top: 3px; color: #8c8580; font-size: 10px; line-height: 1.35; }
+.rpp-proposal-table td .rpp-proposal-reason { margin-top: 6px; color: #4f4945; white-space: normal; }
+.rpp-proposal-table td .rpp-proposal-reason b { display: inline; margin-right: 3px; color: #272321; font-size: inherit; }
 .rpp-proposal-action { display: inline-flex; align-items: center; min-height: 24px; border-radius: 999px; padding: 3px 9px; font-size: 10px; font-weight: 900; white-space: nowrap; }
 .rpp-proposal-action.is-raise { background: #e8eef3; color: #34495e; }
 .rpp-proposal-action.is-lower { background: #fff0df; color: #f39a36; }
