@@ -7,7 +7,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
-from datetime import date
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 SCRIPT = Path(__file__).with_name('scripts_refresh_rpp_settings_csvs.py')
@@ -46,33 +46,45 @@ class FakePage:
 class BudgetObservationTest(unittest.TestCase):
     def test_history_selection_accepts_only_genuinely_new_exact_row(self):
         label = '登録済み商品全件ダウンロード'
-        old = {'index': 1, 'id': 'old-1', 'text': f'{label} 完了 ダウンロード', 'cells': [label, '完了', 'ダウンロード']}
+        lower = datetime(2026, 9, 16, 22, 0, tzinfo=module.JST)
+        old = {'index': 1, 'id': 'old-1', 'text': f'{label} 完了 ダウンロード', 'cells': ['2026-09-16 21:59:00', '完了', 'ダウンロード', '商品・キーワード設定', label]}
         old_id, old_signature = module.history_row_identity(old)
         rows = [
             old,
-            {'index': 2, 'id': 'new-1', 'text': f'{label} 完了 ダウンロード', 'cells': [label, '完了', 'ダウンロード']},
+            {'index': 2, 'id': 'new-1', 'text': f'{label} 完了 ダウンロード', 'cells': ['2026-09-16 22:00:01', '完了', 'ダウンロード', '商品・キーワード設定', label]},
             {'index': 3, 'id': 'new-2', 'text': '商品全件 完了 ダウンロード', 'cells': ['商品全件', '完了']},
         ]
-        selected = module.select_new_completed_history_row(rows, label, {old_id}, {old_signature})
-        self.assertEqual('new-1', selected)
+        selected = module.select_new_completed_history_row(rows, label, {old_id}, {old_signature}, lower)
+        self.assertEqual('id:new-1', selected)
 
     def test_history_selection_rejects_ambiguous_new_rows_and_has_no_broad_fallback(self):
         label = '手動登録済みキーワード全件ダウンロード'
+        lower = datetime(2026, 9, 16, 22, 0, tzinfo=module.JST)
         self.assertIsNone(module.select_new_completed_history_row(
-            [{'index': 1, 'id': 'new', 'text': 'キーワード全件 完了 ダウンロード', 'cells': ['キーワード全件', '完了']}], label, set(), set()
+            [{'index': 1, 'id': 'new', 'text': 'キーワード全件 完了 ダウンロード', 'cells': ['2026-09-16 22:00:01', '完了', 'ダウンロード', '商品・キーワード設定', 'キーワード全件']}], label, set(), set(), lower
         ))
         with self.assertRaisesRegex(RuntimeError, 'multiple genuinely new'):
             module.select_new_completed_history_row([
                 {'index': 1, 'id': 'new-1', 'text': f'{label} 完了', 'cells': [label, '完了']},
                 {'index': 2, 'id': 'new-2', 'text': f'{label} 完了', 'cells': [label, '完了']},
-            ], label, set(), set())
+            ], label, set(), set(), lower)
 
     def test_history_selection_rejects_idless_preexisting_row_after_status_change(self):
         label = '登録済み商品全件ダウンロード'
-        pre = {'index': 4, 'id': '', 'text': f'{label} 処理中', 'cells': [label, '処理中']}
+        lower = datetime(2026, 9, 16, 22, 0, tzinfo=module.JST)
+        pre = {'index': 4, 'id': '', 'text': f'{label} 処理中', 'cells': ['2026-09-16 22:00:01', '処理中', '', '商品・キーワード設定', label]}
         _, signature = module.history_row_identity(pre)
-        completed = {'index': 4, 'id': '', 'text': f'{label} 完了 ダウンロード', 'cells': [label, '完了', 'ダウンロード']}
-        self.assertIsNone(module.select_new_completed_history_row([completed], label, set(), {signature}))
+        completed = {'index': 4, 'id': '', 'text': f'{label} 完了 ダウンロード', 'cells': ['2026-09-16 22:00:01', '完了', 'ダウンロード', '商品・キーワード設定', label]}
+        self.assertIsNone(module.select_new_completed_history_row([completed], label, set(), {signature}, lower))
+
+    def test_idless_history_uses_request_bounded_timestamp_selector(self):
+        label = '登録済み商品全件ダウンロード'
+        lower = datetime(2026, 9, 16, 22, 0, tzinfo=module.JST)
+        stale = {'id': '', 'text': f'{label} 完了', 'cells': ['2026-09-16 21:59:59', '完了', 'ダウンロード', '商品・キーワード設定', label]}
+        fresh = {'id': '', 'text': f'{label} 完了', 'cells': ['2026-09-16 22:00:01', '完了', 'ダウンロード', '商品・キーワード設定', label]}
+        self.assertEqual('timestamp:2026-09-16 22:00:01', module.select_new_completed_history_row([stale, fresh], label, set(), set(), lower))
+        deceptive = {'id': '', 'text': f'{label} 完了予定', 'cells': ['2026-09-16 22:00:02', '処理中（完了予定）', '', '商品・キーワード設定', label]}
+        self.assertIsNone(module.select_new_completed_history_row([deceptive], label, set(), set(), lower))
 
     def test_runtime_project_directory_is_explicit(self):
         with tempfile.TemporaryDirectory() as directory:

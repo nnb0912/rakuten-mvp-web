@@ -58,6 +58,7 @@ class RuntimeManifestContractTest(unittest.TestCase):
     def test_recommendation_generator_pins_authenticated_target_endpoint(self):
         generator = module.ARTIFACTS['recommendationGenerator'][0]
         env = os.environ.copy()
+        env['RPP_PROJECT_DIR'] = '/Users/nob/Projects/rpp-8am-notify'
         env['NODE_PATH'] = '/Users/nob/Projects/rpp-8am-notify/node_modules'
         env['RPP_SNAPSHOT_SYNC_TOKEN'] = 'AUDIT_FAKE_TOKEN'
         malicious_probe = f"""
