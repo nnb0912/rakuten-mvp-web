@@ -659,6 +659,11 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
   }
 
   async function openSchedulePanel(itemCode: string) {
+    const exclusionState = exclusionStateMap.get(itemCode);
+    if (!exclusionState || exclusionState.excluded || exclusionState.currentExcluded) {
+      setError("時間指定は、広告ONへの復帰をRMSで確認した後に使用できます。");
+      return;
+    }
     setScheduleBusy(true);
     setError(null);
     setMessage(null);
@@ -1121,6 +1126,7 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
                 const effectiveMode = row?.optimizationMode || "FIXED";
                 const effectiveFixedCpc = row?.fixedCpc ?? (effectiveMode === "FIXED" ? configuredCurrentCpc(cfg) : null);
                 const nightPauseEnabled = nightPauseItemCodes.has(cfg.itemCode);
+                const scheduleEnabled = Boolean(exclusionState && exclusionState.excluded === false && currentExcluded === false);
                 return (
                   <tr key={cfg.id} className={selectedOptimizationIds.has(cfg.id) ? "selected" : currentExcluded ? "excluded" : ""}>
                     <td className="select-col">
@@ -1152,7 +1158,7 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
                           ? <button disabled={busy || row?.changeLocked === true || row?.protectionType === "BLOCK"} type="button" onClick={() => downloadCpcCsv(cfg)} title={row?.changeLocked || row?.protectionType === "BLOCK" ? "変更対象外です" : "RMS手動アップロード用のCPC変更CSVを出力します"}>CPC変更CSV</button>
                           : <span className="keyword-exclusion-na" title="設定したルールに従って自動調整します">自動管理</span>}
                         {productExclusionOperable ? <button className={currentExcluded ? "restore-button" : "danger-ghost"} disabled={busy || (currentExcluded && !canReleaseExclusion && !canUndoAccidentalExclusion)} type="button" onClick={() => toggleExcluded(cfg.itemCode, canReleaseExclusion)} title={currentExcluded && !canReleaseExclusion && !canUndoAccidentalExclusion ? "この商品に目標が1つ以上入るまで除外解除できません" : undefined}>{exclusionChangedForItem ? "戻す" : currentExcluded ? "再開" : "除外"}</button> : <span className="keyword-exclusion-na" title="広告除外は商品CPC行から操作します">商品単位</span>}
-                        {productExclusionOperable ? <button className="schedule-button" disabled={busy || scheduleBusy} type="button" onClick={() => openSchedulePanel(cfg.itemCode)}>時間指定</button> : null}
+                        {productExclusionOperable ? <button className="schedule-button" disabled={busy || scheduleBusy || !scheduleEnabled} type="button" onClick={() => openSchedulePanel(cfg.itemCode)} title={!scheduleEnabled ? "広告ONへの復帰をRMSで確認した後に使用できます" : undefined}>時間指定</button> : null}
                       </div>
                       {productExclusionOperable ? <div className="night-pause-control"><RppInfoTip label="夜間停止" /><button className={nightPauseEnabled ? "restore-button" : ""} disabled={busy || nightPauseBusyItemCode !== null} type="button" aria-pressed={nightPauseEnabled} onClick={() => toggleNightPause(cfg.itemCode)}>{nightPauseBusyItemCode === cfg.itemCode ? "保存中…" : `夜間停止 ${nightPauseEnabled ? "ON" : "OFF"}`}</button><small>01:30 OFF / 06:00 ON</small></div> : null}
                     </td>
@@ -1183,6 +1189,7 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
             const savedCount = completion.saved;
             const canTurnOn = completion.total > 0 && completion.missing === 0;
             const changed = row.currentExcluded !== row.excluded;
+            const scheduleEnabled = row.excluded === false && row.currentExcluded === false;
             return (
               <article className="excluded-product-row" key={row.itemCode}>
                 <div><b>{row.itemCode}</b><br /><small title={row.itemName}>{shortRppItemName(row.itemCode, row.itemName)}</small><br /><small>{row.owner || "担当未設定"}</small></div>
@@ -1191,7 +1198,7 @@ export default function RppTargetSettings({ initialTargets, configuredTargets, e
                 <div className="card-actions excluded-actions">
                   <button disabled={busy || !canTurnOn} type="button" onClick={() => toggleExcluded(row.itemCode, canTurnOn)} title={!canTurnOn ? "先に目標設定を1つ作成してください" : undefined}>{changed ? "元に戻す" : "広告ONに戻す"}</button>
                   <button disabled={busy} type="button" onClick={() => openTargetForm(excludedProductToForm(row))} title={activeEditLockMap.get(row.itemCode) ? `${activeEditLockMap.get(row.itemCode)?.actorName}が編集中` : undefined}>{activeEditLockMap.get(row.itemCode) ? "🔒 目標設定" : "目標設定"}</button>
-                  <button className="schedule-button" disabled={busy || scheduleBusy} type="button" onClick={() => openSchedulePanel(row.itemCode)}>時間指定</button>
+                  <button className="schedule-button" disabled={busy || scheduleBusy || !scheduleEnabled} type="button" onClick={() => openSchedulePanel(row.itemCode)} title={!scheduleEnabled ? "広告ONへの復帰をRMSで確認した後に使用できます" : undefined}>時間指定</button>
                 </div>
               </article>
             );
