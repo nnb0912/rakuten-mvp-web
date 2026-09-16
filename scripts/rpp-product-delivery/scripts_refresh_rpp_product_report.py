@@ -334,13 +334,13 @@ def main() -> int:
     try:
         verification_download, verification_evidence = asyncio.run(download_item_report(start, end))
         _, verification_raw_rows, verification_extracted, _ = extract_csv(verification_download)
-        verification_date, verification_rows = parse_performance_csv(verification_extracted)
+        verification_date, verification_rows = parse_performance_csv(verification_extracted, expected_start=start, expected_end=end)
         downloaded, request_evidence = asyncio.run(download_item_report(start, end))
         source_name, rows, extracted, provider_manifest = extract_csv(downloaded)
-        report_date, normalized_rows = parse_performance_csv(extracted)
-        if report_date != start.isoformat() or report_date != end.isoformat() or len(normalized_rows) != len(rows) - 1:
+        report_date, normalized_rows = parse_performance_csv(extracted, expected_start=start, expected_end=end)
+        if report_date != end.isoformat() or len(normalized_rows) != len(rows) - 1:
             raise RuntimeError('RPP item report normalized row manifest mismatch')
-        if verification_date != report_date or len(verification_rows) != len(verification_raw_rows) - 1:
+        if verification_date != end.isoformat() or verification_date != report_date or len(verification_rows) != len(verification_raw_rows) - 1:
             raise RuntimeError('RPP item report verification batch date mismatch')
         expected_count, expected_item_set_sha256 = validate_batch_quorum(verification_rows, normalized_rows)
         if verification_evidence['history_row_sha256'] == request_evidence['history_row_sha256']:
