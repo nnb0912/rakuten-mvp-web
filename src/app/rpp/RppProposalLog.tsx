@@ -63,7 +63,7 @@ export default function RppProposalLog({ rows, generatedAt, targetCount }: { row
           const action = actionOf(row);
           return <tr key={row.id}>
             <td>{timeLabel(generatedAt)}</td>
-            <td><small className="rpp-proposal-reason"><b>理由：</b>{proposalReason(row)}</small><b>{row.itemName || row.itemCode}</b><small>{row.itemCode}{row.keyword ? ` / ${row.keyword}` : ""}</small></td>
+            <td><small className="rpp-proposal-reason">{proposalReason(row)}</small><b>{row.itemName || row.itemCode}</b><small>{row.itemCode}{row.keyword ? ` / ${row.keyword}` : ""}</small></td>
             <td><span className={`rpp-proposal-action ${action.className}`}>{action.label}</span></td>
             <td><b>¥{Math.round(row.currentCpc).toLocaleString("ja-JP")}</b></td>
             <td><b>{row.proposedCpc == null ? "—" : `¥${Math.round(row.proposedCpc).toLocaleString("ja-JP")}`}</b></td>

@@ -982,7 +982,7 @@ small { color: var(--muted); line-height: 1.45; }
 .rpp-proposal-table td:nth-child(2) b { display: block; overflow: hidden; color: #272321; font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
 .rpp-proposal-table td small { display: block; margin-top: 3px; color: #8c8580; font-size: 10px; line-height: 1.35; }
 .rpp-proposal-table td .rpp-proposal-reason { margin: 0 0 7px; color: #4f4945; white-space: normal; }
-.rpp-proposal-table td .rpp-proposal-reason b { display: inline; margin-right: 3px; color: #272321; font-size: inherit; }
+
 .rpp-proposal-action { display: inline-flex; align-items: center; min-height: 24px; border-radius: 999px; padding: 3px 9px; font-size: 10px; font-weight: 900; white-space: nowrap; }
 .rpp-proposal-action.is-raise { background: #e8eef3; color: #34495e; }
 .rpp-proposal-action.is-lower { background: #fff0df; color: #f39a36; }

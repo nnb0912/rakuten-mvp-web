@@ -109,7 +109,8 @@ test("調整提案ログはダッシュボードの自動モード商品より�
   assert.match(proposalSource, /理由・対象/);
   assert.match(proposalSource, /reason\.startsWith\("最適化モード:"\)/);
   assert.match(proposalSource, /reason\.startsWith\("保護区分:"\)/);
-  assert.match(proposalSource, /<b>理由：<\/b>\{proposalReason\(row\)\}/);
+  assert.match(proposalSource, /className="rpp-proposal-reason">\{proposalReason\(row\)\}/);
+  assert.doesNotMatch(proposalSource, />理由：</);
   assert.ok(proposalSource.indexOf('<small className="rpp-proposal-reason">') < proposalSource.indexOf('<b>{row.itemName || row.itemCode}</b>'));
   assert.match(proposalSource, /設定した固定CPC/);
   assert.match(proposalSource, /に対して現在/);
