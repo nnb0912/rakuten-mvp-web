@@ -19,7 +19,7 @@ import re
 import shutil
 import sys
 import zipfile
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Iterable
 
@@ -31,6 +31,7 @@ DOWNLOADS.mkdir(exist_ok=True)
 ITEMS_OUT = PROJECT / 'rpp_item_settings.csv'
 KEYWORDS_OUT = PROJECT / 'rpp_keyword_settings.csv'
 EXCLUDE_OUT = PROJECT / 'rpp_exclude_items.csv'
+BUDGET_OUT = PROJECT / 'rpp_budget_observation.json'
 
 
 def load_env(path: Path) -> None:
@@ -179,6 +180,157 @@ def normalize_code(s: str) -> str:
     return re.sub(r'[^0-9A-Za-z_-]', '', s.strip())
 
 
+def parse_yen(value: object) -> int:
+    digits = re.sub(r'[^0-9]', '', str(value or ''))
+    if not digits:
+        raise RuntimeError(f'RPP budget amount is invalid: {value!r}')
+    return int(digits)
+
+
+def infer_as_of_date(month: int, day: int, today: date | None = None) -> str:
+    """Resolve RMS MM/DD labels without assigning Dec 31 to the next year in January."""
+    reference = today or datetime.now().astimezone().date()
+    candidate = date(reference.year, month, day)
+    if candidate > reference + timedelta(days=1):
+        candidate = date(reference.year - 1, month, day)
+    return candidate.isoformat()
+
+
+async def collect_budget_observation(page, attempted_at: str) -> dict[str, object]:
+    """Collect and cross-check the RMS top and campaign budgets read-only."""
+    await page.goto('https://ad.rms.rakuten.co.jp/rpp/top', wait_until='domcontentloaded', timeout=60000)
+    await page.wait_for_function("() => document.body.innerText.includes('継続月予算') && document.body.innerText.includes('有効予算')", timeout=60000)
+    if '/rpp/top' not in page.url:
+        raise RuntimeError(f'RPP top page not reached: url={page.url}')
+    top = await page.evaluate('''() => {
+      const rows = [...document.querySelectorAll('tr')].map(tr => [...tr.querySelectorAll('th,td')].map(cell => cell.innerText.trim()));
+      const find = label => rows.find(cells => cells[0] === label);
+      const continuing = find('継続月予算');
+      const effective = find('有効予算');
+      return continuing && effective ? {
+        continuingBudget: continuing[2] || '',
+        effectiveBudget: effective[2] || '',
+        continuingAsOf: continuing[3] || '',
+        effectiveAsOf: effective[3] || ''
+      } : null;
+    }''')
+    if not isinstance(top, dict):
+        raise RuntimeError('RPP top budget rows were not found')
+    continuing_budget = parse_yen(top.get('continuingBudget'))
+    effective_budget = parse_yen(top.get('effectiveBudget'))
+    if top.get('continuingAsOf') != top.get('effectiveAsOf'):
+        raise RuntimeError('RPP top budget as-of dates do not match')
+    as_of_match = re.search(r'(\d{1,2})/(\d{1,2})', str(top.get('effectiveAsOf') or ''))
+    if not as_of_match:
+        raise RuntimeError('RPP top budget as-of date was not found')
+    as_of_date = infer_as_of_date(int(as_of_match.group(1)), int(as_of_match.group(2)))
+
+    await page.goto('https://ad.rms.rakuten.co.jp/rpp/campaigns', wait_until='domcontentloaded', timeout=60000)
+    await page.wait_for_function("() => document.body.innerText.includes('キャンペーンID') && document.body.innerText.includes('継続月予算')", timeout=60000)
+    if '/rpp/campaigns' not in page.url:
+        raise RuntimeError(f'RPP campaigns page not reached: url={page.url}')
+
+    raw = await page.evaluate('''() => {
+      const tables = [...document.querySelectorAll('table')].filter(t => {
+        const text = [...t.querySelectorAll('thead th')].map(th => th.innerText.trim()).join('|');
+        return text.includes('キャンペーンID') && text.includes('ステータス') && text.includes('継続月予算');
+      });
+      if (tables.length !== 1) return { error: `campaign table count=${tables.length}` };
+      const table = tables[0];
+      const headers = [...table.querySelectorAll('thead th')].map(th => th.innerText.trim());
+      const indexes = label => headers.map((text, index) => text.includes(label) ? index : -1).filter(index => index >= 0);
+      const idIndexes = indexes('キャンペーンID');
+      const statusIndexes = indexes('ステータス');
+      const budgetIndexes = indexes('継続月予算');
+      if (idIndexes.length !== 1 || statusIndexes.length !== 1 || budgetIndexes.length !== 1) {
+        return { error: 'campaign headers are missing or ambiguous' };
+      }
+      const [idIndex] = idIndexes;
+      const [statusIndex] = statusIndexes;
+      const [budgetIndex] = budgetIndexes;
+      const rows = [];
+      const invalidRows = [];
+      for (const [rowIndex, tr] of [...table.querySelectorAll('tbody tr')].entries()) {
+        const cells = [...tr.querySelectorAll('td')];
+        const id = cells[idIndex]?.innerText.trim() || '';
+        if (!id && cells.every(cell => !cell.innerText.trim())) continue;
+        const statusCell = cells[statusIndex];
+        const budgetCell = cells[budgetIndex];
+        const checkbox = statusCell?.querySelector('input[type="checkbox"]');
+        const budget = budgetCell?.querySelector('input');
+        if (!/^\\d+$/.test(id) || !checkbox || !budget || !String(budget.value || '').trim()) {
+          invalidRows.push(rowIndex);
+          continue;
+        }
+        const statusText = String(statusCell.innerText || '').trim();
+        const explicitlyInactive = /無効|停止|終了/.test(statusText);
+        const explicitlyActive = /有効|配信中/.test(statusText);
+        if (explicitlyActive && !checkbox.checked || explicitlyInactive && checkbox.checked) {
+          invalidRows.push(rowIndex);
+          continue;
+        }
+        rows.push({ id, active: checkbox.checked === true && !explicitlyInactive, statusDisabled: checkbox.disabled === true, budget: budget.value });
+      }
+      let scope = table;
+      let countMatches = [];
+      for (let depth = 0; depth < 5 && scope; depth += 1, scope = scope.parentElement) {
+        countMatches = [...String(scope.innerText || '').matchAll(/全\\s*([0-9,]+)\\s*件/g)].map(match => Number(match[1].replaceAll(',', '')));
+        if (countMatches.length) break;
+      }
+      const uniqueIds = new Set(rows.map(row => row.id));
+      return {
+        rows,
+        invalidRows,
+        duplicateIds: uniqueIds.size !== rows.length,
+        expectedCount: countMatches.length === 1 ? countMatches[0] : null,
+        countMatchCount: countMatches.length,
+      };
+    }''')
+    if not isinstance(raw, dict) or raw.get('error') or not isinstance(raw.get('rows'), list):
+        raise RuntimeError(f'RPP campaign budget table is invalid: {raw.get("error") if isinstance(raw, dict) else "missing"}')
+    if raw.get('invalidRows') or raw.get('duplicateIds') is True or raw.get('countMatchCount') != 1:
+        raise RuntimeError('RPP campaign rows or count are incomplete')
+    expected = raw.get('expectedCount')
+    rows = raw['rows']
+    if not isinstance(expected, int) or expected < 0:
+        raise RuntimeError('RPP campaign expected count was not found')
+    if len(rows) != expected:
+        raise RuntimeError(f'RPP campaign list incomplete: expected={expected}, collected={len(rows)}')
+    budgets = [parse_yen(row.get('budget')) for row in rows]
+    active_budgets = [budget for row, budget in zip(rows, budgets) if row.get('active') is True]
+    if effective_budget != sum(active_budgets):
+        raise RuntimeError(f'RPP effective budget mismatch: top={effective_budget}, campaigns={sum(active_budgets)}')
+    if continuing_budget != sum(budgets):
+        raise RuntimeError(f'RPP continuing budget mismatch: top={continuing_budget}, campaigns={sum(budgets)}')
+    observed_at = datetime.now().astimezone().isoformat()
+    return {
+        'version': 1,
+        'status': 'COMPLETE',
+        'attemptedAt': attempted_at,
+        'observedAt': observed_at,
+        'asOfDate': as_of_date,
+        'source': 'RMS_RPP_TOP_AND_CAMPAIGNS',
+        'currency': 'JPY',
+        'campaignCount': len(rows),
+        'activeCampaignCount': len(active_budgets),
+        'effectiveBudget': effective_budget,
+        'continuingBudget': continuing_budget,
+        'activeCampaignBudgetTotal': sum(active_budgets),
+        'allCampaignBudgetTotal': sum(budgets),
+        'complete': True,
+    }
+
+
+def write_budget_observation(observation: dict[str, object], out: Path = BUDGET_OUT) -> None:
+    out.parent.mkdir(parents=True, exist_ok=True)
+    tmp = out.with_suffix(out.suffix + '.tmp')
+    tmp.write_text(json.dumps(observation, ensure_ascii=False, indent=2) + '\n', encoding='utf-8')
+    tmp.replace(out)
+    readback = json.loads(out.read_text(encoding='utf-8'))
+    if readback != observation:
+        raise RuntimeError('RPP budget observation readback mismatch')
+
+
 async def collect_exclude_items(page) -> tuple[list[str], dict[str, object]]:
     await page.goto('https://ad.rms.rakuten.co.jp/rpp/exclude', timeout=60000)
     await page.wait_for_load_state('networkidle', timeout=60000)
@@ -256,6 +408,16 @@ async def refresh(targets: set[str], exclude_output: Path = EXCLUDE_OUT) -> dict
     load_env(RAKUTEN_MARKETING / '.env')
     from scripts_refresh_rpp_keyword_report import _rms_login_lenient
 
+    attempted_at = datetime.now().astimezone().isoformat()
+    if 'budget' in targets:
+        write_budget_observation({
+            'version': 1, 'status': 'UNKNOWN', 'attemptedAt': attempted_at,
+            'observedAt': None, 'asOfDate': None, 'source': 'RMS_RPP_TOP_AND_CAMPAIGNS',
+            'currency': 'JPY', 'campaignCount': None, 'activeCampaignCount': None,
+            'effectiveBudget': None, 'continuingBudget': None,
+            'activeCampaignBudgetTotal': None, 'allCampaignBudgetTotal': None,
+            'complete': False,
+        })
     p_inst = browser = None
     result: dict[str, object] = {'ok': True, 'updated_at': datetime.now().isoformat(), 'targets': sorted(targets)}
     try:
@@ -276,6 +438,18 @@ async def refresh(targets: set[str], exclude_output: Path = EXCLUDE_OUT) -> dict
             extracted = write_exclude_csv(codes)
             backup = backup_and_replace(extracted, exclude_output, 'exclude')
             result['exclude'] = {'output': str(exclude_output), 'backup': str(backup) if backup else None, 'rows': len(codes), **meta}
+        if 'budget' in targets:
+            observation = await collect_budget_observation(page, attempted_at)
+            write_budget_observation(observation)
+            result['budget'] = {
+                'output': str(BUDGET_OUT),
+                'observed_at': observation['observedAt'],
+                'campaign_count': observation['campaignCount'],
+                'active_campaign_count': observation['activeCampaignCount'],
+                'effective_budget': observation['effectiveBudget'],
+                'continuing_budget': observation['continuingBudget'],
+                'complete': observation['complete'],
+            }
         result['completed_at'] = datetime.now().isoformat()
         return result
     finally:
@@ -290,6 +464,7 @@ def main() -> int:
     ap.add_argument('--items-only', action='store_true')
     ap.add_argument('--keywords-only', action='store_true')
     ap.add_argument('--exclude-only', action='store_true')
+    ap.add_argument('--budget-only', action='store_true')
     ap.add_argument('--exclude-output', type=Path, default=EXCLUDE_OUT)
     args = ap.parse_args()
     targets = set()
@@ -299,8 +474,10 @@ def main() -> int:
         targets.add('keywords')
     if args.exclude_only:
         targets.add('exclude')
+    if args.budget_only:
+        targets.add('budget')
     if not targets:
-        targets = {'items', 'keywords', 'exclude'}
+        targets = {'items', 'keywords', 'exclude', 'budget'}
     res = asyncio.run(refresh(targets, args.exclude_output))
     receipt = PROJECT / 'rpp_logs' / f'rpp_settings_refresh_{datetime.now():%Y%m%d_%H%M%S}.json'
     receipt.parent.mkdir(exist_ok=True)

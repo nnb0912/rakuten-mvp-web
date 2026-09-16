@@ -14,6 +14,7 @@ import { isAutomaticRppOptimizationMode } from "@/lib/rppCpcModePolicy";
 import { shortRppItemName } from "@/lib/rppItemShortNames";
 import { readLatestRppDashboardSnapshot } from "@/lib/rppDashboardSnapshots";
 import { buildRppDeliveryComposition } from "@/lib/rppDashboardCharts";
+import { resolveRppRmsBudget } from "@/lib/rppRmsBudget";
 import RppAutoAdjustmentSettingsPanel from "./RppAutoAdjustmentSettingsPanel";
 import RppConsoleNav from "./RppConsoleNav";
 import RppDashboardCharts from "./RppDashboardCharts";
@@ -33,7 +34,7 @@ const RPP_VIEWS = {
   products: { label: "広告掲載商品リスト", description: "商品/KWの目標設定・除外・実験を操作します。" },
   excluded: { label: "除外中・広告ON戻し", description: "除外中商品を担当者別に確認し、広告ONへ戻します。" },
 
-  optimization: { label: "CPC最適化", description: "自動調整ルールと安全設定を確認します。" },
+  optimization: { label: "自動調整設定", description: "自動調整の共通スイッチと安全設定を確認します。" },
   data: { label: "データ・実行履歴", description: "データ鮮度・保留理由・監査ログを確認します。" },
   guide: { label: "画面の見方", description: "担当別の確認手順と安全な操作方法を説明します。" },
 } as const;
@@ -177,6 +178,7 @@ export default async function RppPage({ searchParams }: { searchParams: Promise<
   const excludedAutomaticProducts = [...automaticItemCodes].filter((itemCode) => targetData.exclusionProducts.some((row) => row.itemCode === itemCode && row.excluded)).length;
   const unknownAutomaticProducts = Math.max(0, automaticItemCodes.size - activeAutomaticProducts - excludedAutomaticProducts);
   const allRppDelivery = buildRppDeliveryComposition(latestDashboardSnapshot);
+  const rmsBudget = resolveRppRmsBudget(latestDashboardSnapshot?.rmsBudget);
   const dashboardSpend = automaticRecommendations.reduce((sum, row) => sum + (row.spend ?? 0), 0);
   const dashboardSales = automaticRecommendations.reduce((sum, row) => sum + (row.salesAmount ?? 0), 0);
   const dashboardRoas = dashboardSpend > 0 ? (dashboardSales / dashboardSpend) * 100 : null;
@@ -275,10 +277,10 @@ export default async function RppPage({ searchParams }: { searchParams: Promise<
         </ol>
         <div className="rpp-guide-grid">
           <article><div><span>01</span><b>ダッシュボード</b></div><p>固定以外のモードを選択した商品を、商品CPC・KWCPC別に確認します。配信状態、前日実績、順位、現在判断を確認します。</p><Link href="/rpp?view=dashboard">この画面を開く →</Link></article>
-          <article><div><span>02</span><b>予算管理</b></div><p>月予算、消化率、月末着地、期間比較を確認します。現段階は監視専用で、ここからRMS予算を自動変更しません。</p><Link href="/rpp?view=budget">この画面を開く →</Link></article>
+          <article><div><span>02</span><b>予算管理</b></div><p>RMS有効予算、消化率、月末着地、着地差額、期間比較を確認します。予算額はRMSから取得し、この画面から変更しません。</p><Link href="/rpp?view=budget">この画面を開く →</Link></article>
           <article className="rpp-guide-wide"><div><span>03</span><b>広告掲載商品リスト</b></div><p>①担当タブを選ぶ → ②商品番号・商品名・KWで検索 → ③現CPC、提案CPC、ROAS、PC/SP順位、運用モード、保護、配信状態を確認します。「設定」で右側の編集画面を開きます。</p><ul><li><b>自動運用：</b>商品番号による制限はありません。ROAS／検索順位／バランスを選択すると、その設定行が自動調整対象になります。</li><li><b>CPC固定：</b>固定額を維持し、自動調整しません。「CPC変更CSV」からRMS手動アップロード用CSVを出力します。</li><li><b>基準ワード：</b>商品CPCの順位判定ワードを複数追加できます。どれか1語でもPC・SPの目標順位を満たせば達成扱いです。</li><li><b>商品CPC行：</b>CPC設定と商品単位の広告除外／再開を操作できます。</li><li><b>夜間停止：</b>ONの商品だけを01:30に広告OFF、06:00にONへ戻します。元から除外中の商品は戻しません。</li><li><b>KWCPC行：</b>キーワードCPCを設定します。広告除外は商品単位のため、KWCPC行には除外操作がありません。</li><li><b>変更予定：</b>RMS反映前のローカル状態です。「戻す」で取り消せます。</li></ul><Link href="/rpp?view=products">この画面を開く →</Link></article>
           <article><div><span>04</span><b>除外中・広告ON戻し</b></div><p>除外中商品を独立画面で開き、担当者タブだけで絞り込みます。目標設定後に広告ONへ戻します。</p><Link href="/rpp?view=excluded">この画面を開く →</Link></article>
-          <article><div><span>05</span><b>CPC最適化</b></div><p>最低CPC、上限、ROAS基準、1回変更幅などの提案ルールを確認します。設定は提案生成条件であり、RMSへ即時反映するものではありません。</p><Link href="/rpp?view=optimization">この画面を開く →</Link></article>
+          <article><div><span>05</span><b>自動調整設定</b></div><p>自動調整の全体ON/OFF、1回の最大変更幅、変更不可・RMS除外中商品の安全設定を確認します。ROAS・順位・CPC上下限は商品別設定を使います。</p><Link href="/rpp?view=optimization">この画面を開く →</Link></article>
           <article><div><span>06</span><b>実験履歴</b></div><p>既存の実験履歴は開始値と終了値を同じ指標で比較できます。現在の4つの通常運用モードは終了日不要で、実験履歴を新規作成しません。</p><Link href="/rpp?view=products">広告掲載商品リストを開く →</Link></article>
           <article><div><span>07</span><b>データ・実行履歴</b></div><p>同期ファイルの時刻、保留理由、対象外、監査ログ、RMS反映履歴を確認します。反映後は結果と読み戻しが一致しているか確認します。</p><Link href="/rpp?view=data">この画面を開く →</Link></article>
         </div>
@@ -289,7 +291,7 @@ export default async function RppPage({ searchParams }: { searchParams: Promise<
       </section> : null}
 
       {view === "budget" ? <>
-        <RppBudgetPanel initialSettings={budgetData.settings} source={budgetData.source} metrics={{ ...(summary?.budgetMetrics ?? {}), dailyActuals }} />
+        <RppBudgetPanel initialSettings={budgetData.settings} source={budgetData.source} metrics={{ ...(summary?.budgetMetrics ?? {}), dailyActuals }} rmsBudget={rmsBudget} />
         <RppPeriodComparison />
         <RppStrategyPanel initialSettings={strategyData.settings} source={strategyData.source} />
       </> : null}

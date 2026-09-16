@@ -120,6 +120,56 @@ class OperationalDataTest(unittest.TestCase):
         changed_observation['rppData']['exclusionObservation']['actualCount'] = 0
         with self.assertRaisesRegex(RuntimeError, 'exclusionObservation'):
             module.validate_snapshot_readback(payload, changed_observation, 200)
+        posted = json.loads(json.dumps(snapshot))
+        changed_owner = json.loads(json.dumps(snapshot))
+        changed_owner['rppData']['owners'] = ['別担当']
+        with self.assertRaisesRegex(RuntimeError, 'full readback'):
+            module.validate_snapshot_readback(payload, changed_owner, 200, posted)
+
+    def test_rms_budget_observation_and_v5_readback_require_exact_totals(self):
+        attempted = dt.datetime.now(dt.timezone.utc) - dt.timedelta(minutes=2)
+        observed = attempted + dt.timedelta(seconds=41)
+        attempted_jst = attempted.astimezone(dt.timezone(dt.timedelta(hours=9))).isoformat()
+        observed_jst = observed.astimezone(dt.timezone(dt.timedelta(hours=9))).isoformat()
+        observation = {
+            'version': 1, 'status': 'COMPLETE', 'attemptedAt': attempted_jst,
+            'observedAt': observed_jst, 'asOfDate': '2026-09-15',
+            'source': 'RMS_RPP_TOP_AND_CAMPAIGNS', 'currency': 'JPY',
+            'campaignCount': 4, 'activeCampaignCount': 1, 'effectiveBudget': 5_000_000,
+            'continuingBudget': 8_253_154, 'activeCampaignBudgetTotal': 5_000_000,
+            'allCampaignBudgetTotal': 8_253_154, 'complete': True,
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            budget_path = root / 'rpp_budget_observation.json'
+            budget_path.write_text(json.dumps(observation), encoding='utf-8')
+            old_project = module.PROJECT
+            try:
+                setattr(module, 'PROJECT', root)
+                self.assertEqual(module.rms_budget_observation(), observation)
+                broken = {**observation, 'effectiveBudget': 4_999_999}
+                budget_path.write_text(json.dumps(broken), encoding='utf-8')
+                with self.assertRaisesRegex(RuntimeError, 'totals do not match'):
+                    module.rms_budget_observation()
+                budget_path.write_text(json.dumps({**observation, 'currency': 'USD'}), encoding='utf-8')
+                with self.assertRaisesRegex(RuntimeError, 'observation is invalid'):
+                    module.rms_budget_observation()
+                future = (dt.datetime.now(dt.timezone.utc) + dt.timedelta(minutes=1)).isoformat()
+                budget_path.write_text(json.dumps({**observation, 'attemptedAt': future, 'observedAt': future}), encoding='utf-8')
+                with self.assertRaisesRegex(RuntimeError, 'future'):
+                    module.rms_budget_observation()
+            finally:
+                setattr(module, 'PROJECT', old_project)
+        payload = {'syncedAt': '2026-09-16T04:16:12Z', 'rmsBudget': observation, 'rppData': {'configuredTargets': [], 'allConfiguredTargets': [], 'exclusionProducts': [], 'owners': []}}
+        normalized_observation = {
+            **observation,
+            'attemptedAt': attempted.astimezone(dt.timezone.utc).isoformat().replace('+00:00', 'Z'),
+            'observedAt': observed.astimezone(dt.timezone.utc).isoformat().replace('+00:00', 'Z'),
+        }
+        snapshot = {'schemaVersion': 5, 'syncedAt': payload['syncedAt'], 'rmsBudget': normalized_observation, 'rppData': payload['rppData']}
+        module.validate_snapshot_readback(payload, snapshot, 200)
+        with self.assertRaisesRegex(RuntimeError, 'RMS budget'):
+            module.validate_snapshot_readback(payload, {**snapshot, 'rmsBudget': {**normalized_observation, 'effectiveBudget': 1}}, 200)
 
     def test_readback_requires_performance_daily_date_and_row_count(self):
         payload = {

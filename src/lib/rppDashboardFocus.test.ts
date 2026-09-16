@@ -75,3 +75,7 @@ test("スマホのKPIとグラフ見出しは横幅を有効利用する", () =>
   assert.match(styles, /\.rpp-period-tabs \{[^}]*justify-content: stretch/);
   assert.match(styles, /\.rpp-chart-legend span \{[^}]*white-space: nowrap/);
 });
+
+test("PCのクリック・CVカードは上段KPIと同じ6列幅に揃える", () => {
+  assert.match(styles, /\.rpp-chart-kpis \{[^}]*grid-template-columns: repeat\(6, minmax\(0, 1fr\)\);[^}]*gap: 8px/);
+});

@@ -1,0 +1,76 @@
+#!/usr/bin/env python3
+import asyncio
+import importlib.util
+import json
+import tempfile
+import unittest
+from datetime import date
+from pathlib import Path
+
+SCRIPT = Path(__file__).with_name('scripts_refresh_rpp_settings_csvs.py')
+spec = importlib.util.spec_from_file_location('scripts_refresh_rpp_settings_csvs', SCRIPT)
+assert spec is not None and spec.loader is not None
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+
+
+class FakePage:
+    def __init__(self, continuing='8,253,154 円', effective='5,000,000 円'):
+        self.url = ''
+        self.results = [
+            {'continuingBudget': continuing, 'effectiveBudget': effective, 'continuingAsOf': '(09/15 時点)', 'effectiveAsOf': '(09/15 時点)'},
+            {'expectedCount': 4, 'countMatchCount': 1, 'invalidRows': [], 'duplicateIds': False, 'rows': [
+                {'id': '1', 'active': True, 'budget': '5,000,000 円'},
+                {'id': '2', 'active': False, 'budget': '1,550,000 円'},
+                {'id': '3', 'active': False, 'budget': '5,000 円'},
+                {'id': '4', 'active': False, 'budget': '1,698,154 円'},
+            ]},
+        ]
+
+    async def goto(self, url, **kwargs):
+        self.url = url
+
+    async def wait_for_function(self, expression, timeout=None):
+        return None
+
+    async def wait_for_timeout(self, value):
+        return None
+
+    async def evaluate(self, script):
+        return self.results.pop(0)
+
+
+class BudgetObservationTest(unittest.TestCase):
+    def test_collects_only_fully_reconciled_budget(self):
+        result = asyncio.run(module.collect_budget_observation(FakePage(), '2026-09-16T13:15:30+09:00'))
+        self.assertEqual(result['status'], 'COMPLETE')
+        self.assertEqual(result['effectiveBudget'], 5_000_000)
+        self.assertEqual(result['continuingBudget'], 8_253_154)
+        self.assertEqual(result['activeCampaignCount'], 1)
+        self.assertTrue(result['complete'])
+
+    def test_rejects_top_and_campaign_total_mismatch(self):
+        with self.assertRaisesRegex(RuntimeError, 'effective budget mismatch'):
+            asyncio.run(module.collect_budget_observation(FakePage(effective='4,999,999 円'), '2026-09-16T13:15:30+09:00'))
+
+    def test_rejects_campaign_rows_with_missing_status_or_budget_controls(self):
+        page = FakePage()
+        page.results[1]['invalidRows'] = [0]
+        with self.assertRaisesRegex(RuntimeError, 'rows or count are incomplete'):
+            asyncio.run(module.collect_budget_observation(page, '2026-09-16T13:15:30+09:00'))
+
+    def test_atomic_observation_write_reads_back_exactly(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'observation.json'
+            value = {'version': 1, 'status': 'UNKNOWN', 'complete': False}
+            module.write_budget_observation(value, path)
+            self.assertEqual(json.loads(path.read_text(encoding='utf-8')), value)
+            self.assertFalse(path.with_suffix('.json.tmp').exists())
+
+    def test_as_of_date_uses_previous_year_for_december_at_new_year(self):
+        self.assertEqual(module.infer_as_of_date(12, 31, date(2026, 1, 1)), '2025-12-31')
+        self.assertEqual(module.infer_as_of_date(9, 15, date(2026, 9, 16)), '2026-09-15')
+
+
+if __name__ == '__main__':
+    unittest.main()
