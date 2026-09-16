@@ -227,6 +227,10 @@ async def collect_budget_observation(page, attempted_at: str) -> dict[str, objec
 
     await page.goto('https://ad.rms.rakuten.co.jp/rpp/campaigns', wait_until='domcontentloaded', timeout=60000)
     await page.wait_for_function("() => document.body.innerText.includes('キャンペーンID') && document.body.innerText.includes('継続月予算')", timeout=60000)
+    # RMS renders the table body after the headers and an initial transient
+    # "全0件" state.  Do not mistake that loading state for a complete empty
+    # campaign set.
+    await page.wait_for_timeout(10000)
     if '/rpp/campaigns' not in page.url:
         raise RuntimeError(f'RPP campaigns page not reached: url={page.url}')
 
@@ -256,20 +260,18 @@ async def collect_budget_observation(page, attempted_at: str) -> dict[str, objec
         if (!id && cells.every(cell => !cell.innerText.trim())) continue;
         const statusCell = cells[statusIndex];
         const budgetCell = cells[budgetIndex];
-        const checkbox = statusCell?.querySelector('input[type="checkbox"]');
-        const budget = budgetCell?.querySelector('input');
-        if (!/^\\d+$/.test(id) || !checkbox || !budget || !String(budget.value || '').trim()) {
+        const checkboxes = [...(statusCell?.querySelectorAll('input[type="checkbox"]') || [])];
+        const budgetInputs = [...(budgetCell?.querySelectorAll('input') || [])];
+        const checkbox = checkboxes[0];
+        const budget = budgetInputs[0];
+        if (!/^\\d+$/.test(id) || checkboxes.length !== 1 || budgetInputs.length !== 1 || !String(budget.value || '').trim()) {
           invalidRows.push(rowIndex);
           continue;
         }
-        const statusText = String(statusCell.innerText || '').trim();
-        const explicitlyInactive = /無効|停止|終了/.test(statusText);
-        const explicitlyActive = /有効|配信中/.test(statusText);
-        if (explicitlyActive && !checkbox.checked || explicitlyInactive && checkbox.checked) {
-          invalidRows.push(rowIndex);
-          continue;
-        }
-        rows.push({ id, active: checkbox.checked === true && !explicitlyInactive, statusDisabled: checkbox.disabled === true, budget: budget.value });
+        // The cell contains both toggle option labels ("有効" and "無効"),
+        // so innerText cannot determine state.  The checked property is the
+        // rendered source of truth; disabled is retained for completeness.
+        rows.push({ id, active: checkbox.checked === true, statusDisabled: checkbox.disabled === true, budget: budget.value });
       }
       let scope = table;
       let countMatches = [];
