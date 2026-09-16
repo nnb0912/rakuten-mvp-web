@@ -371,6 +371,20 @@ def request(method: str, auth: str, payload: dict | None = None, query: str = ""
         return error.code, detail
 
 
+def post_snapshot(auth: str, payload: dict) -> tuple[dict, int, dict, bool]:
+    status, posted = request("POST", auth, payload)
+    stale_performance = (
+        status == 400
+        and payload.get("performanceDaily") is not None
+        and posted.get("error") == "performance daily date is older than latest persisted date"
+    )
+    if not stale_performance:
+        return payload, status, posted, False
+    posted_payload = {**payload, "performanceDaily": None}
+    status, posted = request("POST", auth, posted_payload)
+    return posted_payload, status, posted, True
+
+
 def validate_snapshot_readback(payload: dict, snapshot: dict, read_status: int, posted_snapshot: dict | None = None) -> None:
     if posted_snapshot is not None and snapshot != posted_snapshot:
         raise RuntimeError("snapshot full readback mismatch")
@@ -456,7 +470,7 @@ def main() -> int:
         print(json.dumps(summary, ensure_ascii=False))
         return 0
     auth = token()
-    status, posted = request("POST", auth, payload)
+    posted_payload, status, posted, stale_performance_skipped = post_snapshot(auth, payload)
     if status != 201 or not posted.get("ok"):
         raise RuntimeError(f"snapshot POST failed: HTTP {status} {posted.get('error', 'unknown error')}")
     read_status, readback = request("GET", auth)
@@ -464,12 +478,12 @@ def main() -> int:
     posted_snapshot = posted.get("snapshot")
     if not isinstance(posted_snapshot, dict):
         raise RuntimeError("snapshot POST did not return canonical snapshot")
-    validate_snapshot_readback(payload, snapshot, read_status, posted_snapshot)
-    if payload["performanceDaily"] is not None:
-        performance_query = "?resource=performance-daily&date=" + urllib.parse.quote(payload["performanceDaily"]["date"])
+    validate_snapshot_readback(posted_payload, snapshot, read_status, posted_snapshot)
+    if posted_payload["performanceDaily"] is not None:
+        performance_query = "?resource=performance-daily&date=" + urllib.parse.quote(posted_payload["performanceDaily"]["date"])
         performance_status, performance_readback = request("GET", auth, query=performance_query)
-        validate_performance_readback(payload["performanceDaily"], performance_readback, performance_status)
-    print(json.dumps({**summary, "dryRun": False, "syncedAt": payload["syncedAt"], "readback": "OK"}, ensure_ascii=False))
+        validate_performance_readback(posted_payload["performanceDaily"], performance_readback, performance_status)
+    print(json.dumps({**summary, "dryRun": False, "syncedAt": posted_payload["syncedAt"], "performanceDailySkippedAsStale": stale_performance_skipped, "readback": "OK"}, ensure_ascii=False))
     return 0
 
 

@@ -9,6 +9,7 @@ import os
 import shutil
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 SCRIPT = Path(__file__).with_name('rpp_push_dashboard_snapshot.py')
@@ -182,6 +183,28 @@ class OperationalDataTest(unittest.TestCase):
         snapshot['performanceDaily'] = {'date': '2026-09-09', 'rows': []}
         with self.assertRaisesRegex(RuntimeError, 'performanceDaily'):
             module.validate_snapshot_readback(payload, snapshot, 200)
+
+    def test_stale_performance_retries_snapshot_without_overwriting_newer_facts(self):
+        payload = {'syncedAt': '2026-09-16T08:30:00Z', 'performanceDaily': {'date': '2026-09-14', 'rows': []}, 'rppData': {}}
+        canonical = {**payload, 'performanceDaily': None}
+        with mock.patch.object(module, 'request', side_effect=[
+            (400, {'error': 'performance daily date is older than latest persisted date'}),
+            (201, {'ok': True, 'snapshot': canonical}),
+        ]) as mocked:
+            posted_payload, status, posted, skipped = module.post_snapshot('token', payload)
+        self.assertEqual(status, 201)
+        self.assertTrue(posted['ok'])
+        self.assertTrue(skipped)
+        self.assertIsNone(posted_payload['performanceDaily'])
+        self.assertEqual(mocked.call_count, 2)
+        self.assertEqual(mocked.call_args_list[1].args, ('POST', 'token', canonical))
+
+    def test_snapshot_does_not_retry_unrelated_validation_errors(self):
+        payload = {'syncedAt': '2026-09-16T08:30:00Z', 'performanceDaily': {'date': '2026-09-14', 'rows': []}}
+        with mock.patch.object(module, 'request', return_value=(400, {'error': 'another validation error'})) as mocked:
+            posted_payload, status, posted, skipped = module.post_snapshot('token', payload)
+        self.assertEqual((posted_payload, status, posted, skipped), (payload, 400, {'error': 'another validation error'}, False))
+        self.assertEqual(mocked.call_count, 1)
 
     def test_performance_db_readback_requires_exact_items_metrics_and_source(self):
         expected = {
