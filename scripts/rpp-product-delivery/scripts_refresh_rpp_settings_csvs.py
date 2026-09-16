@@ -20,9 +20,11 @@ import re
 import shutil
 import sys
 import zipfile
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Iterable
+
+JST = timezone(timedelta(hours=9))
 
 PROJECT = Path(os.environ.get('RPP_PROJECT_DIR') or Path(__file__).resolve().parent).resolve()
 RAKUTEN_MARKETING = Path('/Users/nob/Projects/rakuten-marketing')
@@ -106,26 +108,46 @@ async def click_by_text(page, text: str) -> bool:
     }''', text)
 
 
+def history_row_timestamp(row: dict[str, object]) -> tuple[str, datetime] | None:
+    raw_cells = row.get('cells')
+    cells = [re.sub(r'\s+', ' ', str(cell)).strip() for cell in (raw_cells if isinstance(raw_cells, list) else [])]
+    if not cells or not re.fullmatch(r'\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}', cells[0]):
+        return None
+    try:
+        return cells[0], datetime.strptime(cells[0], '%Y-%m-%d %H:%M:%S').replace(tzinfo=JST)
+    except ValueError:
+        return None
+
+
 def history_row_identity(row: dict[str, object]) -> tuple[str, str]:
     row_id = str(row.get('id') or '').strip()
-    text = re.sub(r'\s+', ' ', str(row.get('text') or '')).strip()
-    signature = hashlib.sha256(f'{row_id}\n{text}'.encode('utf-8')).hexdigest()
+    raw_cells = row.get('cells')
+    cells = [re.sub(r'\s+', ' ', str(cell)).strip() for cell in (raw_cells if isinstance(raw_cells, list) else [])]
+    stamped = history_row_timestamp(row)
+    immutable = row_id if row_id else f'{stamped[0] if stamped else ""}\n{cells[3] if len(cells) > 3 else ""}\n{cells[4] if len(cells) > 4 else ""}'
+    signature = hashlib.sha256(immutable.encode('utf-8')).hexdigest()
     return row_id, signature
 
 
 def select_new_completed_history_row(
-    rows: list[dict[str, object]], menu_label: str, pre_ids: set[str], pre_signatures: set[str]
+    rows: list[dict[str, object]], menu_label: str, pre_ids: set[str], pre_signatures: set[str],
+    request_lower_bound: datetime,
 ) -> str | None:
     candidates = []
     for row in rows:
         row_id, signature = history_row_identity(row)
-        text = re.sub(r'\s+', ' ', str(row.get('text') or '')).strip()
         cells = [re.sub(r'\s+', ' ', str(cell)).strip() for cell in (row.get('cells') or [])]
-        if not row_id or menu_label not in cells or '完了' not in text:
+        if len(cells) < 2 or menu_label not in cells or cells[1] != '完了':
             continue
         if row_id in pre_ids or signature in pre_signatures:
             continue
-        candidates.append(row_id)
+        if row_id:
+            candidates.append(f'id:{row_id}')
+            continue
+        stamped = history_row_timestamp(row)
+        if stamped is None or stamped[1] < request_lower_bound.astimezone(JST).replace(microsecond=0):
+            continue
+        candidates.append(f'timestamp:{stamped[0]}')
     if len(candidates) > 1:
         raise RuntimeError(f'multiple genuinely new completed history rows found for {menu_label}')
     return candidates[0] if candidates else None
@@ -170,6 +192,7 @@ async def download_settings_csv(page, menu_label: str, kind: str) -> Path:
             sample = await page.evaluate('''() => document.body.innerText.slice(0, 1500)''')
             raise RuntimeError(f'all-download menu not found; sample={sample}')
     await page.wait_for_timeout(1500)
+    request_lower_bound = datetime.now(JST) - timedelta(seconds=2)
     ok = await click_by_text(page, menu_label)
     if not ok:
         sample = await page.evaluate('''() => document.body.innerText.slice(0, 2200)''')
@@ -180,33 +203,35 @@ async def download_settings_csv(page, menu_label: str, kind: str) -> Path:
     await page.wait_for_load_state('networkidle', timeout=60000)
     await page.wait_for_timeout(3000)
 
-    row_id = None
+    row_selector = None
     for _ in range(12):
         rows = await read_download_history_rows(page)
-        row_id = select_new_completed_history_row(rows, menu_label, pre_ids, pre_signatures)
-        if row_id is not None:
+        row_selector = select_new_completed_history_row(rows, menu_label, pre_ids, pre_signatures, request_lower_bound)
+        if row_selector is not None:
             break
         refresh = page.locator('#btnDownloadHistoryRefresh')
         if await refresh.count() > 0:
             await refresh.first.click()
         await page.wait_for_timeout(5000)
-    if row_id is None:
+    if row_selector is None:
         sample = await page.evaluate('''() => document.body.innerText.slice(0, 2000)''')
         raise RuntimeError(f'genuinely new exact settings download history row not found for {menu_label}; sample={sample}')
 
     async with page.expect_download(timeout=60000) as dl_info:
         clicked = await page.evaluate('''args => {
-          const rows = [...document.querySelectorAll('tr')].filter(row =>
-            (row.getAttribute('data-id') || row.getAttribute('data-row-id') || row.id || '') === args.id
-          );
+          const rows = [...document.querySelectorAll('tr')].filter(row => {
+            const id = row.getAttribute('data-id') || row.getAttribute('data-row-id') || row.id || '';
+            const cells = [...row.querySelectorAll('th,td')].map(cell => (cell.innerText || '').replace(/\s+/g, ' ').trim());
+            return args.kind === 'id' ? id === args.value : cells[0] === args.value;
+          });
           if (rows.length !== 1) return false;
           const row = rows[0];
           const cells = [...row.querySelectorAll('th,td')].map(cell => (cell.innerText || '').replace(/\s+/g, ' ').trim());
-          if (!cells.includes(args.label) || !(row.innerText || '').includes('完了')) return false;
+          if (cells[1] !== '完了' || !cells.includes(args.label)) return false;
           const buttons = [...row.querySelectorAll('a,button')].filter(e => (e.innerText || e.value || '').includes('ダウンロード'));
           if (buttons.length !== 1) return false;
           buttons[0].click(); return true;
-        }''', {'id': row_id, 'label': menu_label})
+        }''', {'kind': row_selector.split(':', 1)[0], 'value': row_selector.split(':', 1)[1], 'label': menu_label})
         if not clicked:
             raise RuntimeError('download button not found in matched settings history row')
     download = await dl_info.value
