@@ -163,8 +163,8 @@ class OperationalDataTest(unittest.TestCase):
         payload = {'syncedAt': '2026-09-16T04:16:12Z', 'rmsBudget': observation, 'rppData': {'configuredTargets': [], 'allConfiguredTargets': [], 'exclusionProducts': [], 'owners': []}}
         normalized_observation = {
             **observation,
-            'attemptedAt': attempted.astimezone(dt.timezone.utc).isoformat().replace('+00:00', 'Z'),
-            'observedAt': observed.astimezone(dt.timezone.utc).isoformat().replace('+00:00', 'Z'),
+            'attemptedAt': attempted.astimezone(dt.timezone.utc).isoformat(timespec='milliseconds').replace('+00:00', 'Z'),
+            'observedAt': observed.astimezone(dt.timezone.utc).isoformat(timespec='milliseconds').replace('+00:00', 'Z'),
         }
         snapshot = {'schemaVersion': 5, 'syncedAt': payload['syncedAt'], 'rmsBudget': normalized_observation, 'rppData': payload['rppData']}
         module.validate_snapshot_readback(payload, snapshot, 200)

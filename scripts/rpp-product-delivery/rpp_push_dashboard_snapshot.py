@@ -290,7 +290,9 @@ def _canonical_rms_budget(value: dict | None) -> dict | None:
     canonical = dict(value)
     for field in ("attemptedAt", "observedAt"):
         if canonical.get(field) is not None:
-            canonical[field] = _aware_datetime(canonical[field], field).astimezone(dt.timezone.utc).isoformat().replace("+00:00", "Z")
+            # JavaScript Date#toISOString (used by the Web normalizer) keeps
+            # milliseconds, while Python may emit six-digit microseconds.
+            canonical[field] = _aware_datetime(canonical[field], field).astimezone(dt.timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
     return canonical
 
 
