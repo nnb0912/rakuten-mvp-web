@@ -279,13 +279,14 @@ async def collect_budget_observation(page, attempted_at: str) -> dict[str, objec
         countMatches = [...String(scope.innerText || '').matchAll(/全\\s*([0-9,]+)\\s*件/g)].map(match => Number(match[1].replaceAll(',', '')));
         if (countMatches.length) break;
       }
+      const uniqueCounts = [...new Set(countMatches)];
       const uniqueIds = new Set(rows.map(row => row.id));
       return {
         rows,
         invalidRows,
         duplicateIds: uniqueIds.size !== rows.length,
-        expectedCount: countMatches.length === 1 ? countMatches[0] : null,
-        countMatchCount: countMatches.length,
+        expectedCount: uniqueCounts.length === 1 ? uniqueCounts[0] : null,
+        countMatchCount: uniqueCounts.length,
       };
     }''')
     if not isinstance(raw, dict) or raw.get('error') or not isinstance(raw.get('rows'), list):
