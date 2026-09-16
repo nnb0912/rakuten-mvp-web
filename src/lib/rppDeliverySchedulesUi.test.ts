@@ -28,6 +28,14 @@ test("商品CPC行だけに時間指定ボタンと行スコープのパネル�
   assert.match(component, /警告を確認して保存/);
 });
 
+test("時間指定はRMSで広告ON復帰を確認した商品だけ使える", () => {
+  assert.match(component, /exclusionState\.excluded === false && currentExcluded === false/);
+  assert.match(component, /row\.excluded === false && row\.currentExcluded === false/);
+  assert.match(component, /disabled=\{busy \|\| scheduleBusy \|\| !scheduleEnabled\}/);
+  assert.match(component, /時間指定は、広告ONへの復帰をRMSで確認した後に使用できます/);
+  assert.match(component, /if \(!exclusionState \|\| exclusionState\.excluded \|\| exclusionState\.currentExcluded\)/);
+});
+
 test("操作列は上段ボタンと下段夜間停止を規則的に整列する", () => {
   assert.match(component, /<div className="action-button-row">[\s\S]*設定[\s\S]*CPC変更CSV[\s\S]*時間指定[\s\S]*<\/div>/);
   assert.match(styles, /\.actions-col \.action-button-row \{ display: flex/);
