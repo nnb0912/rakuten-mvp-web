@@ -58,12 +58,12 @@ export default function RppProposalLog({ rows, generatedAt, targetCount }: { row
     </div>
     <div className="rpp-proposal-table-wrap">
       <table className="rpp-proposal-table">
-        <thead><tr><th>時刻</th><th>対象・理由</th><th>アクション</th><th>調整前CPC</th><th>調整後CPC</th></tr></thead>
+        <thead><tr><th>時刻</th><th>理由・対象</th><th>アクション</th><th>調整前CPC</th><th>調整後CPC</th></tr></thead>
         <tbody>{proposals.length ? proposals.map((row) => {
           const action = actionOf(row);
           return <tr key={row.id}>
             <td>{timeLabel(generatedAt)}</td>
-            <td><b>{row.itemName || row.itemCode}</b><small>{row.itemCode}{row.keyword ? ` / ${row.keyword}` : ""}</small><small className="rpp-proposal-reason"><b>理由：</b>{proposalReason(row)}</small></td>
+            <td><small className="rpp-proposal-reason"><b>理由：</b>{proposalReason(row)}</small><b>{row.itemName || row.itemCode}</b><small>{row.itemCode}{row.keyword ? ` / ${row.keyword}` : ""}</small></td>
             <td><span className={`rpp-proposal-action ${action.className}`}>{action.label}</span></td>
             <td><b>¥{Math.round(row.currentCpc).toLocaleString("ja-JP")}</b></td>
             <td><b>{row.proposedCpc == null ? "—" : `¥${Math.round(row.proposedCpc).toLocaleString("ja-JP")}`}</b></td>
