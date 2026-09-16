@@ -7,8 +7,12 @@ import type { ResolvedRppRmsBudget } from "@/lib/rppRmsBudget";
 
 import { RppInfoTip } from "./RppInfoTip";
 type Props = { initialSettings: RppBudgetSettings; metrics: RppBudgetMetrics | null; source: string; rmsBudget: ResolvedRppRmsBudget };
-const yen = (value: number) => `${Math.round(value).toLocaleString("ja-JP")}円`;
+const yen = (value: number) => `¥${Math.round(value).toLocaleString("ja-JP")}`;
 const stateLabel = { future: "予定", ok: "計画内", over: "超過", under: "未消化", unmeasured: "実績未同期" } as const;
+
+function linePath(points: Array<{ x: number; y: number }>) {
+  return points.map((point, index) => `${index ? "L" : "M"}${point.x.toFixed(1)},${point.y.toFixed(1)}`).join(" ");
+}
 
 export default function RppBudgetPanel({ initialSettings, metrics, source, rmsBudget }: Props) {
   const [settings, setSettings] = useState(initialSettings);
@@ -26,6 +30,23 @@ export default function RppBudgetPanel({ initialSettings, metrics, source, rmsBu
   const effectiveSettings = useMemo(() => ({ ...settings, monthlyBudget: monthlyBudget ?? 0 }), [settings, monthlyBudget]);
   const plan = useMemo(() => monthlyBudget == null ? [] : calculateRppDailyBudgetPlan(effectiveSettings, metrics), [effectiveSettings, metrics, monthlyBudget]);
   const visiblePlan = plan.filter((row) => row.day <= new Date().getDate() + 7);
+  const actualRows = plan.filter((row) => row.actualSpend != null && row.cumulativeActual != null);
+  const actualSegments = actualRows.reduce<typeof actualRows[]>((segments, row) => {
+    const current = segments.at(-1);
+    if (!current || current.at(-1)!.day + 1 !== row.day) segments.push([row]);
+    else current.push(row);
+    return segments;
+  }, []);
+  const monthActual = actualRows.reduce((sum, row) => sum + (row.actualSpend ?? 0), 0);
+  const comparisonMax = Math.max(monthlyBudget ?? 0, metricsReady ? projection : 0, monthActual, 1);
+  const chartMax = Math.max(monthlyBudget ?? 0, ...plan.map((row) => row.cumulativePlan), ...actualRows.map((row) => row.cumulativeActual ?? 0), 1);
+  const chartWidth = 720;
+  const chartHeight = 220;
+  const chartPad = { left: 50, right: 18, top: 18, bottom: 30 };
+  const chartX = (day: number) => chartPad.left + (day - 1) / Math.max(1, plan.length - 1) * (chartWidth - chartPad.left - chartPad.right);
+  const chartY = (value: number) => chartPad.top + (1 - value / chartMax) * (chartHeight - chartPad.top - chartPad.bottom);
+  const planPath = linePath(plan.map((row) => ({ x: chartX(row.day), y: chartY(row.cumulativePlan) })));
+
   const status = useMemo(() => {
     if (rmsBudget.state === "MISSING") return { label: "RMS予算未取得", tone: "hold" };
     if (rmsBudget.state === "UNKNOWN") return { label: "RMS取得失敗", tone: "hold" };
@@ -82,6 +103,29 @@ export default function RppBudgetPanel({ initialSettings, metrics, source, rmsBu
       <span className={projectedVariance != null && projectedVariance < 0 ? "metric-danger" : ""}><small><RppInfoTip label="着地差額" /></small><strong>{projectedVariance == null ? "-" : `${projectedVariance >= 0 ? "余裕 " : "超過 "}${yen(Math.abs(projectedVariance))}`}</strong></span>
     </div>
     <div className="budget-progress"><i style={{ width: `${Math.min(100, usage ?? 0)}%` }} className={status.tone} /></div>
+    <div className="budget-visual-grid">
+      <article className="budget-comparison-card" aria-label="予算・実績・着地予測の比較">
+        <div className="budget-visual-heading"><div><b>予算比較</b><small>RMS予算を基準に比較</small></div><span>{projectedVariance == null ? "判定不可" : projectedVariance >= 0 ? `余裕 ${yen(projectedVariance)}` : `超過 ${yen(Math.abs(projectedVariance))}`}</span></div>
+        <div className="budget-comparison-bars">
+          {[
+            { label: "RMS有効予算", value: monthlyBudget, className: "budget" },
+            { label: "当月実績（取得済み日）", value: actualRows.length ? monthActual : null, className: "actual" },
+            { label: "月末着地予測", value: metricsReady ? projection : null, className: projectedVariance != null && projectedVariance < 0 ? "forecast danger" : "forecast" },
+          ].map((row) => <div className="budget-comparison-row" key={row.label}><div><span>{row.label}</span><strong>{row.value == null ? "未取得" : yen(row.value)}</strong></div><i><b className={row.className} style={{ width: `${row.value == null ? 0 : Math.max(1, row.value / comparisonMax * 100)}%` }} /></i></div>)}
+        </div>
+      </article>
+      <article className="budget-cumulative-card" aria-label="日別累計予算グラフ">
+        <div className="budget-visual-heading"><div><b>日別累計</b><small>永続化済み実績のみ表示</small></div><div className="budget-chart-legend"><span className="plan">累計計画</span><span className="actual">累計実績</span></div></div>
+        {plan.length ? <svg className="budget-cumulative-chart" viewBox={`0 0 ${chartWidth} ${chartHeight}`} role="img" aria-label="累計計画と累計実績の推移">
+          {[0, .5, 1].map((ratio) => <g key={ratio}><line x1={chartPad.left} x2={chartWidth - chartPad.right} y1={chartY(chartMax * ratio)} y2={chartY(chartMax * ratio)} /><text x={chartPad.left - 7} y={chartY(chartMax * ratio) + 4} textAnchor="end">{ratio === 0 ? "¥0" : `¥${Math.round(chartMax * ratio / 10000)}万`}</text></g>)}
+          <path className="plan-line" d={planPath} />
+          {actualSegments.map((segment) => <path className="actual-line" d={linePath(segment.map((row) => ({ x: chartX(row.day), y: chartY(row.cumulativeActual ?? 0) })))} key={`${segment[0].day}-${segment.at(-1)!.day}`} />)}
+          {actualRows.map((row) => <circle className="actual-point" cx={chartX(row.day)} cy={chartY(row.cumulativeActual ?? 0)} r="3" key={row.day} />)}
+          {[1, Math.ceil(plan.length / 2), plan.length].map((day) => <text className="day-label" key={day} x={chartX(day)} y={chartHeight - 8} textAnchor="middle">{day}日</text>)}
+        </svg> : null}
+        {!actualRows.length ? <p className="budget-chart-empty">日別実績の同期後に実績線を表示します。</p> : null}
+      </article>
+    </div>
     <details className="budget-daily-details">
       <summary>日別計画・実績 <small>{settings.allocationMode === "FLAT" ? "均等配分" : "手動配分"}</small></summary>
       <div className="budget-daily-scroll"><table className="budget-daily-table"><thead><tr><th><RppInfoTip label="日" /></th><th><RppInfoTip label="配分" /></th><th><RppInfoTip label="日予算" /></th><th><RppInfoTip label="実績" /></th><th><RppInfoTip label="差額" /></th><th><RppInfoTip label="累計計画" /></th><th><RppInfoTip label="状態" /></th></tr></thead><tbody>
