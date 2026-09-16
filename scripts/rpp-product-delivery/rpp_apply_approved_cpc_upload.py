@@ -94,7 +94,7 @@ def decode_csv_bytes(raw: bytes) -> str:
     return raw.decode('utf-8', 'replace')
 
 
-def parse_upload_csv(csv_path: Path) -> tuple[str, list[dict[str, object]]]:
+def parse_upload_csv(csv_path: Path, *, enforce_product_caps: bool = True) -> tuple[str, list[dict[str, object]]]:
     if not csv_path.exists():
         raise RuntimeError(f'upload csv not found: {csv_path}')
     text = decode_csv_bytes(csv_path.read_bytes())
@@ -136,7 +136,7 @@ def parse_upload_csv(csv_path: Path) -> tuple[str, list[dict[str, object]]]:
         if target_cpc < minimum:
             raise RuntimeError(f'{upload_kind} CPC below minimum {minimum}: item={item}; cpc={target_cpc}')
         maximum = caps.get((upload_kind, item.lower(), '' if upload_kind == 'item' else keyword))
-        if maximum is not None and target_cpc > maximum:
+        if enforce_product_caps and maximum is not None and target_cpc > maximum:
             raise RuntimeError(f'{upload_kind} CPC above product maximum {maximum}: item={item}; cpc={target_cpc}')
         parsed.append({
             'control': control,
@@ -473,7 +473,11 @@ def validate_safety(
         rollback_path = matching_rollback_path(csv_path)
         if not rollback_path:
             raise RuntimeError('matching rollback CSV is required for final submit')
-        rollback_kind, rollback_rows = parse_upload_csv(rollback_path)
+        # A lowering FIXED_SYNC can legitimately have a recorded pre-change CPC
+        # above the newly authoritative fixed cap. The forward payload remains
+        # cap-checked; the rollback payload is instead bound exactly to the
+        # audited before-CPC below.
+        rollback_kind, rollback_rows = parse_upload_csv(rollback_path, enforce_product_caps=False)
         if rollback_kind != upload_kind or len(rollback_rows) != len(rows):
             raise RuntimeError('matching rollback CSV shape does not match upload CSV')
         rollback_targets = {row_key(upload_kind, str(r['itemCode']), str(r['keyword'])): int(str(r['targetCpc'])) for r in rollback_rows}

@@ -102,6 +102,30 @@ class ItemCpcUploadSafetyTest(unittest.TestCase):
         self.assertEqual(str(rollback), checks['rollbackCsv'])
         self.assertTrue(checks['cpcMatches'][0]['ok'])
 
+    def test_forward_submit_allows_rollback_to_recorded_before_cpc_above_new_fixed_cap(self) -> None:
+        upload, rollback, audit = self.make_bundle()
+        write_cp932(upload, [['コントロールカラム', '商品管理番号', '商品CPC'], ['u', 'r0001', '20']])
+        write_cp932(rollback, [['コントロールカラム', '商品管理番号', '商品CPC'], ['u', 'r0001', '29']])
+        write_audit(
+            audit,
+            [
+                ['商品管理番号', '商品名', 'キーワード', '判定', '変更前CPC', '提案CPC', '変更種別', '設定モード'],
+                ['r0001', 'fixture', '商品CPC', 'LOWER', '29', '20', 'FIXED_SYNC', 'FIXED'],
+            ],
+        )
+        write_cp932(
+            self.project / 'rpp_item_settings.csv',
+            [['コントロールカラム', '商品管理番号', '商品名', '商品CPC', '除外登録済み商品'], ['', 'r0001', 'fixture', '29', 'No']],
+        )
+        (self.project / 'rpp_targets' / 'rpp_alert_targets.json').write_text(json.dumps({
+            'source': 'https://rakuten-mvp-web.onrender.com/api/rpp/sync-snapshot?resource=targets',
+            'targets': [{'itemCode': 'r0001', 'keyword': '商品CPC', 'optimizationMode': 'FIXED', 'fixedCpc': 20, 'changeLocked': False, 'protectionType': 'NORMAL'}],
+        }), encoding='utf-8')
+        kind, rows = apply.parse_upload_csv(upload)
+        checks = apply.validate_safety(upload, kind, rows, strict=True)
+        self.assertEqual(str(rollback), checks['rollbackCsv'])
+        self.assertTrue(checks['cpcMatches'][0]['ok'])
+
     def test_forward_submit_blocks_current_cpc_mismatch(self) -> None:
         upload, _, _ = self.make_bundle()
         write_cp932(
