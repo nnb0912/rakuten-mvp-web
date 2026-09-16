@@ -5,21 +5,20 @@ import test from "node:test";
 
 const source = readFileSync(path.join(process.cwd(), "src/app/rpp/page.tsx"), "utf8");
 const chartSource = readFileSync(path.join(process.cwd(), "src/app/rpp/RppDashboardCharts.tsx"), "utf8");
+const proposalSource = readFileSync(path.join(process.cwd(), "src/app/rpp/RppProposalLog.tsx"), "utf8");
 const styles = readFileSync(path.join(process.cwd(), "src/app/globals.css"), "utf8");
 
 test("ダッシュボードは固定以外の選択モードを主表示する", () => {
   assert.match(source, /自動モードの商品/);
   assert.match(source, /isAutomaticRppOptimizationMode/);
   assert.match(source, /automaticTargets/);
-  assert.match(source, /前日広告費/);
-  assert.match(source, /前日売上/);
-  assert.match(source, /前日ROAS/);
+
   assert.match(source, /ROAS・検索順位・バランスを選択した設定行/);
   assert.match(source, /automaticTargets\.map/);
   assert.match(source, /target\.keyword/);
   assert.match(source, /商品番号による制限はありません/);
-  assert.match(source, /自動モード商品<\/span><strong>\{automaticItemCodes\.size\}/);
-  assert.match(source, /excludedAutomaticProducts/);
+  assert.doesNotMatch(source, /自動モード商品<\/span>|現在稼働<\/span>|excludedAutomaticProducts/);
+  assert.match(chartSource, /label="広告経由売上"/);
   assert.doesNotMatch(source, /allowedItemCodes|自動調整を許可した商品|R0445・R0406だけが対象/);
 });
 
@@ -30,10 +29,12 @@ test("商品観測がない自動モード商品は広告ONと表示しない", 
 });
 
 test("売上とROASは720時間帰属を画面とARIAに明記する", () => {
-  assert.match(chartSource, /売上（720時間帰属）/);
-  assert.match(chartSource, /ROAS推移（720時間帰属）/);
-  assert.match(chartSource, /ROAS推移（売上720時間帰属）/);
-  assert.doesNotMatch(chartSource, />[^<]*720h[^<]*</);
+  assert.match(chartSource, /attribution === "720H" \? "720時間帰属" : "12時間帰属"/);
+  assert.match(chartSource, /ROAS集計時間/);
+  assert.match(chartSource, />720時間<\/button>/);
+  assert.match(chartSource, />12時間<\/button>/);
+  assert.match(chartSource, /"720時間帰属"/);
+  assert.match(chartSource, /"12時間帰属"/);
 });
 
 test("全グラフは自動モード以外を含む全RPP母集団を表示する", () => {
@@ -49,7 +50,7 @@ test("全グラフは自動モード以外を含む全RPP母集団を表示す�
   assert.doesNotMatch(chartSource, /自動モード商品の配信構成/);
 });
 
-test("グラフは日次週次月次を切替え、当月クリックと720時間CV・CVRを表示する", () => {
+test("グラフは日次週次月次、KPIは期間と720・12時間帰属を切替える", () => {
   assert.match(source, /readRppDashboardDailyMetrics\(366\)/);
   assert.match(chartSource, /useState<RppChartPeriod>\("DAY"\)/);
   assert.match(chartSource, /"DAY", "WEEK", "MONTH"/);
@@ -58,7 +59,9 @@ test("グラフは日次週次月次を切替え、当月クリックと720時�
   assert.match(chartSource, /月次/);
   assert.match(chartSource, /クリック/);
   assert.match(chartSource, /CV \/ CVR/);
-  assert.match(chartSource, /当月・720時間帰属・全RPP/);
+  assert.match(chartSource, /useState<RppKpiPeriod>\("MONTH"\)/);
+  assert.match(chartSource, /useState<RppKpiAttribution>\("720H"\)/);
+  assert.match(chartSource, /対象データ期間/);
   assert.match(chartSource, /週次・月次は取得済み日の合計/);
   assert.match(chartSource, /className="rpp-period-tabs"/);
   assert.match(chartSource, /aria-pressed=\{period === value\}/);
@@ -76,6 +79,23 @@ test("スマホのKPIとグラフ見出しは横幅を有効利用する", () =>
   assert.match(styles, /\.rpp-chart-legend span \{[^}]*white-space: nowrap/);
 });
 
-test("PCのクリック・CVカードは上段KPIと同じ6列幅に揃える", () => {
-  assert.match(styles, /\.rpp-chart-kpis \{[^}]*grid-template-columns: repeat\(6, minmax\(0, 1fr\)\);[^}]*gap: 8px/);
+test("PCの6KPIは参考画面どおり3列2段に揃える", () => {
+  assert.match(styles, /\.rpp-chart-kpis \{[^}]*grid-template-columns: repeat\(3, minmax\(0, 1fr\)\);[^}]*gap: 8px/);
+});
+
+test("調整提案ログはダッシュボードの自動モード商品より上に置く", () => {
+  const proposalPosition = source.indexOf("<RppProposalLog");
+  const automaticProductsPosition = source.indexOf("<h2>自動モードの商品</h2>");
+  const budgetPosition = source.indexOf('view === "budget"');
+  assert.ok(proposalPosition > 0);
+  assert.ok(automaticProductsPosition > proposalPosition);
+  assert.ok(budgetPosition > automaticProductsPosition);
+  assert.match(proposalSource, /調整提案ログ/);
+  assert.match(proposalSource, /RMS反映前の調整候補/);
+  assert.match(proposalSource, /全て/);
+  assert.match(proposalSource, /引き上げ/);
+  assert.match(proposalSource, /引き下げ/);
+  assert.match(proposalSource, /除外/);
+  assert.match(proposalSource, /調整前CPC/);
+  assert.match(proposalSource, /調整後CPC/);
 });

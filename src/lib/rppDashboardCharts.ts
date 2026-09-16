@@ -4,7 +4,14 @@ export type RppDashboardDailyMetric = {
   sales: number | null;
   clicks: number | null;
   orders?: number | null;
+  sales12h?: number | null;
+  orders12h?: number | null;
+  sales720h?: number | null;
+  orders720h?: number | null;
 };
+
+export type RppKpiPeriod = "MONTH" | "30D" | "7D";
+export type RppKpiAttribution = "720H" | "12H";
 
 export type RppDashboardChartPoint = Omit<RppDashboardDailyMetric, "spend" | "sales" | "clicks"> & {
   spend: number | null;
@@ -27,6 +34,37 @@ export type RppDeliveryComposition = {
 };
 
 const DELIVERY_OBSERVATION_MAX_AGE_MS = 2 * 60 * 60_000;
+
+export function buildRppKpiSummary(rows: RppDashboardDailyMetric[], period: RppKpiPeriod, attribution: RppKpiAttribution, now = new Date()) {
+  const today = jstToday(now);
+  const latestObserved = rows.filter((row) => row.date <= today && [row.spend, row.sales, row.clicks, row.orders, row.sales12h, row.sales720h].some((value) => typeof value === "number")).map((row) => row.date).sort().at(-1);
+  const end = latestObserved ?? today;
+  const endDate = utcDate(end);
+  const startDate = new Date(endDate);
+  if (period === "MONTH") startDate.setUTCDate(1);
+  else startDate.setUTCDate(startDate.getUTCDate() - (period === "30D" ? 29 : 6));
+  const start = isoDate(startDate);
+  const selected = rows.filter((row) => row.date >= start && row.date <= end);
+  const values = (field: "spend" | "clicks" | "sales" | "orders") => selected.flatMap((row) => {
+    const value = field === "sales"
+      ? attribution === "12H" ? row.sales12h : row.sales720h ?? row.sales
+      : field === "orders"
+        ? attribution === "12H" ? row.orders12h : row.orders720h ?? row.orders
+        : row[field];
+    return typeof value === "number" && Number.isFinite(value) ? [Math.max(0, value)] : [];
+  });
+  const sum = (field: "spend" | "clicks" | "sales" | "orders") => {
+    const list = values(field);
+    return list.length ? list.reduce((total, value) => total + value, 0) : null;
+  };
+  const spend = sum("spend"), sales = sum("sales"), clicks = sum("clicks"), orders = sum("orders");
+  return {
+    start, end, spend, sales, clicks, orders,
+    roas: spend != null && spend > 0 && sales != null ? sales / spend * 100 : null,
+    averageCpc: spend != null && clicks != null && clicks > 0 ? spend / clicks : null,
+    cvr: clicks != null && clicks > 0 && orders != null ? orders / clicks * 100 : null,
+  };
+}
 
 export function buildRppDeliveryComposition(snapshot: {
   syncedAt?: string;
