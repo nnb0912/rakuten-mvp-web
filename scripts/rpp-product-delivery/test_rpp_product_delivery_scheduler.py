@@ -54,6 +54,19 @@ def verified_adapter(_csv_path, control, code, wal_path, operation_id, cancel_ev
 
 
 class ProductDeliverySchedulerTest(unittest.TestCase):
+    def test_preflight_allows_only_exact_historical_missed_warnings(self):
+        historical, blocking = scheduler.partition_preflight_warnings([
+            "時間帯内にOFFを開始できずMISSED: r0445 (occurrence)",
+            "other warning",
+        ])
+        self.assertEqual(historical, ["時間帯内にOFFを開始できずMISSED: r0445 (occurrence)"])
+        self.assertEqual(blocking, ["other warning"])
+        historical, blocking = scheduler.partition_preflight_warnings([
+            "時間帯内にOFFを開始できずMISSED: r0445 (occurrence)",
+        ])
+        self.assertEqual(len(historical), 1)
+        self.assertEqual(blocking, [])
+
     def setUp(self):
         authority = patch.object(scheduler, "require_authoritative_paths", return_value=None)
         authority.start()

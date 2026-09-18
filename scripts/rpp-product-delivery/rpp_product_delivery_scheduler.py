@@ -620,6 +620,12 @@ def sync_occurrence_queue(state: dict, schedules: Iterable[dict], at: dt.datetim
     return next_state, warnings
 
 
+def partition_preflight_warnings(warnings: Iterable[str]) -> Tuple[List[str], List[str]]:
+    values = list(warnings)
+    historical = [row for row in values if row.startswith("時間帯内にOFFを開始できずMISSED: ")]
+    return historical, [row for row in values if row not in historical]
+
+
 def settle_occurrence_queue(state: dict, current: Set[str], at: dt.datetime) -> dict:
     """Record OFF ownership/preexistence and eventual owned ON restoration."""
     next_state = copy.deepcopy(state)
@@ -1511,12 +1517,13 @@ def main(argv: Optional[List[str]] = None) -> int:
                 args.exclude_csv = Path(temporary) / "exclude.csv"
                 refresh_exclusions(args.exclude_csv)
                 preview = run(args)
+            historical_missed, blocking_warnings = partition_preflight_warnings(preview.get("warnings") or [])
             candidate_safe = bool(
                 preview.get("ok") is True
                 and not preview.get("blocked")
                 and not preview.get("changes")
                 and not preview.get("failures")
-                and not preview.get("warnings")
+                and not blocking_warnings
                 and int(preview.get("queueDepth") or 0) == 0
                 and int(dependencies.get("orphanCount") or 0) == 0
             )
@@ -1524,6 +1531,7 @@ def main(argv: Optional[List[str]] = None) -> int:
                               "productionChange": False, "candidateSafe": candidate_safe,
                               "queueDepth": int(preview.get("queueDepth") or 0),
                               "plannedChanges": len(preview.get("changes") or []),
+                              "historicalMissedCount": len(historical_missed),
                               "dependencies": dependencies}, ensure_ascii=False, sort_keys=True))
             return 0 if candidate_safe else 2
         finally:
