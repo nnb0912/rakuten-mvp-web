@@ -22,7 +22,18 @@ def write_audit(path: Path, rows: list[list[str]]) -> None:
 
 
 class ItemCpcUploadSafetyTest(unittest.TestCase):
+    def test_rms_credentials_ignore_parent_environment_and_login_url_is_pinned(self):
+        uploader_source = Path(apply.__file__).read_text(encoding='utf-8')
+        report_source = Path(apply.__file__).with_name('scripts_refresh_rpp_keyword_report.py').read_text(encoding='utf-8')
+        self.assertIn("os.environ.pop(key, None)", uploader_source)
+        self.assertNotIn("os.getenv('RMS_LOGIN_URL')", report_source)
+        self.assertIn("https://glogin.rms.rakuten.co.jp/?sp_id=1", report_source)
+        self.assertIn("window.location.origin !== args.expectedOrigin", report_source)
+
     def setUp(self) -> None:
+        self.runtime_patch = patch('rpp_allowed_auto_apply.require_mutation_runtime', return_value={})
+        self.runtime_patch.start()
+        self.addCleanup(self.runtime_patch.stop)
         self.tmp = tempfile.TemporaryDirectory()
         self.project = Path(self.tmp.name)
         for name in ('rpp_exclude_items.csv', 'rpp_keyword_reports.csv', 'rpp_position_adjustment_log.json'):
@@ -301,7 +312,7 @@ class ItemCpcUploadSafetyTest(unittest.TestCase):
             'bundleSha256': {name: apply.hashlib.sha256(path.read_bytes()).hexdigest() for name, path in {'upload': upload, 'rollback': rollback, 'audit': audit}.items()},
         }
         wal.write_text(json.dumps({'version': 1, 'entries': [entry]}), encoding='utf-8')
-        with patch.dict(os.environ, {'RPP_AUTO_APPLY_WAL': str(wal)}):
+        with patch('rpp_allowed_auto_apply.WAL_PATH', wal):
             self.assertTrue(apply.validate_wal_binding('op-bind', upload, rows)['ok'])
             rollback.write_bytes(rollback.read_bytes() + b' ')
             with self.assertRaisesRegex(RuntimeError, 'not bound to the exact upload payload'):

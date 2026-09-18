@@ -9,22 +9,31 @@ import fcntl
 import hashlib
 import json
 import os
+import signal
 import subprocess
 import sys
 import tempfile
+import time
 import urllib.request
 import uuid
 from pathlib import Path
 from typing import Any
 
 CODE_ROOT = Path(__file__).resolve().parent
-PROJECT = Path(os.environ.get("RPP_PROJECT_DIR", str(CODE_ROOT))).resolve()
+PROJECT = Path("/Users/nob/Projects/rpp-8am-notify")
 SETTINGS_PATH = PROJECT / "rpp_targets" / "rpp_auto_adjustment_settings.json"
 TARGETS_PATH = PROJECT / "rpp_targets" / "rpp_alert_targets.json"
 UPLOAD_DIR = PROJECT / "rpp_uploads"
 WAL_PATH = PROJECT / "rpp_apply_logs" / "rpp_allowed_auto_apply_wal.json"
 AUDIT_PATH = PROJECT / "rpp_apply_logs" / "rpp_allowed_auto_apply_audit.jsonl"
-LOCK_PATH = Path(os.environ.get("RPP_EXCLUSION_WORKER_LOCK", "/tmp/rise-rpp-exclusion-worker.lock"))
+LOCK_PATH = Path("/tmp/rise-rpp-exclusion-worker.lock")
+UPLOAD_HELPER = CODE_ROOT / "rpp_apply_approved_cpc_upload.py"
+DEPLOY_VERIFIER = CODE_ROOT / "deploy_worker_runtime.py"
+POST_REFRESH_SCRIPT = CODE_ROOT / "rpp_frequent_dashboard_refresh.py"
+SETTINGS_REFRESH_SCRIPT = CODE_ROOT / "scripts_refresh_rpp_settings_csvs.py"
+SNAPSHOT_SENDER = CODE_ROOT / "rpp_push_dashboard_snapshot.py"
+RECOMMENDATION_SCRIPT = CODE_ROOT / "rpp_auto_recommendations.js"
+POSITION_MONITOR_SCRIPT = CODE_ROOT / "rpp_position_monitor.js"
 AUTOMATIC_MODES = {"ROAS", "POSITION", "BALANCED"}
 FIXED_MODE = "FIXED"
 VALID_MODES = AUTOMATIC_MODES | {FIXED_MODE}
@@ -93,7 +102,8 @@ def append_audit(event: str, **details: Any) -> None:
         os.close(fd)
 
 
-def load_wal(path: Path = WAL_PATH) -> dict[str, Any]:
+def load_wal(path: Path | None = None) -> dict[str, Any]:
+    path = WAL_PATH if path is None else path
     if not path.exists():
         return {"version": 1, "entries": []}
     try:
@@ -108,10 +118,77 @@ def load_wal(path: Path = WAL_PATH) -> dict[str, Any]:
     return value
 
 
+def tree_sha256(root: Path) -> str:
+    if not root.is_dir() or root.is_symlink():
+        raise RuntimeError("runtime dependency tree is missing or unsafe")
+    digest = hashlib.sha256()
+    root_resolved = root.resolve(strict=True)
+    def walk(directory: Path) -> None:
+        for entry in sorted(directory.iterdir(), key=lambda item: item.name):
+            relative = entry.relative_to(root).as_posix().encode("utf-8")
+            if entry.is_symlink():
+                target = entry.resolve(strict=True)
+                if target != root_resolved and root_resolved not in target.parents:
+                    raise RuntimeError("runtime dependency symlink escapes immutable root")
+                digest.update(relative + b"\0L" + os.readlink(entry).encode("utf-8") + b"\0")
+            elif entry.is_dir():
+                walk(entry)
+            elif entry.is_file():
+                digest.update(relative + b"\0F" + bytes.fromhex(sha256(entry)) + b"\0")
+    walk(root)
+    return digest.hexdigest()
+
+
+def require_mutation_runtime() -> dict[str, Any]:
+    generation = CODE_ROOT.resolve()
+    runtime_root = (PROJECT / "rpp_apply_logs" / "runtime_exec").resolve()
+    if runtime_root not in generation.parents or not generation.name.startswith("auto-apply-generation-"):
+        raise RuntimeError("auto-apply requires a private verified generation")
+    manifest = json.loads((PROJECT / "rpp_apply_logs" / "rpp_product_delivery_scheduler_deploy.json").read_text(encoding="utf-8"))
+    activation = json.loads((PROJECT / "rpp_apply_logs" / "rpp_product_delivery_dispatcher_activation.json").read_text(encoding="utf-8"))
+    commit = str(manifest.get("commit") or "")
+    if (activation.get("activated") is not True or activation.get("activationHold") is True
+            or activation.get("circuitProbePassed") is not True or activation.get("commit") != commit
+            or os.environ.get("RPP_RUNTIME_COMMIT") != commit):
+        raise RuntimeError("auto-apply runtime is not activated")
+    import deploy_worker_runtime as deploy_verifier
+    if Path(deploy_verifier.__file__).resolve() != DEPLOY_VERIFIER.resolve():
+        raise RuntimeError("auto-apply deploy verifier escaped the private generation")
+    deploy_verifier.require_activation(manifest)
+    expected = manifest.get("artifacts") or {}
+    dependency = manifest.get("runtimeDependencies") or {}
+    node_root = Path(str(dependency.get("nodeRoot") or "")).resolve()
+    python_root = Path(str(dependency.get("pythonRoot") or "")).resolve()
+    browser_root = Path(str(dependency.get("browserRoot") or "")).resolve()
+    executable = Path(str(dependency.get("chromiumExecutable") or "")).resolve()
+    expected_root = (PROJECT / "runtime_dependencies" / commit).resolve()
+    if (node_root != expected_root / "node_modules" or python_root != expected_root / "python_modules"
+            or browser_root.parent != expected_root / "chromium" or browser_root not in executable.parents):
+        raise RuntimeError("auto-apply browser dependency path is outside the manifest boundary")
+    python_hash = str(dependency.get("pythonTreeSha256") or "")
+    node_hash = str(dependency.get("nodeTreeSha256") or "")
+    browser_hash = str(dependency.get("browserTreeSha256") or "")
+    if (os.environ.get("NODE_PATH") != str(node_root) or tree_sha256(node_root) != node_hash
+            or os.environ.get("RPP_PYTHON_PLAYWRIGHT_ROOT") != str(python_root)
+            or os.environ.get("RPP_PYTHON_PLAYWRIGHT_TREE_SHA256") != python_hash
+            or os.environ.get("RPP_CHROMIUM_BUNDLE_ROOT") != str(browser_root)
+            or os.environ.get("RPP_CHROMIUM_TREE_SHA256") != browser_hash
+            or os.environ.get("RPP_CHROMIUM_EXECUTABLE") != str(executable)
+            or tree_sha256(python_root) != python_hash or tree_sha256(browser_root) != browser_hash):
+        raise RuntimeError("auto-apply browser dependency attestation failed")
+    for key, artifact in {"autoApply": Path(__file__), "autoApplyUploader": UPLOAD_HELPER,
+                          "deployVerifier": DEPLOY_VERIFIER,
+                          "dashboardRefreshOrchestrator": POST_REFRESH_SCRIPT,
+                          "settingsRefresh": SETTINGS_REFRESH_SCRIPT, "snapshotSender": SNAPSHOT_SENDER,
+                          "recommendationGenerator": RECOMMENDATION_SCRIPT,
+                          "positionMonitor": POSITION_MONITOR_SCRIPT}.items():
+        resolved = artifact.resolve()
+        if (resolved.parent != generation or artifact.is_symlink() or sha256(resolved) != expected.get(key)):
+            raise RuntimeError("auto-apply artifact is outside the verified generation")
+    return manifest
+
+
 def snapshot_token() -> str:
-    token = os.environ.get("RPP_SNAPSHOT_SYNC_TOKEN", "").strip()
-    if token:
-        return token
     result = subprocess.run(["security", "find-generic-password", "-s", "hermes.rpp.snapshot-sync", "-w"], text=True, capture_output=True)
     if result.returncode or not result.stdout.strip():
         raise RuntimeError("RPP target sync token is unavailable")
@@ -138,11 +215,13 @@ def sync_current_targets(path: Path = TARGETS_PATH) -> dict[str, Any]:
     return synced
 
 
-def unresolved_wal_entries(path: Path = WAL_PATH) -> list[dict[str, Any]]:
+def unresolved_wal_entries(path: Path | None = None) -> list[dict[str, Any]]:
+    path = WAL_PATH if path is None else path
     return [entry for entry in load_wal(path)["entries"] if entry.get("state") in UNRESOLVED_WAL_STATES]
 
 
-def prepare_wal(operation: dict[str, Any], path: Path = WAL_PATH) -> None:
+def prepare_wal(operation: dict[str, Any], path: Path | None = None) -> None:
+    path = WAL_PATH if path is None else path
     wal = load_wal(path)
     if any(entry.get("operationId") == operation.get("operationId") for entry in wal["entries"]):
         raise RuntimeError("auto-apply WAL operation ID collision")
@@ -150,7 +229,8 @@ def prepare_wal(operation: dict[str, Any], path: Path = WAL_PATH) -> None:
     fsync_json(path, wal)
 
 
-def transition_wal(operation_id: str, state: str, details: dict[str, Any] | None = None, path: Path = WAL_PATH) -> None:
+def transition_wal(operation_id: str, state: str, details: dict[str, Any] | None = None, path: Path | None = None) -> None:
+    path = WAL_PATH if path is None else path
     allowed = {"PREPARED", "SUBMITTING", "SUBMITTED", "VERIFIED", "UNCERTAIN", "UNKNOWN", "FAILED"}
     if state not in allowed:
         raise RuntimeError("invalid auto-apply WAL state")
@@ -161,7 +241,7 @@ def transition_wal(operation_id: str, state: str, details: dict[str, Any] | None
     entry = matches[0]
     current = str(entry.get("state") or "")
     legal = {
-        "PREPARED": {"SUBMITTING", "FAILED"},
+        "PREPARED": {"SUBMITTING", "FAILED", "UNCERTAIN"},
         "SUBMITTING": {"SUBMITTED", "UNCERTAIN"},
         "SUBMITTED": {"VERIFIED", "UNCERTAIN"},
         "VERIFIED": set(), "UNCERTAIN": set(), "UNKNOWN": set(), "FAILED": set(),
@@ -175,11 +255,52 @@ def transition_wal(operation_id: str, state: str, details: dict[str, Any] | None
     fsync_json(path, wal)
 
 
-def wal_state(operation_id: str, path: Path = WAL_PATH) -> str:
+def arm_prepared_wal(operation_id: str, details: dict[str, Any], path: Path | None = None) -> None:
+    path = WAL_PATH if path is None else path
+    wal = load_wal(path)
+    matches = [entry for entry in wal["entries"] if entry.get("operationId") == operation_id]
+    if len(matches) != 1 or matches[0].get("state") != "PREPARED":
+        raise RuntimeError("auto-apply WAL PREPARED operation was not found uniquely")
+    matches[0].update(details)
+    matches[0]["updatedAt"] = utc_now()
+    fsync_json(path, wal)
+
+
+def wal_state(operation_id: str, path: Path | None = None) -> str:
+    path = WAL_PATH if path is None else path
     matches = [entry for entry in load_wal(path)["entries"] if entry.get("operationId") == operation_id]
     if len(matches) != 1:
         raise RuntimeError("auto-apply WAL operation was not found uniquely")
     return str(matches[0].get("state") or "")
+
+
+def terminate_process_group(pgid: int, process: subprocess.Popen[Any] | None = None) -> None:
+    def group_alive() -> bool:
+        if process is not None:
+            process.poll()
+        try:
+            os.killpg(pgid, 0)
+            return True
+        except ProcessLookupError:
+            return False
+    for sig, seconds in ((signal.SIGTERM, 5), (signal.SIGKILL, 10)):
+        if not group_alive():
+            break
+        os.killpg(pgid, sig)
+        deadline = time.monotonic() + seconds
+        while group_alive() and time.monotonic() < deadline:
+            time.sleep(0.05)
+    if group_alive():
+        raise RuntimeError("auto-apply uploader process group could not be fenced")
+    if process is not None:
+        process.wait(timeout=1)
+
+
+def handle_uploader_timeout(operation_id: str, process: subprocess.Popen[Any]) -> None:
+    terminate_process_group(process.pid, process)
+    state = wal_state(operation_id)
+    if state in {"PREPARED", "SUBMITTING", "SUBMITTED"}:
+        transition_wal(operation_id, "UNCERTAIN", {"verification": "UNKNOWN", "timeout": True})
 
 
 def latest_recommendation_path() -> Path:
@@ -440,26 +561,65 @@ def apply_one(row: dict[str, Any], tick_id: str, index: int) -> dict[str, Any]:
         "bundle": {key: str(value) for key, value in bundle.items()},
         "bundleSha256": {key: sha256(value) for key, value in bundle.items()},
     })
-    env = os.environ.copy()
-    env.update({
+    env = {
+        "HOME": "/Users/nob",
+        "PATH": "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
+        "LANG": "ja_JP.UTF-8",
+        "PYTHONNOUSERSITE": "1",
+        "NODE_PATH": os.environ["NODE_PATH"],
+        "PYTHONPATH": os.pathsep.join((str(CODE_ROOT), os.environ["RPP_PYTHON_PLAYWRIGHT_ROOT"])),
+        "RPP_PROJECT_DIR": str(PROJECT),
         "RPP_ENABLE_PRODUCTION_UPLOAD": "1",
         "RPP_AUTO_APPLY_WAL": str(WAL_PATH),
         "RPP_AUTO_APPLY_OPERATION_ID": operation_id,
-    })
-    command = [
+        "RPP_RUNTIME_COMMIT": os.environ["RPP_RUNTIME_COMMIT"],
+        "RPP_ACTIVATION_RECEIPT": str(PROJECT / "rpp_apply_logs" / "rpp_product_delivery_dispatcher_activation.json"),
+        "RPP_PYTHON_PLAYWRIGHT_ROOT": os.environ["RPP_PYTHON_PLAYWRIGHT_ROOT"],
+        "RPP_PYTHON_PLAYWRIGHT_TREE_SHA256": os.environ["RPP_PYTHON_PLAYWRIGHT_TREE_SHA256"],
+        "RPP_CHROMIUM_BUNDLE_ROOT": os.environ["RPP_CHROMIUM_BUNDLE_ROOT"],
+        "RPP_CHROMIUM_TREE_SHA256": os.environ["RPP_CHROMIUM_TREE_SHA256"],
+        "RPP_CHROMIUM_EXECUTABLE": os.environ["RPP_CHROMIUM_EXECUTABLE"],
+    }
+    uploader_command = [
         sys.executable,
-        os.environ.get("RPP_UPLOAD_HELPER", str(CODE_ROOT / "rpp_apply_approved_cpc_upload.py")),
+        "-s",
+        str(UPLOAD_HELPER),
         f"--csv={bundle['upload']}", "--execute", "--final-submit", "--confirm=RMS_CPC_UPLOAD",
         f"--operation-id={operation_id}",
     ]
-    result = subprocess.run(command, cwd=PROJECT, env=env, text=True, capture_output=True, timeout=600)
+    gate = PROJECT / "rpp_apply_logs" / f"rpp_auto_apply_start_gate_{uuid.uuid4().hex}"
+    gate_code = ("import os,sys,time,pathlib; g=pathlib.Path(sys.argv[1]); deadline=time.time()+120; "
+                 "\nwhile not g.exists() and time.time()<deadline: time.sleep(.05)"
+                 "\nif not g.exists(): raise SystemExit(124)"
+                 "\nos.execve(sys.argv[2], sys.argv[2:], os.environ)")
+    command = [sys.executable, "-s", "-c", gate_code, str(gate), *uploader_command]
+    process = subprocess.Popen(command, cwd=PROJECT, env=env, text=True, stdout=subprocess.PIPE,
+                               stderr=subprocess.PIPE, start_new_session=True)
+    try:
+        arm_prepared_wal(operation_id, {"uploaderPid": process.pid, "uploaderPgid": process.pid,
+                                        "startGate": str(gate), "uploaderCommand": str(UPLOAD_HELPER)})
+    except Exception:
+        terminate_process_group(process.pid, process)
+        raise
+    fd = os.open(gate, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    os.fsync(fd)
+    os.close(fd)
+    _fsync_directory(gate.parent)
+    try:
+        stdout, stderr = process.communicate(timeout=600)
+    except subprocess.TimeoutExpired:
+        handle_uploader_timeout(operation_id, process)
+        stdout, stderr = process.stdout.read() if process.stdout else "", process.stderr.read() if process.stderr else ""
+        raise RuntimeError("auto-apply uploader timed out")
+    finally:
+        gate.unlink(missing_ok=True)
     state = wal_state(operation_id)
-    if result.returncode != 0:
+    if process.returncode != 0:
         if state == "PREPARED":
             transition_wal(operation_id, "FAILED", {"failureStage": "BEFORE_SUBMIT"})
         elif state in {"SUBMITTING", "SUBMITTED"}:
             transition_wal(operation_id, "UNCERTAIN", {"verification": "UNKNOWN"})
-        raise RuntimeError((result.stderr or result.stdout or f"exit {result.returncode}")[-4000:])
+        raise RuntimeError((stderr or stdout or f"exit {process.returncode}")[-4000:])
     if state != "VERIFIED":
         if state in {"SUBMITTING", "SUBMITTED"}:
             transition_wal(operation_id, "UNCERTAIN", {"verification": "UNKNOWN"})
@@ -468,10 +628,20 @@ def apply_one(row: dict[str, Any], tick_id: str, index: int) -> dict[str, Any]:
 
 
 def run_post_refresh() -> None:
-    script = os.environ.get("RPP_POST_REFRESH_SCRIPT", "").strip()
-    if not script:
-        raise RuntimeError("attested post-refresh script is not configured")
-    result = subprocess.run([sys.executable, script, "hourly"], cwd=PROJECT, env=os.environ.copy(), text=True, capture_output=True, timeout=1200)
+    env = {"HOME": "/Users/nob", "PATH": "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
+           "LANG": "ja_JP.UTF-8", "PYTHONNOUSERSITE": "1",
+           "PYTHONPATH": os.pathsep.join((str(CODE_ROOT), os.environ["RPP_PYTHON_PLAYWRIGHT_ROOT"])),
+           "RPP_PROJECT_DIR": str(PROJECT), "NODE_PATH": os.environ["NODE_PATH"],
+           "RPP_SETTINGS_REFRESH_SCRIPT": str(SETTINGS_REFRESH_SCRIPT),
+           "RPP_SNAPSHOT_SENDER": str(SNAPSHOT_SENDER),
+           "RPP_RECOMMENDATION_SCRIPT": str(RECOMMENDATION_SCRIPT),
+           "RPP_POSITION_MONITOR_SCRIPT": str(POSITION_MONITOR_SCRIPT),
+           "RPP_PYTHON_PLAYWRIGHT_ROOT": os.environ["RPP_PYTHON_PLAYWRIGHT_ROOT"],
+           "RPP_PYTHON_PLAYWRIGHT_TREE_SHA256": os.environ["RPP_PYTHON_PLAYWRIGHT_TREE_SHA256"],
+           "RPP_CHROMIUM_BUNDLE_ROOT": os.environ["RPP_CHROMIUM_BUNDLE_ROOT"],
+           "RPP_CHROMIUM_TREE_SHA256": os.environ["RPP_CHROMIUM_TREE_SHA256"],
+           "RPP_CHROMIUM_EXECUTABLE": os.environ["RPP_CHROMIUM_EXECUTABLE"]}
+    result = subprocess.run([sys.executable, "-s", str(POST_REFRESH_SCRIPT), "hourly"], cwd=PROJECT, env=env, text=True, capture_output=True, timeout=1200)
     if result.returncode != 0:
         raise RuntimeError((result.stderr or result.stdout or "post-apply refresh failed")[-4000:])
 
@@ -481,6 +651,8 @@ def main() -> int:
     parser.add_argument("--execute", action="store_true")
     parser.add_argument("--report", action="store_true")
     args = parser.parse_args()
+    if args.execute:
+        require_mutation_runtime()
     sync_current_targets()
     settings = load_json_strict(SETTINGS_PATH, "auto-apply settings")
     if not isinstance(settings, dict):

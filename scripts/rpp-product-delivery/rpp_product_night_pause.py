@@ -11,19 +11,23 @@ import argparse
 import csv
 import datetime as dt
 import fcntl
+import hashlib
 import json
 import os
 import re
+import signal
+import secrets
 import subprocess
 import sys
 import tempfile
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
 from typing import Dict, Iterable, List, Mapping, Optional, Set
 
-PROJECT = Path(os.environ.get("RPP_PROJECT_DIR", "/Users/nob/Projects/rpp-8am-notify"))
+PROJECT = Path("/Users/nob/Projects/rpp-8am-notify")
 WEB_PROJECT = Path(os.environ.get("RAKUTEN_MVP_WEB_DIR", "/Users/nob/Projects/rakuten-mvp-web"))
 DEFAULT_API_BASE = "https://rakuten-mvp-web.onrender.com"
 API_BASE = DEFAULT_API_BASE
@@ -32,10 +36,10 @@ LOG_DIR = PROJECT / "rpp_apply_logs"
 LEDGER_PATH = LOG_DIR / "rpp_product_night_pause_ledger.json"
 AUDIT_PATH = LOG_DIR / "rpp_product_night_pause_audit.jsonl"
 UPLOAD_DIR = LOG_DIR / "rpp_product_night_pause_uploads"
-ADAPTER = WEB_PROJECT / "scripts" / "rpp_apply_exclusion_upload.mjs"
-NODE_BIN = os.environ.get("RPP_EXCLUSION_NODE_BIN", "/opt/homebrew/bin/node")
+ADAPTER = Path(__file__).resolve().with_name("rpp_apply_exclusion_upload.mjs")
+NODE_BIN = "/opt/homebrew/bin/node"
 ENV_FILE = PROJECT / ".env"
-LOCK_PATH = Path(os.environ.get("RPP_EXCLUSION_WORKER_LOCK", "/tmp/rise-rpp-exclusion-worker.lock"))
+LOCK_PATH = Path("/tmp/rise-rpp-exclusion-worker.lock")
 PRODUCTION_CONFIRMATION = "RPP_PRODUCT_NIGHT_PAUSE"
 ITEM_CODE_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,99}$")
 UTC = dt.timezone.utc
@@ -164,10 +168,72 @@ def load_env_file(path: Path) -> None:
             os.environ[key] = value
 
 
+def trusted_env_values(path: Path, required: Iterable[str]) -> Dict[str, str]:
+    values: Dict[str, str] = {}
+    if path.exists():
+        for raw_line in path.read_text(encoding="utf-8", errors="ignore").splitlines():
+            line = raw_line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            values[key.strip()] = value.strip().strip('"').strip("'")
+    missing = [key for key in required if not values.get(key)]
+    if missing:
+        raise RuntimeError("trusted RMS credentials are missing")
+    return {key: values[key] for key in required}
+
+
+def attested_runtime_environment() -> Dict[str, str]:
+    manifest_path = PROJECT / "rpp_apply_logs" / "rpp_product_delivery_scheduler_deploy.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    commit = str(manifest.get("commit") or "")
+    dependency = manifest.get("runtimeDependencies") or {}
+    if not re.fullmatch(r"[0-9a-f]{40}", commit):
+        raise RuntimeError("runtime manifest commit is invalid")
+    expected_root = (PROJECT / "runtime_dependencies" / commit).resolve()
+    node_root = Path(str(dependency.get("nodeRoot") or "")).resolve()
+    browser_root = Path(str(dependency.get("browserRoot") or "")).resolve()
+    executable = Path(str(dependency.get("chromiumExecutable") or "")).resolve()
+    if node_root != expected_root / "node_modules" or browser_root.parent != expected_root / "chromium":
+        raise RuntimeError("runtime dependency path is outside the manifest boundary")
+    if browser_root not in executable.parents:
+        raise RuntimeError("Chromium executable is outside the manifest bundle")
+    node_hash = str(dependency.get("nodeTreeSha256") or "")
+    browser_hash = str(dependency.get("browserTreeSha256") or "")
+    if not re.fullmatch(r"[0-9a-f]{64}", node_hash) or not re.fullmatch(r"[0-9a-f]{64}", browser_hash):
+        raise RuntimeError("runtime dependency digest is invalid")
+    return {
+        "RPP_PLAYWRIGHT_NODE_ROOT": str(node_root),
+        "RPP_PLAYWRIGHT_TREE_SHA256": node_hash,
+        "RPP_CHROMIUM_BUNDLE_ROOT": str(browser_root),
+        "RPP_CHROMIUM_TREE_SHA256": browser_hash,
+        "RPP_CHROMIUM_EXECUTABLE": str(executable),
+        "RPP_RUNTIME_COMMIT": commit,
+        "RPP_ACTIVATION_RECEIPT": str(PROJECT / "rpp_apply_logs" / "rpp_product_delivery_dispatcher_activation.json"),
+    }
+
+
+def require_mutation_runtime(artifacts: Mapping[str, Path], *, allow_activation_hold: bool = False) -> dict:
+    generation = Path(__file__).resolve().parent
+    runtime_root = (PROJECT / "rpp_apply_logs" / "runtime_exec").resolve()
+    if runtime_root not in generation.parents or not generation.name.startswith(("generation-", "delivery-dispatcher-generation-", "auto-apply-generation-")):
+        raise RuntimeError("production mutation requires a private verified generation")
+    manifest = json.loads((PROJECT / "rpp_apply_logs" / "rpp_product_delivery_scheduler_deploy.json").read_text(encoding="utf-8"))
+    activation = json.loads((PROJECT / "rpp_apply_logs" / "rpp_product_delivery_dispatcher_activation.json").read_text(encoding="utf-8"))
+    commit = str(manifest.get("commit") or "")
+    if (activation.get("activated") is not True or activation.get("commit") != commit
+            or (activation.get("activationHold") is True and not allow_activation_hold)):
+        raise RuntimeError("production mutation runtime is not activated")
+    expected = manifest.get("artifacts") or {}
+    for key, artifact in artifacts.items():
+        resolved = artifact.resolve()
+        if (resolved.parent != generation or artifact.is_symlink()
+                or hashlib.sha256(resolved.read_bytes()).hexdigest() != expected.get(key)):
+            raise RuntimeError("production mutation artifact is outside the verified generation")
+    return manifest
+
+
 def snapshot_token() -> str:
-    value = os.environ.get("RPP_SNAPSHOT_SYNC_TOKEN", "").strip()
-    if value:
-        return value
     result = subprocess.run(
         ["security", "find-generic-password", "-s", "hermes.rpp.snapshot-sync", "-w"],
         text=True,
@@ -258,10 +324,20 @@ def release_global_lock(fd: int) -> None:
     os.close(fd)
 
 
-def run_adapter(csv_path: Path, control: str, item_code: str, wal_path: Optional[Path] = None, operation_id: Optional[str] = None) -> dict:
+def run_adapter(csv_path: Path, control: str, item_code: str, wal_path: Optional[Path] = None,
+                operation_id: Optional[str] = None, cancel_event=None, start_gate: Optional[Path] = None,
+                on_process_started=None) -> dict:
+    require_mutation_runtime({"nightPause": Path(__file__), "exclusionAdapter": ADAPTER})
     if not ADAPTER.exists():
         raise RuntimeError("RMS exclusion adapter was not found: %s" % ADAPTER)
-    env = os.environ.copy()
+    credential_keys = ("RMS_LOGIN_ID", "RMS_LOGIN_PASS", "RAKUTEN_EMAIL", "RAKUTEN_EMAIL_PASS")
+    env = {
+        "HOME": "/Users/nob",
+        "PATH": "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
+        "LANG": "ja_JP.UTF-8",
+        **trusted_env_values(ENV_FILE, credential_keys),
+        **attested_runtime_environment(),
+    }
     env["RPP_ENABLE_RMS_EXCLUSION_UPLOAD"] = "1"
     command = [
         NODE_BIN,
@@ -273,26 +349,79 @@ def run_adapter(csv_path: Path, control: str, item_code: str, wal_path: Optional
         "--confirm=RMS_EXCLUSION_UPLOAD",
         "--expected-before=%s" % ("active" if control == "n" else "excluded"),
     ]
-    if bool(wal_path) != bool(operation_id):
-        raise RuntimeError("wal_path and operation_id must be paired")
-    if wal_path and operation_id:
-        command.extend(["--wal-stage-file=%s" % wal_path, "--operation-id=%s" % operation_id])
-    process = subprocess.run(
-        command,
+    if not wal_path or not operation_id:
+        raise RuntimeError("production RMS adapter requires scheduler WAL and operation ID")
+    if start_gate is None or on_process_started is None:
+        raise RuntimeError("production RMS adapter requires a WAL-bound start gate")
+    command.extend(["--wal-stage-file=%s" % wal_path, "--operation-id=%s" % operation_id])
+    capability = secrets.token_urlsafe(32)
+    env["RPP_ADAPTER_CAPABILITY"] = capability
+    command.append("--start-gate=%s" % start_gate)
+    start_gate.parent.mkdir(parents=True, exist_ok=True)
+    start_gate.unlink(missing_ok=True)
+    gate_helper = (
+        "import os,sys,time; gate=sys.argv[1]; end=time.monotonic()+120; "
+        "\nwhile not os.path.exists(gate):"
+        "\n if time.monotonic()>=end: sys.exit(78)"
+        "\n time.sleep(0.05)"
+        "\nos.execvp(sys.argv[2],sys.argv[2:])"
+    )
+    process = subprocess.Popen(
+        [sys.executable, "-c", gate_helper, str(start_gate), *command],
         cwd=str(WEB_PROJECT),
         env=env,
         text=True,
-        capture_output=True,
-        timeout=600,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        start_new_session=True,
     )
+    try:
+        on_process_started(process.pid)
+        gate_fd = os.open(start_gate, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        try:
+            os.write(gate_fd, (operation_id + ":" + capability).encode("ascii"))
+            os.fsync(gate_fd)
+        finally:
+            os.close(gate_fd)
+    except Exception:
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        process.communicate()
+        raise
+    deadline = time.monotonic() + 600
+    while True:
+        try:
+            stdout, stderr = process.communicate(timeout=1)
+            break
+        except subprocess.TimeoutExpired:
+            cancelled = cancel_event is not None and cancel_event.is_set()
+            timed_out = time.monotonic() >= deadline
+            if not cancelled and not timed_out:
+                continue
+            try:
+                os.killpg(process.pid, signal.SIGTERM)
+                stdout, stderr = process.communicate(timeout=10)
+            except (ProcessLookupError, subprocess.TimeoutExpired):
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                stdout, stderr = process.communicate()
+            if cancelled:
+                raise RuntimeError("RMS adapter aborted because reservation lease was lost")
+            raise RuntimeError("RMS adapter timed out")
     if process.returncode != 0:
-        detail = (process.stderr or process.stdout or "adapter exit %s" % process.returncode).strip()
+        start_gate.unlink(missing_ok=True)
+        detail = (stderr or stdout or "adapter exit %s" % process.returncode).strip()
         raise RuntimeError(detail[-3000:])
     try:
-        result = json.loads(process.stdout)
+        result = json.loads(stdout)
     except json.JSONDecodeError as exc:
         raise RuntimeError("RMS adapter did not return JSON") from exc
     verify_adapter_result(result, control, item_code)
+    start_gate.unlink(missing_ok=True)
     return result
 
 
@@ -335,6 +464,8 @@ def execute_plan(
     audit_path: Path = AUDIT_PATH,
     upload_dir: Path = UPLOAD_DIR,
 ) -> dict:
+    if codes:
+        raise RuntimeError("legacy direct production execution is disabled; use the WAL-backed delivery scheduler")
     control = "n" if phase == "off" else "d"
     expected_after = control == "n"
     succeeded = []

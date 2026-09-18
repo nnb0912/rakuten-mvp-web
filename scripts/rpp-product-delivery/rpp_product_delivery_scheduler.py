@@ -17,9 +17,11 @@ import json
 import math
 import os
 import re
+import signal
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import urllib.error
 import urllib.parse
@@ -31,7 +33,7 @@ from zoneinfo import ZoneInfo
 
 import rpp_product_night_pause as legacy
 
-PROJECT = Path(os.environ.get("RPP_PROJECT_DIR", "/Users/nob/Projects/rpp-8am-notify"))
+PROJECT = Path("/Users/nob/Projects/rpp-8am-notify")
 DEFAULT_API_BASE = "https://rakuten-mvp-web.onrender.com"
 API_BASE = DEFAULT_API_BASE
 STATE_PATH = PROJECT / "rpp_apply_logs" / "rpp_product_delivery_scheduler_state.json"
@@ -205,6 +207,47 @@ def heartbeat_reservation(reservation_id: str, claim_id: str, api_base: str = AP
     if payload.get("ok") is not True or not isinstance(row, dict) or row.get("claimId") != claim_id:
         raise RuntimeError("reservation heartbeat/fencing failed")
     return row
+
+
+class ReservationLeaseKeeper:
+    """Renew a reservation lease while a long RMS transition is in flight."""
+
+    def __init__(self, reservation_id: str, claim_id: str, api_base: str, interval_seconds: float = 240.0):
+        self.reservation_id = reservation_id
+        self.claim_id = claim_id
+        self.api_base = api_base
+        self.interval_seconds = interval_seconds
+        self._stop = threading.Event()
+        self.lost_event = threading.Event()
+        self._thread = threading.Thread(target=self._run, name="rpp-reservation-heartbeat", daemon=True)
+        self._last_error: Optional[BaseException] = None
+
+    def _beat(self) -> None:
+        try:
+            heartbeat_reservation(self.reservation_id, self.claim_id, self.api_base)
+            self._last_error = None
+        except BaseException as exc:
+            self._last_error = exc
+            self.lost_event.set()
+
+    def _run(self) -> None:
+        while not self._stop.wait(self.interval_seconds):
+            self._beat()
+
+    def start(self) -> None:
+        self._beat()
+        if self._last_error is not None:
+            raise RuntimeError("reservation heartbeat/fencing failed") from self._last_error
+        self._thread.start()
+
+    def stop(self, verify: bool) -> None:
+        self._stop.set()
+        if self._thread.is_alive():
+            self._thread.join(timeout=max(1.0, min(30.0, self.interval_seconds)))
+        if verify:
+            self._beat()
+            if self._last_error is not None:
+                raise RuntimeError("reservation heartbeat/fencing failed before ACK") from self._last_error
 
 
 def release_reservation_claim(reservation_id: str, claim_id: str, error: str, api_base: str = API_BASE) -> dict:
@@ -661,6 +704,60 @@ def migrate_legacy_ledger(state: dict, state_path: Path) -> dict:
     return migrated
 
 
+def fence_wal_adapter(wal: dict, wal_path: Path) -> Tuple[bool, bool]:
+    operation_id = wal.get("operationId")
+    gate_value = wal.get("adapterStartGate")
+    gate = Path(gate_value) if isinstance(gate_value, str) else None
+    bound = bool(
+        isinstance(operation_id, str)
+        and gate is not None
+        and gate.parent.resolve() == wal_path.parent.resolve()
+        and operation_id in gate.name
+    )
+    pgid_value = wal.get("adapterPgid")
+    if pgid_value is not None:
+        if not bound:
+            raise RuntimeError("unbound WAL process group cannot be terminated safely")
+        if (not isinstance(pgid_value, int) or pgid_value <= 1 or pgid_value == os.getpgrp()):
+            raise RuntimeError("WAL adapter process group is invalid")
+        identity = subprocess.run(["/bin/ps", "-p", str(pgid_value), "-o", "command="],
+                                  text=True, capture_output=True, timeout=10)
+        operation_text = str(operation_id)
+        if identity.returncode != 0:
+            raise RuntimeError("WAL adapter process identity is unavailable; refusing to signal")
+        if operation_text not in identity.stdout and (gate is None or str(gate) not in identity.stdout):
+            raise RuntimeError("WAL adapter process identity does not match; refusing to signal")
+        try:
+            os.killpg(pgid_value, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            try:
+                os.killpg(pgid_value, 0)
+            except ProcessLookupError:
+                break
+            time.sleep(0.1)
+        else:
+            try:
+                os.killpg(pgid_value, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            time.sleep(0.1)
+            try:
+                os.killpg(pgid_value, 0)
+            except ProcessLookupError:
+                pass
+            else:
+                raise RuntimeError("submit-capable adapter process group is still alive")
+    released = bool(wal.get("adapterReleasedAt"))
+    if gate is not None:
+        if gate.exists() and pgid_value is None:
+            released = True
+        gate.unlink(missing_ok=True)
+    return bound, released
+
+
 def recover_wal(state: dict, current: Set[str], state_path: Path, wal_path: Path, audit_path: Path) -> Tuple[dict, dict]:
     wal = load_wal(wal_path)
     if wal is None:
@@ -668,16 +765,25 @@ def recover_wal(state: dict, current: Set[str], state_path: Path, wal_path: Path
     expected_excluded = wal["control"] == "n"
     actual_excluded = wal["itemCode"] in current
     phase = wal["phase"]
-    safely_attributed = (phase in {"SUBMITTED", "UNCERTAIN"}
-                         and bool(wal.get("submittedAt"))
-                         and wal.get("beforeExcluded") is (not expected_excluded)
-                         and actual_excluded == expected_excluded)
-    if (phase == "VERIFIED" and actual_excluded == expected_excluded) or safely_attributed:
+    adapter_bound, adapter_released = (True, False)
+    if phase in {"PREPARED", "SUBMITTING", "SUBMITTED", "UNCERTAIN"}:
+        try:
+            adapter_bound, adapter_released = fence_wal_adapter(wal, wal_path)
+        except RuntimeError:
+            adapter_bound, adapter_released = (False, True)
+            wal["adapterFenceUnverified"] = True
+            gate_value = wal.get("adapterStartGate")
+            if isinstance(gate_value, str):
+                gate = Path(gate_value)
+                if gate.parent.resolve() == wal_path.parent.resolve() and str(wal.get("operationId") or "") in gate.name:
+                    gate.unlink(missing_ok=True)
+    prepared_released = phase == "PREPARED" and (not adapter_bound or adapter_released)
+    if phase == "VERIFIED" and actual_excluded == expected_excluded:
         state = wal["stateAfter"]
         save_state(state, state_path)
-        status = "committed" if phase == "VERIFIED" else "recovered_committed"
+        status = "committed"
         clear_wal(wal_path)
-    elif phase == "PREPARED":
+    elif phase == "PREPARED" and not prepared_released:
         state = wal["stateBefore"]
         save_state(state, state_path)
         status = "rolled_back"
@@ -704,6 +810,26 @@ def recover_wal_with_fresh_readback(state: dict, current: Set[str], state_path: 
     if wal is None or wal["phase"] in {"PREPARED", "VERIFIED"}:
         recovered, evidence = recover_wal(state, current, state_path, wal_path, audit_path)
         return recovered, evidence, current
+    # Fence a still-running submit-capable child before any recovery polling.
+    try:
+        fence_wal_adapter(wal, wal_path)
+    except RuntimeError:
+        wal["phase"] = "UNCERTAIN"
+        wal["adapterFenceUnverified"] = True
+        gate_value = wal.get("adapterStartGate")
+        if isinstance(gate_value, str):
+            gate = Path(gate_value)
+            if gate.parent.resolve() == wal_path.parent.resolve() and str(wal.get("operationId") or "") in gate.name:
+                gate.unlink(missing_ok=True)
+        wal["uncertainSince"] = wal.get("uncertainSince") or iso_utc(now_utc())
+        write_wal(wal, wal_path)
+        state = wal["stateBefore"]
+        save_state(state, state_path)
+        evidence = {"status": "uncertain", "operationId": wal.get("operationId"),
+                    "itemCode": wal["itemCode"], "phase": "UNCERTAIN",
+                    "manualRepairRequired": True, "adapterFenceUnverified": True}
+        append_audit({"timestamp": iso_utc(now_utc()), "kind": "wal-recovery", **evidence}, audit_path)
+        return state, evidence, current
     try:
         timeout = max(0, min(180, int(os.environ.get("RPP_WAL_RECOVERY_SECONDS", "180"))))
         interval = max(1, min(30, int(os.environ.get("RPP_WAL_RECOVERY_POLL_SECONDS", "15"))))
@@ -723,22 +849,44 @@ def recover_wal_with_fresh_readback(state: dict, current: Set[str], state_path: 
 
 
 def _transition(state_after: dict, code: str, control: str, current: Set[str], execute: bool,
-                state_path: Path, wal_path: Path, reservation_id: Optional[str] = None) -> dict:
+                state_path: Path, wal_path: Path, reservation_id: Optional[str] = None,
+                lease_lost_event=None) -> dict:
     action = "OFF" if control == "n" else "ON"
     if not execute:
         return {"itemCode": code, "action": action, "productionChange": False}
     state_before = load_state(state_path)
     operation_id = str(uuid.uuid4())
-    wal = {"version": 3, "operationId": operation_id, "phase": "PREPARED", "createdAt": iso_utc(now_utc()),
-           "itemCode": code, "control": control, "beforeExcluded": code in current,
-           "reservationId": reservation_id, "stateBefore": state_before, "stateAfter": normalize_state(state_after)}
-    write_wal(wal, wal_path)
-    csv_path = legacy._upload_path(control, code)
+    start_gate = wal_path.with_name(f"{wal_path.name}.{operation_id}.start")
+    csv_path = legacy._upload_path(control, code).resolve()
     legacy.write_one_row_csv(csv_path, control, code)
-    result = legacy.run_adapter(csv_path, control, code, wal_path, operation_id)
+    csv_bytes = csv_path.read_bytes()
+    wal = {"version": 4, "operationId": operation_id, "phase": "PREPARED", "createdAt": iso_utc(now_utc()),
+           "itemCode": code, "control": control, "beforeExcluded": code in current,
+           "reservationId": reservation_id, "stateBefore": state_before, "stateAfter": normalize_state(state_after),
+           "csvPath": str(csv_path), "csvSha256": hashlib.sha256(csv_bytes).hexdigest(),
+           "csvBytes": len(csv_bytes), "csvRows": [{"control": control, "itemCode": code}],
+           "adapterStartGate": str(start_gate), "adapterPgid": None, "adapterReleasedAt": None,
+           "runtimeCommit": os.environ.get("RPP_RUNTIME_COMMIT", "")}
+    write_wal(wal, wal_path)
+    def authorize_adapter(pgid: int) -> None:
+        prepared = load_wal(wal_path)
+        if (prepared is None or prepared.get("phase") != "PREPARED"
+                or prepared.get("operationId") != operation_id):
+            raise RuntimeError("adapter start authorization no longer matches PREPARED WAL")
+        prepared["adapterPgid"] = pgid
+        prepared["adapterReleasedAt"] = iso_utc(now_utc())
+        write_wal(prepared, wal_path)
+
+    result = legacy.run_adapter(csv_path, control, code, wal_path, operation_id,
+                                cancel_event=lease_lost_event, start_gate=start_gate,
+                                on_process_started=authorize_adapter)
+    if lease_lost_event is not None and lease_lost_event.is_set():
+        raise RuntimeError("reservation lease was lost during RMS transition")
     verified_wal = load_wal(wal_path)
     if verified_wal is None or verified_wal.get("phase") != "VERIFIED":
         raise RuntimeError("RMS adapter returned without VERIFIED WAL stage")
+    if any(verified_wal.get(key) != wal.get(key) for key in ("operationId", "csvPath", "csvSha256", "csvBytes", "csvRows")):
+        raise RuntimeError("VERIFIED WAL payload binding changed during adapter execution")
     save_state(state_after, state_path)
     clear_wal(wal_path)
     if control == "n":
@@ -785,7 +933,21 @@ def process_due_reservations(state: dict, reservations: Iterable[dict], at: dt.d
         if isinstance(cached, dict) and cached.get("status") == "SUCCEEDED":
             if execute:
                 try:
-                    acknowledge_reservation(reservation["id"], str(cached.get("claimId") or ""), "SUCCEEDED", api_base=api_base)
+                    claim_id = str(cached.get("claimId") or "")
+                    claim_expires_at = reservation.get("claimExpiresAt")
+                    lease_active = bool(claim_id and reservation.get("claimId") == claim_id and claim_expires_at and claim_expires_at > at)
+                    if lease_active:
+                        heartbeat_reservation(reservation["id"], claim_id, api_base)
+                    else:
+                        claimed = claim_reservation(reservation["id"], api_base=api_base)
+                        if (legacy.normalize_code(claimed.get("itemCode")) != reservation["itemCode"]
+                                or str(claimed.get("action") or "").upper() != reservation["action"]
+                                or parse_iso(claimed.get("executeAt")) != reservation["executeAt"]):
+                            raise RuntimeError("reclaimed reservation did not match fetched reservation")
+                        claim_id = str(claimed.get("claimId") or "")
+                        cached["claimId"] = claim_id
+                        save_state(state, state_path)
+                    acknowledge_reservation(reservation["id"], claim_id, "SUCCEEDED", api_base=api_base)
                 except Exception as exc:
                     failure = {"reservationId": reservation["id"], "error": "success acknowledgement pending: %s" % str(exc)[-500:]}
                     if _must_stop_same_tick(exc):
@@ -861,9 +1023,20 @@ def process_due_reservations(state: dict, reservations: Iterable[dict], at: dt.d
             next_state["preexisting"] = sorted(set(next_state["preexisting"]) - {code})
         try:
             if control:
+                keeper = None
                 if execute:
-                    heartbeat_reservation(reservation["id"], str(reservation.get("claimId") or ""), api_base)
-                changes.append(_transition(next_state, code, control, current, execute, state_path, wal_path, reservation["id"]))
+                    keeper = ReservationLeaseKeeper(reservation["id"], str(reservation.get("claimId") or ""), api_base)
+                    keeper.start()
+                try:
+                    transition = _transition(next_state, code, control, current, execute, state_path, wal_path,
+                                             reservation["id"], keeper.lost_event if keeper is not None else None)
+                except BaseException:
+                    if keeper is not None:
+                        keeper.stop(verify=False)
+                    raise
+                if keeper is not None:
+                    keeper.stop(verify=False)
+                changes.append(transition)
             elif execute:
                 save_state(next_state, state_path)
             if not execute:
@@ -875,6 +1048,7 @@ def process_due_reservations(state: dict, reservations: Iterable[dict], at: dt.d
             completed.append(reservation["id"])
             if execute:
                 try:
+                    heartbeat_reservation(reservation["id"], str(reservation.get("claimId") or ""), api_base)
                     acknowledge_reservation(reservation["id"], str(reservation.get("claimId") or ""), "SUCCEEDED", api_base=api_base)
                 except Exception as exc:
                     failure = {"reservationId": reservation["id"], "error": "success acknowledgement pending: %s" % str(exc)[-500:]}
@@ -1014,7 +1188,17 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--reset-circuit", action="store_true")
     parser.add_argument("--circuit-status", action="store_true")
     parser.add_argument("--circuit-probe", action="store_true")
+    parser.add_argument("--deployment-preflight", action="store_true")
     return parser
+
+
+def require_authoritative_paths(args: argparse.Namespace) -> None:
+    authoritative = (STATE_PATH, WAL_PATH, AUDIT_PATH, CIRCUIT_PATH, ON_GUARD_ALERT_PATH,
+                     LOCK_BUSY_ALERT_PATH, EXCLUDE_CSV)
+    requested = (args.state, args.wal, args.audit, args.circuit, args.on_guard_alert,
+                 args.lock_busy_alert, args.exclude_csv)
+    if requested != authoritative:
+        raise RuntimeError("production scheduler authority paths are fixed")
 
 
 def _public_circuit(circuit: dict) -> dict:
@@ -1091,7 +1275,7 @@ def handle_lock_busy(args: argparse.Namespace) -> int:
         return 1
     append_audit({"timestamp": iso_utc(now_utc()), "event": "scheduler-lock-busy-suppressed",
                   "tickId": args.tick_id, "errorCode": "LOCK_BUSY"}, args.audit)
-    return 0
+    return 75 if os.environ.get("RPP_EVENT_DISPATCHER") == "1" else 0
 
 
 def probe_rms_adapter_dom(item_code: str, currently_excluded: bool, directory: Path) -> dict:
@@ -1270,6 +1454,11 @@ def run(args: argparse.Namespace) -> dict:
 def main(argv: Optional[List[str]] = None) -> int:
     args = build_parser().parse_args(argv)
     args.tick_id = str(uuid.uuid4())
+    if args.execute or args.circuit_probe or args.reset_circuit:
+        require_authoritative_paths(args)
+        legacy.require_mutation_runtime({"scheduler": Path(__file__), "nightPause": Path(legacy.__file__),
+                                         "exclusionAdapter": legacy.ADAPTER},
+                                        allow_activation_hold=bool(args.circuit_probe))
     legacy.load_env_file(legacy.ENV_FILE)
     if args.circuit_status:
         if not args.quiet:
@@ -1305,6 +1494,40 @@ def main(argv: Optional[List[str]] = None) -> int:
             return 0
         finally:
             legacy.release_global_lock(probe_lock)
+
+    if args.deployment_preflight:
+        if os.environ.get("RPP_ENABLE_PRODUCT_DELIVERY_SCHEDULER") != "1" or args.confirm != "RPP_PRODUCT_DELIVERY_DEPLOYMENT_PREFLIGHT":
+            raise RuntimeError("deployment preflight production gate is required")
+        preflight_lock = legacy.acquire_global_lock()
+        if preflight_lock is None:
+            return handle_lock_busy(args)
+        try:
+            if args.wal.exists():
+                raise RuntimeError("deployment preflight is blocked while WAL exists")
+            if load_circuit(args.circuit).get("open") is True:
+                raise RuntimeError("deployment preflight is blocked while circuit is OPEN")
+            dependencies = probe_external_dependencies(args)
+            with tempfile.TemporaryDirectory(prefix="rpp-deployment-preflight-") as temporary:
+                args.exclude_csv = Path(temporary) / "exclude.csv"
+                refresh_exclusions(args.exclude_csv)
+                preview = run(args)
+            candidate_safe = bool(
+                preview.get("ok") is True
+                and not preview.get("blocked")
+                and not preview.get("changes")
+                and not preview.get("failures")
+                and not preview.get("warnings")
+                and int(preview.get("queueDepth") or 0) == 0
+                and int(dependencies.get("orphanCount") or 0) == 0
+            )
+            print(json.dumps({"ok": candidate_safe, "kind": "rppDeliveryDeploymentPreflight",
+                              "productionChange": False, "candidateSafe": candidate_safe,
+                              "queueDepth": int(preview.get("queueDepth") or 0),
+                              "plannedChanges": len(preview.get("changes") or []),
+                              "dependencies": dependencies}, ensure_ascii=False, sort_keys=True))
+            return 0 if candidate_safe else 2
+        finally:
+            legacy.release_global_lock(preflight_lock)
 
     require_gate(args.execute, args.confirm, os.environ)
     lock_fd = None
@@ -1380,6 +1603,10 @@ def main(argv: Optional[List[str]] = None) -> int:
                 if not guard_alert.get("notify"):
                     notification_source["failures"] = [row for row in notification_source["failures"] if not row.get("onGuardBlocked")]
                 print(json.dumps(notification_summary(notification_source, args.audit), ensure_ascii=False, sort_keys=True))
+            elif os.environ.get("RPP_EVENT_DISPATCHER") == "1":
+                # Operator deduplication must not hide queue/backlog state from
+                # the event dispatcher that owns retry scheduling.
+                print(json.dumps(notification_summary(summary, args.audit), ensure_ascii=False, sort_keys=True))
             if only_guard_failures and not guard_alert.get("notify"):
                 return 0
             return 0 if summary["ok"] else 1

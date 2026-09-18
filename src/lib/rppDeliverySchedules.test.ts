@@ -113,6 +113,12 @@ test("同一商品・同一日時の予約は冪等で、反対動作との競�
   await assert.rejects(() => createRppDeliveryReservation("item-d", "ON", "2032-01-02T12:00", "Asia/Tokyo", now), /同時登録/);
 });
 
+test("期限切れclaimの終端ACKを拒否する", async () => {
+  const created = (await createRppDeliveryReservation("item-e", "OFF", "2020-01-02T12:00", "Asia/Tokyo", new Date("2020-01-01T00:00:00Z"))).reservation;
+  const claimed = await claimRppDeliveryReservation(created.id, new Date("2020-01-03T00:00:00Z"));
+  await assert.rejects(() => markRppDeliveryReservation(created.id, claimed.reservation.claimId, "SUCCEEDED"), /claim/);
+});
+
 test("RMS実測状態・次回切替・待ち件数を要約する", async () => {
   const data = await readRppDeliverySchedules({ itemCode: "item-a" });
   const now = new Date("2030-01-01T14:30:00.000Z");

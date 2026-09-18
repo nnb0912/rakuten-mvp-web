@@ -54,6 +54,8 @@ def emit(obj: dict[str, object]) -> None:
 
 
 async def login_and_upload(csv_path: Path, final_submit: bool) -> dict[str, object]:
+    if final_submit:
+        raise RuntimeError('Python final-submit path is disabled; use the manifest-attested WAL adapter')
     try:
         from playwright.async_api import async_playwright
     except Exception as e:
@@ -77,8 +79,9 @@ async def login_and_upload(csv_path: Path, final_submit: bool) -> dict[str, obje
     context = await browser.new_context(accept_downloads=True, locale='ja-JP')
     page = await context.new_page()
     try:
-        login_url = os.environ.get('RMS_LOGIN_URL') or 'https://glogin.rms.rakuten.co.jp/?sp_id=1'
-        await page.goto(login_url, wait_until='domcontentloaded', timeout=60000)
+        if os.environ.get('RMS_LOGIN_URL') not in (None, '', 'https://glogin.rms.rakuten.co.jp/?sp_id=1'):
+            raise RuntimeError('RMS_LOGIN_URL override is forbidden')
+        await page.goto('https://glogin.rms.rakuten.co.jp/?sp_id=1', wait_until='domcontentloaded', timeout=60000)
         await page.wait_for_timeout(2000)
 
         if await page.locator('input[name="login_id"]').count() > 0:
@@ -205,6 +208,8 @@ async def main_async() -> int:
         raise RuntimeError('RPP_ENABLE_RMS_EXCLUSION_UPLOAD=1 is required')
     if args.final_submit and args.confirm != 'RMS_EXCLUSION_UPLOAD':
         raise RuntimeError('--confirm=RMS_EXCLUSION_UPLOAD is required for final submit')
+    if args.final_submit:
+        raise RuntimeError('Python final-submit path is disabled; use the manifest-attested WAL adapter')
     applied = await login_and_upload(csv_path, final_submit=args.final_submit)
     emit({**base, 'productionChange': bool(args.final_submit), 'applied': applied})
     return 0

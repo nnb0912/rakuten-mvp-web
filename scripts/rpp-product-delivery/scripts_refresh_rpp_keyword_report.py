@@ -173,6 +173,16 @@ async def _download_keyword_report_with_page(page, target: date) -> Path:
     return out
 
 
+async def _fill_credential_at_origin(locator, expected_origin: str, value: str) -> None:
+    await locator.evaluate("""(el, args) => {
+        if (window.location.origin !== args.expectedOrigin) throw new Error('credential origin mismatch');
+        const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+        setter.call(el, args.value);
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+        el.dispatchEvent(new Event('change', { bubbles: true }));
+    }""", {"expectedOrigin": expected_origin, "value": value})
+
+
 async def _rms_login_lenient():
     from playwright.async_api import async_playwright
     import asyncio
@@ -184,29 +194,32 @@ async def _rms_login_lenient():
     if not all([login_id, login_pass, email, email_pass]):
         raise RuntimeError('RMS login credentials are missing')
 
+    executable_path = os.environ.get('RPP_CHROMIUM_EXECUTABLE', '')
+    if not executable_path:
+        raise RuntimeError('attested Chromium executable is required')
     p = await async_playwright().start()
-    browser = await p.chromium.launch(headless=True)
+    browser = await p.chromium.launch(headless=True, executable_path=executable_path)
     context = await browser.new_context(accept_downloads=True, locale='ja-JP')
     page = await context.new_page()
 
-    await page.goto(os.getenv('RMS_LOGIN_URL') or 'https://glogin.rms.rakuten.co.jp/?sp_id=1', wait_until='domcontentloaded', timeout=60000)
+    await page.goto('https://glogin.rms.rakuten.co.jp/?sp_id=1', wait_until='domcontentloaded', timeout=60000)
     await page.wait_for_timeout(2000)
 
     if await page.locator('input[name="login_id"]').count() > 0:
-        await page.fill('input[name="login_id"]', login_id)
-        await page.fill('input[name="passwd"]', login_pass)
+        await _fill_credential_at_origin(page.locator('input[name="login_id"]'), 'https://glogin.rms.rakuten.co.jp', login_id)
+        await _fill_credential_at_origin(page.locator('input[name="passwd"]'), 'https://glogin.rms.rakuten.co.jp', login_pass)
         btn = page.locator('button:has-text("楽天会員ログイン"), button:has-text("楽天会員ログインへ"), input[value*="楽天会員ログイン"]')
         if await btn.count() > 0:
             await btn.first.click()
         await page.wait_for_timeout(3000)
 
     if await page.locator('#user_id').count() > 0:
-        await page.fill('#user_id', email)
+        await _fill_credential_at_origin(page.locator('#user_id'), 'https://login.account.rakuten.com', email)
         await page.locator('#cta001').click()
         await page.wait_for_timeout(4000)
 
     if await page.locator('#password_current').count() > 0:
-        await page.fill('#password_current', email_pass)
+        await _fill_credential_at_origin(page.locator('#password_current'), 'https://login.account.rakuten.com', email_pass)
         await page.locator('#cta011').click()
         await page.wait_for_timeout(6000)
 

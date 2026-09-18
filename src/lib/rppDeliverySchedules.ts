@@ -70,6 +70,8 @@ export class RppDeliveryScheduleConflictError extends Error {
 
 const SCHEDULES_TABLE = "rpp_product_delivery_schedules";
 const RESERVATIONS_TABLE = "rpp_product_delivery_reservations";
+const CONTROL_TABLE = "rpp_product_delivery_scheduler_control";
+const NOTIFY_CHANNEL = "rpp_product_delivery_scheduler";
 const HH_MM = /^(?:[01]\d|2[0-3]):[0-5]\d$/;
 const LOCAL_DATE_TIME = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/;
 let fallbackMutation = Promise.resolve();
@@ -288,6 +290,40 @@ async function ensureTables() {
   await pool.query(`alter table ${RESERVATIONS_TABLE} add column if not exists attempts integer not null default 0`);
   await pool.query(`create unique index if not exists ${RESERVATIONS_TABLE}_item_time_uidx on ${RESERVATIONS_TABLE} (item_code,execute_at)`);
   await pool.query(`create index if not exists ${RESERVATIONS_TABLE}_pending_idx on ${RESERVATIONS_TABLE} (execute_at) where status='PENDING'`);
+  await pool.query(`create table if not exists ${CONTROL_TABLE} (
+    id smallint primary key check (id=1),
+    generation bigint not null default 0,
+    updated_at timestamptz not null default now()
+  )`);
+  await pool.query(`insert into ${CONTROL_TABLE}(id,generation,updated_at) values(1,0,now()) on conflict(id) do nothing`);
+  await pool.query(`create or replace function rpp_product_delivery_scheduler_wake() returns trigger language plpgsql as $$
+    declare next_generation bigint;
+    begin
+      update ${CONTROL_TABLE} set generation=generation+1,updated_at=clock_timestamp() where id=1 returning generation into next_generation;
+      perform pg_notify('${NOTIFY_CHANNEL}',next_generation::text);
+      return coalesce(new,old);
+    end
+  $$`);
+  await pool.query(`do $$ begin
+    perform pg_advisory_xact_lock(hashtext('rpp_product_delivery_scheduler_trigger_install'));
+    if not exists(select 1 from pg_trigger where tgname='rpp_delivery_schedule_wake' and tgrelid='${SCHEDULES_TABLE}'::regclass) then
+      create trigger rpp_delivery_schedule_wake after insert or update or delete on ${SCHEDULES_TABLE}
+      for each row execute function rpp_product_delivery_scheduler_wake();
+    end if;
+    if not exists(select 1 from pg_trigger where tgname='rpp_delivery_reservation_wake' and tgrelid='${RESERVATIONS_TABLE}'::regclass) then
+      create trigger rpp_delivery_reservation_wake after insert or delete or update of item_code,action,execute_at,status on ${RESERVATIONS_TABLE}
+      for each row execute function rpp_product_delivery_scheduler_wake();
+    end if;
+  end $$`);
+}
+
+export async function readRppDeliverySchedulerControl() {
+  if (!pool) return { generation: 0, serverNow: new Date().toISOString() };
+  await ensureTables();
+  const result = await pool.query(`select generation,clock_timestamp() as server_now from ${CONTROL_TABLE} where id=1`);
+  const row = result.rows[0];
+  if (!row || !/^\d+$/.test(String(row.generation))) throw new Error("RPP delivery scheduler control row is invalid");
+  return { generation: Number(row.generation), serverNow: new Date(String(row.server_now)).toISOString() };
 }
 
 export async function readRppDeliverySchedules(options: { itemCode?: string; reservationLimitPerItem?: number } = {}): Promise<RppDeliverySchedulesData> {
@@ -481,8 +517,8 @@ export async function claimRppDeliveryReservation(reservationIdInput: unknown, n
   if (pool) {
     await ensureTables();
     const result = await pool.query(
-      `update ${RESERVATIONS_TABLE} set claim_id=$2,claim_expires_at=$3,attempts=attempts+1,updated_at=now() where id=$1 and status='PENDING' and execute_at<=$4 and (claim_id is null or claim_expires_at<=$4) returning id,item_code,action,execute_at,status,error,created_at,updated_at,claim_id,claim_expires_at,attempts`,
-      [reservationId, claimId, claimExpiresAt, now.toISOString()],
+      `update ${RESERVATIONS_TABLE} set claim_id=$2,claim_expires_at=now()+interval '15 minutes',attempts=attempts+1,updated_at=now() where id=$1 and status='PENDING' and execute_at<=now() and (claim_id is null or claim_expires_at<=now()) returning id,item_code,action,execute_at,status,error,created_at,updated_at,claim_id,claim_expires_at,attempts`,
+      [reservationId, claimId],
     );
     if (!result.rows[0]) throw new Error("実行可能なPENDING予約が見つかりません");
     const row = result.rows[0];
@@ -504,8 +540,8 @@ export async function heartbeatRppDeliveryReservation(reservationIdInput: unknow
   if (pool) {
     await ensureTables();
     const result = await pool.query(
-      `update ${RESERVATIONS_TABLE} set claim_expires_at=$4,updated_at=now() where id=$1 and status='PENDING' and claim_id=$2 and claim_expires_at>$3 returning id,item_code,action,execute_at,status,error,created_at,updated_at,claim_id,claim_expires_at,attempts`,
-      [reservationId, claimId, now.toISOString(), claimExpiresAt],
+      `update ${RESERVATIONS_TABLE} set claim_expires_at=now()+interval '15 minutes',updated_at=now() where id=$1 and status='PENDING' and claim_id=$2 and claim_expires_at>now() returning id,item_code,action,execute_at,status,error,created_at,updated_at,claim_id,claim_expires_at,attempts`,
+      [reservationId, claimId],
     );
     if (!result.rows[0]) throw new Error("有効なclaimが一致するPENDING予約が見つかりません");
     const row = result.rows[0];
@@ -534,7 +570,7 @@ export async function releaseRppDeliveryReservationClaim(reservationIdInput: unk
   if (pool) {
     await ensureTables();
     const result = await pool.query(
-      `update ${RESERVATIONS_TABLE} set claim_id=null,claim_expires_at=null,error=$3,updated_at=now() where id=$1 and status='PENDING' and claim_id=$2 returning id,item_code,action,execute_at,status,error,created_at,updated_at,claim_id,claim_expires_at,attempts`,
+      `update ${RESERVATIONS_TABLE} set claim_id=null,claim_expires_at=null,error=$3,updated_at=now() where id=$1 and status='PENDING' and claim_id=$2 and claim_expires_at>now() returning id,item_code,action,execute_at,status,error,created_at,updated_at,claim_id,claim_expires_at,attempts`,
       [reservationId, claimId, error],
     );
     if (!result.rows[0]) throw new Error("claimが一致するPENDING予約が見つかりません");
@@ -545,7 +581,7 @@ export async function releaseRppDeliveryReservationClaim(reservationIdInput: unk
     const data = await readRppDeliverySchedules();
     const index = data.reservations.findIndex((row) => row.id === reservationId);
     const row = data.reservations[index];
-    if (!row || row.status !== "PENDING" || row.claimId !== claimId) throw new Error("claimが一致するPENDING予約が見つかりません");
+    if (!row || row.status !== "PENDING" || row.claimId !== claimId || !row.claimExpiresAt || Date.parse(row.claimExpiresAt) <= Date.now()) throw new Error("有効なclaimが一致するPENDING予約が見つかりません");
     const reservation = { ...row, claimId: null, claimExpiresAt: null, error, updatedAt: new Date().toISOString() };
     data.reservations[index] = reservation;
     await writeFallback(normalizedData(data.source, data));
@@ -563,7 +599,7 @@ export async function markRppDeliveryReservation(reservationIdInput: unknown, cl
   if (pool) {
     await ensureTables();
     const result = await pool.query(
-      `update ${RESERVATIONS_TABLE} set status=$3,error=$4,claim_expires_at=null,updated_at=now() where id=$1 and status='PENDING' and claim_id=$2 returning id,item_code,action,execute_at,status,error,created_at,updated_at,claim_id,claim_expires_at,attempts`,
+      `update ${RESERVATIONS_TABLE} set status=$3,error=$4,claim_expires_at=null,updated_at=now() where id=$1 and status='PENDING' and claim_id=$2 and claim_expires_at>now() returning id,item_code,action,execute_at,status,error,created_at,updated_at,claim_id,claim_expires_at,attempts`,
       [reservationId, claimId, statusInput, error],
     );
     if (result.rows[0]) {
@@ -583,7 +619,7 @@ export async function markRppDeliveryReservation(reservationIdInput: unknown, cl
     if (index < 0) throw new Error(`予約が見つかりません: ${reservationId}`);
     const row = data.reservations[index];
     if (row.status === statusInput && row.claimId === claimId) return { reservation: row };
-    if (row.status !== "PENDING" || row.claimId !== claimId) throw new Error("claimが一致するPENDING予約が見つかりません");
+    if (row.status !== "PENDING" || row.claimId !== claimId || !row.claimExpiresAt || Date.parse(row.claimExpiresAt) <= Date.now()) throw new Error("有効なclaimが一致するPENDING予約が見つかりません");
     const reservation: RppDeliveryReservation = { ...row, status: statusInput, error, claimExpiresAt: null, updatedAt: new Date().toISOString() };
     data.reservations[index] = reservation;
     await writeFallback(normalizedData(data.source, data));

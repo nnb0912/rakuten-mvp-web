@@ -24,7 +24,7 @@ import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 
-PROJECT = Path(os.environ.get('RPP_PROJECT_DIR', str(Path(__file__).resolve().parent))).resolve()
+PROJECT = Path('/Users/nob/Projects/rpp-8am-notify')
 RAKUTEN_MARKETING = Path('/Users/nob/Projects/rakuten-marketing')
 SNAPSHOTS = PROJECT / 'rpp_snapshots'
 APPLY_LOG_DIR = PROJECT / 'rpp_apply_logs'
@@ -38,16 +38,14 @@ def wal_transition(operation_id: str, state: str, details: dict[str, object] | N
     if not operation_id:
         return
     import rpp_allowed_auto_apply as auto_apply
-    path = Path(os.environ.get('RPP_AUTO_APPLY_WAL', str(auto_apply.WAL_PATH)))
-    auto_apply.transition_wal(operation_id, state, details, path)
+    auto_apply.transition_wal(operation_id, state, details, auto_apply.WAL_PATH)
 
 
 def wal_state(operation_id: str) -> str:
     if not operation_id:
         return ''
     import rpp_allowed_auto_apply as auto_apply
-    path = Path(os.environ.get('RPP_AUTO_APPLY_WAL', str(auto_apply.WAL_PATH)))
-    return auto_apply.wal_state(operation_id, path)
+    return auto_apply.wal_state(operation_id, auto_apply.WAL_PATH)
 
 
 def product_cpc_caps() -> dict[tuple[str, str, str], int]:
@@ -372,7 +370,7 @@ def validate_wal_binding(operation_id: str, csv_path: Path, rows: list[dict[str,
     if not operation_id:
         raise RuntimeError('operation ID is required for final submit')
     import rpp_allowed_auto_apply as auto_apply
-    wal_path = Path(os.environ.get('RPP_AUTO_APPLY_WAL', str(auto_apply.WAL_PATH)))
+    wal_path = auto_apply.WAL_PATH
     matches = [entry for entry in auto_apply.load_wal(wal_path)['entries'] if entry.get('operationId') == operation_id]
     if len(matches) != 1 or len(rows) != 1:
         raise RuntimeError('WAL operation or upload row is not unique')
@@ -582,6 +580,8 @@ async def select_file_on_rms(csv_path: Path, upload_kind: str, final_submit: boo
     # Reuse the proven lenient RMS login from the report refresh script.
     import scripts_refresh_rpp_keyword_report as rr
 
+    for key in ('RMS_LOGIN_ID', 'RMS_LOGIN_PASS', 'RAKUTEN_EMAIL', 'RAKUTEN_EMAIL_PASS', 'RMS_LOGIN_URL'):
+        os.environ.pop(key, None)
     rr.load_env(PROJECT / '.env')
     rr.load_env(RAKUTEN_MARKETING / '.env')
     p_inst = browser = page = None
@@ -668,12 +668,14 @@ async def select_file_on_rms(csv_path: Path, upload_kind: str, final_submit: boo
             raise RuntimeError('fresh RMS active/non-excluded delivery guard is required')
         delivery_elapsed = assert_delivery_guard_fresh(float(str(delivery_guard['completedMonotonic'])))
         item_delivery_elapsed = assert_delivery_guard_fresh(float(str(delivery_guard['itemExportCompletedMonotonic'])))
+        auto_apply.require_mutation_runtime()
         wal_transition(operation_id, 'SUBMITTING', {'preSubmitExportCompletedAt': pre_submit_export['completedAt'], 'preSubmitElapsedSeconds': elapsed, 'deliveryGuardElapsedSeconds': delivery_elapsed, 'itemDeliveryElapsedSeconds': item_delivery_elapsed, 'deliveryGuard': delivery_guard, 'authorityChecks': authority_checks, 'walBinding': wal_binding})
         validate_wal_binding(operation_id, csv_path, rows, expected_state='SUBMITTING')
         assert_pre_submit_export_fresh(float(str(pre_submit_export['completedMonotonic'])))
         assert_delivery_guard_fresh(float(str(delivery_guard['completedMonotonic'])))
         assert_delivery_guard_fresh(float(str(delivery_guard['itemExportCompletedMonotonic'])))
         try:
+            auto_apply.require_mutation_runtime()
             await upload_button.click(timeout=1000)
         except Exception:
             wal_transition(operation_id, 'UNCERTAIN', {'verification': 'UNKNOWN', 'failureStage': 'SUBMIT_CLICK'})
@@ -768,6 +770,9 @@ async def main_async() -> int:
         raise RuntimeError('auto-apply operation ID does not match environment')
     if args.final_submit and not args.operation_id:
         raise RuntimeError('operation ID is required for every final submit')
+    if args.final_submit:
+        import rpp_allowed_auto_apply as auto_apply
+        auto_apply.require_mutation_runtime()
 
     load_env(PROJECT / '.env')
     load_env(RAKUTEN_MARKETING / '.env')

@@ -1,6 +1,6 @@
 import { timingSafeEqual } from "crypto";
 import { readLatestRppDashboardSnapshot, readRppPerformanceDaily, saveRppDashboardSnapshot } from "@/lib/rppDashboardSnapshots";
-import { claimRppDeliveryReservation, heartbeatRppDeliveryReservation, markRppDeliveryReservation, readPendingRppDeliveryReservations, readRppDeliverySchedules, releaseRppDeliveryReservationClaim, rppDeliveryStorageStatus } from "@/lib/rppDeliverySchedules";
+import { claimRppDeliveryReservation, heartbeatRppDeliveryReservation, markRppDeliveryReservation, readPendingRppDeliveryReservations, readRppDeliverySchedulerControl, readRppDeliverySchedules, releaseRppDeliveryReservationClaim, rppDeliveryStorageStatus } from "@/lib/rppDeliverySchedules";
 import { readRppNightPauseProducts } from "@/lib/rppNightPause";
 import { readRppAlertTargets, readRppConfiguredTargets, readRppProductCpcItemCodes } from "@/lib/rppTargets";
 
@@ -14,6 +14,19 @@ function authorized(request: Request) {
   const a = Buffer.from(expected);
   const b = Buffer.from(supplied);
   return a.length === b.length && timingSafeEqual(a, b);
+}
+
+async function readConsistentDeliverySnapshot() {
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    const before = await readRppDeliverySchedulerControl();
+    const data = await readRppDeliverySchedules({ reservationLimitPerItem: 0 });
+    const pendingReservations = await readPendingRppDeliveryReservations();
+    const after = await readRppDeliverySchedulerControl();
+    if (before.generation === after.generation) {
+      return { data, pendingReservations, schedulerControl: after };
+    }
+  }
+  throw new Error("RPP delivery schedule changed during snapshot read");
 }
 
 export async function GET(request: Request) {
@@ -36,10 +49,9 @@ export async function GET(request: Request) {
       return Response.json({ ok: true, snapshotSchemaMax: 5, rmsBudget: true, canonicalSnapshotReadback: true });
     }
     if (searchParams.get("resource") === "delivery-schedules") {
-      const data = await readRppDeliverySchedules({ reservationLimitPerItem: 0 });
+      const { data, pendingReservations, schedulerControl } = await readConsistentDeliverySnapshot();
       const storage = rppDeliveryStorageStatus(data.source);
       if (process.env.NODE_ENV === "production" && !storage.durable) throw new Error("RPP delivery schedule storage is not PostgreSQL");
-      const pendingReservations = await readPendingRppDeliveryReservations();
       const targetData = await readRppAlertTargets();
       const releaseConfiguredTargets = await readRppConfiguredTargets({ includeExcluded: true });
       const validItemCodes = new Set(await readRppProductCpcItemCodes());
@@ -63,6 +75,8 @@ export async function GET(request: Request) {
       return Response.json({
         ok: true,
         storage,
+        generation: schedulerControl.generation,
+        serverNow: schedulerControl.serverNow,
         timeZone: "Asia/Tokyo",
         schedules: executableSchedules.map((row) => ({
           itemCode: row.itemCode,

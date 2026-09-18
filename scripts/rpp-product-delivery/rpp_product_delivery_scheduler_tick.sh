@@ -13,7 +13,7 @@ export RPP_RMS_PROFILE_DIR="/Users/nob/.hermes/rpp-rms-adapter-profile"
 TMP="$(mktemp /tmp/rpp-product-delivery-scheduler.XXXXXX)"
 trap 'rm -f "$TMP"' EXIT
 set +e
-/usr/bin/python3 "/Users/nob/Projects/rpp-8am-notify/deploy_worker_runtime.py" --run-scheduler >"$TMP" 2>&1
+/usr/bin/python3 -s "/Users/nob/Projects/rpp-8am-notify/deploy_worker_runtime.py" --run-scheduler >"$TMP" 2>&1
 STATUS=$?
 set -e
 if [[ -s "$TMP" ]]; then

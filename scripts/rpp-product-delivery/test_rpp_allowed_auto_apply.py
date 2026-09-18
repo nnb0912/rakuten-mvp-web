@@ -6,6 +6,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -14,7 +15,60 @@ import rpp_allowed_auto_apply as auto
 
 
 class AllowedAutoApplyTest(unittest.TestCase):
+    def test_dependency_hash_rejects_out_of_tree_symlink(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "root"
+            root.mkdir()
+            external = Path(directory) / "external.py"
+            external.write_text("mutable")
+            (root / "escape.py").symlink_to(external)
+            with self.assertRaisesRegex(RuntimeError, "escapes"):
+                auto.tree_sha256(root)
+
+    def test_timeout_fences_before_reading_competing_wal_state(self):
+        with tempfile.TemporaryDirectory() as directory, patch.object(auto, "WAL_PATH", Path(directory) / "wal.json"):
+            auto.prepare_wal({"operationId": "op"})
+            process = subprocess.Popen([sys.executable, "-c", "pass"])
+            process.wait(timeout=5)
+            def fenced(_pgid, _process):
+                auto.transition_wal("op", "SUBMITTING")
+            with patch.object(auto, "terminate_process_group", side_effect=fenced):
+                auto.handle_uploader_timeout("op", process)
+            self.assertEqual(auto.wal_state("op"), "UNCERTAIN")
+
+    def test_process_group_fence_escalates_when_term_is_ignored(self):
+        process = subprocess.Popen([sys.executable, "-c",
+                                    "import signal,time; signal.signal(signal.SIGTERM, lambda *_: None); time.sleep(60)"],
+                                   start_new_session=True)
+        time.sleep(0.2)
+        auto.terminate_process_group(process.pid, process)
+        self.assertIsNotNone(process.poll())
+
+    def test_security_sensitive_environment_overrides_are_ignored(self):
+        hostile = {"RPP_SNAPSHOT_SYNC_TOKEN": "hostile", "RPP_EXCLUSION_WORKER_LOCK": "/tmp/hostile.lock",
+                   "RPP_UPLOAD_HELPER": "/tmp/hostile.py", "RPP_POST_REFRESH_SCRIPT": "/tmp/hostile.py"}
+        completed = subprocess.CompletedProcess([], 0, stdout="keychain-token\n", stderr="")
+        with patch.dict(os.environ, hostile), patch.object(auto.subprocess, "run", return_value=completed):
+            self.assertEqual(auto.snapshot_token(), "keychain-token")
+        self.assertEqual(auto.LOCK_PATH, Path("/tmp/rise-rpp-exclusion-worker.lock"))
+        self.assertEqual(auto.UPLOAD_HELPER, auto.CODE_ROOT / "rpp_apply_approved_cpc_upload.py")
+        self.assertEqual(auto.POST_REFRESH_SCRIPT, auto.CODE_ROOT / "rpp_frequent_dashboard_refresh.py")
+        source = Path(auto.__file__).read_text(encoding="utf-8")
+        self.assertNotIn('os.environ.get("RPP_EXCLUSION_WORKER_LOCK"', source)
+        self.assertNotIn('os.environ.get("RPP_UPLOAD_HELPER"', source)
+
     def setUp(self):
+        self.env_patch = patch.dict(os.environ, {"RPP_RUNTIME_COMMIT": "a" * 40,
+                                                "RPP_PYTHON_PLAYWRIGHT_ROOT": "/tmp/python-modules",
+                                                "RPP_PYTHON_PLAYWRIGHT_TREE_SHA256": "1" * 64,
+                                                "RPP_CHROMIUM_BUNDLE_ROOT": "/tmp/chromium.app",
+                                                "RPP_CHROMIUM_TREE_SHA256": "2" * 64,
+                                                "RPP_CHROMIUM_EXECUTABLE": "/tmp/chromium.app/chrome"})
+        self.env_patch.start()
+        self.addCleanup(self.env_patch.stop)
+        self.runtime_patch = patch.object(auto, "require_mutation_runtime", return_value={})
+        self.runtime_patch.start()
+        self.addCleanup(self.runtime_patch.stop)
         self.tmp = tempfile.TemporaryDirectory()
         self.root = Path(self.tmp.name)
         self.uploads = self.root / "uploads"
