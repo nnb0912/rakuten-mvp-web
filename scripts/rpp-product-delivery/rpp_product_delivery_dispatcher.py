@@ -15,6 +15,7 @@ import os
 import re
 import select
 import signal
+import stat
 import subprocess
 import sys
 import tempfile
@@ -84,13 +85,40 @@ def snapshot_token() -> str:
 
 def listener_dsn() -> str:
     dsn = keychain_secret("hermes.rpp.delivery-dispatch-db")
-    parsed = urllib.parse.urlparse(dsn)
-    query = urllib.parse.parse_qs(parsed.query, keep_blank_values=True)
+    try:
+        parsed = urllib.parse.urlsplit(dsn)
+        query_pairs = urllib.parse.parse_qsl(parsed.query, keep_blank_values=True, strict_parsing=True)
+        query = dict(query_pairs)
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError("dispatcher PostgreSQL DSN is malformed") from exc
     if (parsed.scheme not in {"postgres", "postgresql"} or parsed.hostname != EXPECTED_DB_HOST
-            or parsed.port != 5432 or parsed.path.lstrip("/") != EXPECTED_DB_NAME
-            or query.get("sslmode") != ["verify-full"] or not parsed.username or not parsed.password):
+            or parsed.port != 5432 or parsed.path != f"/{EXPECTED_DB_NAME}" or parsed.fragment
+            or len(query_pairs) != 2 or set(query) != {"sslmode", "sslrootcert"}
+            or query.get("sslmode") != "verify-full" or query.get("sslrootcert") != "/etc/ssl/cert.pem"
+            or not parsed.username or not parsed.password):
         raise RuntimeError("dispatcher PostgreSQL DSN target/TLS policy mismatch")
-    return dsn
+    ca = Path("/etc/ssl/cert.pem")
+    ca_stat = ca.stat()
+    unsafe_write_bits = stat.S_IWGRP | stat.S_IWOTH
+    if not ca.is_file() or ca.is_symlink() or ca_stat.st_uid != 0 or ca_stat.st_mode & unsafe_write_bits:
+        raise RuntimeError("dispatcher PostgreSQL CA bundle is unsafe")
+    for parent in (ca.resolve().parent, ca.resolve().parent.parent, ca.resolve().parent.parent.parent):
+        parent_stat = parent.stat()
+        if parent_stat.st_uid != 0 or parent_stat.st_mode & unsafe_write_bits:
+            raise RuntimeError("dispatcher PostgreSQL CA path is unsafe")
+    effective = psycopg2.extensions.parse_dsn(dsn)
+    expected_effective = {
+        "host": EXPECTED_DB_HOST,
+        "port": "5432",
+        "dbname": EXPECTED_DB_NAME,
+        "user": urllib.parse.unquote(parsed.username),
+        "password": urllib.parse.unquote(parsed.password),
+        "sslmode": "verify-full",
+        "sslrootcert": "/etc/ssl/cert.pem",
+    }
+    if effective != expected_effective:
+        raise RuntimeError("dispatcher PostgreSQL effective DSN policy mismatch")
+    return psycopg2.extensions.make_dsn(**expected_effective)
 
 
 def fetch_snapshot() -> dict:

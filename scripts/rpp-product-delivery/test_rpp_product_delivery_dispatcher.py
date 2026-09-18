@@ -5,7 +5,7 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import rpp_product_delivery_dispatcher as dispatcher
 
@@ -218,13 +218,37 @@ class ProductDeliveryDispatcherTest(unittest.TestCase):
             self.assertEqual(json.loads(dispatcher.STATE_PATH.read_text())["deadline"], "2026-09-17T00:01:00Z")
 
     def test_listener_dsn_rejects_wrong_host_or_weak_tls(self):
-        good = "postgresql://user:pass@dpg-da5bpibncjis738eh9bg-a.singapore-postgres.render.com:5432/rakuten_mvp_web?sslmode=verify-full"
+        good = "postgresql://user:***@dpg-da5bpibncjis738eh9bg-a.singapore-postgres.render.com:5432/rakuten_mvp_web?sslmode=verify-full&sslrootcert=%2Fetc%2Fssl%2Fcert.pem"
+        psycopg = MagicMock()
+        psycopg.extensions.parse_dsn.return_value = {
+            "host": dispatcher.EXPECTED_DB_HOST, "port": "5432", "dbname": dispatcher.EXPECTED_DB_NAME,
+            "user": "user", "password": "***", "sslmode": "verify-full", "sslrootcert": "/etc/ssl/cert.pem",
+        }
+        psycopg.extensions.make_dsn.return_value = "rebuilt-safe-dsn"
+        original_psycopg = dispatcher.psycopg2
+        dispatcher.psycopg2 = psycopg
+        self.addCleanup(setattr, dispatcher, "psycopg2", original_psycopg)
         with patch.object(dispatcher, "keychain_secret", return_value=good):
-            self.assertEqual(dispatcher.listener_dsn(), good)
+            effective = dispatcher.psycopg2.extensions.parse_dsn(dispatcher.listener_dsn())
+            self.assertEqual(effective["host"], dispatcher.EXPECTED_DB_HOST)
+            self.assertEqual(effective["dbname"], dispatcher.EXPECTED_DB_NAME)
         with patch.object(dispatcher, "keychain_secret", return_value=good.replace("sslmode=verify-full", "sslmode=require")):
             with self.assertRaisesRegex(RuntimeError, "target/TLS"):
                 dispatcher.listener_dsn()
+        with patch.object(dispatcher, "keychain_secret", return_value=good.replace("&sslrootcert=%2Fetc%2Fssl%2Fcert.pem", "")):
+            with self.assertRaisesRegex(RuntimeError, "target/TLS"):
+                dispatcher.listener_dsn()
         with patch.object(dispatcher, "keychain_secret", return_value=good.replace("dpg-da5bpibncjis738eh9bg-a", "evil")):
+            with self.assertRaisesRegex(RuntimeError, "target/TLS"):
+                dispatcher.listener_dsn()
+        for suffix in (
+            "&host=evil.example.com", "&hostaddr=127.0.0.1", "&port=6432", "&dbname=evil",
+            "#host=evil.example.com", "&sslmode=verify-full", "&application_name=evil",
+        ):
+            with self.subTest(suffix=suffix), patch.object(dispatcher, "keychain_secret", return_value=good + suffix):
+                with self.assertRaisesRegex(RuntimeError, "target/TLS"):
+                    dispatcher.listener_dsn()
+        with patch.object(dispatcher, "keychain_secret", return_value=good.replace("/rakuten_mvp_web?", "//rakuten_mvp_web?")):
             with self.assertRaisesRegex(RuntimeError, "target/TLS"):
                 dispatcher.listener_dsn()
 
