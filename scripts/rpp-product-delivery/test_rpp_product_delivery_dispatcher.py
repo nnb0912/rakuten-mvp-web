@@ -1,5 +1,6 @@
 import datetime as dt
 import json
+import os
 import subprocess
 import tempfile
 import unittest
@@ -37,11 +38,18 @@ class ProductDeliveryDispatcherTest(unittest.TestCase):
             scheduler.write_text("# immutable test scheduler\n")
             receipt_dir = root / "rpp_apply_logs"
             receipt_dir.mkdir()
+            python_root = root / "python_modules"
+            python_root.mkdir()
+            python_hash = "3" * 64
+            receipt_dir.joinpath("rpp_product_delivery_scheduler_deploy.json").write_text(
+                json.dumps({"runtimeDependencies": {"pythonRoot": str(python_root), "pythonTreeSha256": python_hash}}))
             receipt_dir.joinpath("rpp_product_delivery_dispatcher_activation.json").write_text(
                 json.dumps({"activated": True, "commit": "a" * 40}))
             completed = subprocess.CompletedProcess([], 0, stdout='{"kind":"rppDeliveryTick","ok":true}\n', stderr='')
             with patch.object(dispatcher, "PROJECT", root), patch.object(dispatcher, "SCHEDULER", scheduler), \
                  patch.object(dispatcher, "RUNTIME_COMMIT", "a" * 40), \
+                 patch.dict(os.environ, {"RPP_PYTHON_PLAYWRIGHT_ROOT": str(python_root),
+                                         "RPP_PYTHON_PLAYWRIGHT_TREE_SHA256": python_hash}), \
                  patch.object(dispatcher.subprocess, "run", return_value=completed) as run:
                 code, receipt, _ = dispatcher.invoke_scheduler()
             self.assertEqual(code, 0)
@@ -50,7 +58,14 @@ class ProductDeliveryDispatcherTest(unittest.TestCase):
             self.assertEqual(command[1], "-s")
             self.assertEqual(command[2], str(scheduler))
             self.assertNotIn("/bin/bash", command)
-            self.assertEqual(run.call_args.kwargs["env"]["PYTHONPATH"], str(root))
+            self.assertEqual(run.call_args.kwargs["env"]["PYTHONPATH"], os.pathsep.join((str(root), str(python_root))))
+            self.assertEqual(run.call_args.kwargs["env"]["PYTHONNOUSERSITE"], "1")
+
+            with patch.object(dispatcher, "PROJECT", root), \
+                 patch.dict(os.environ, {"RPP_PYTHON_PLAYWRIGHT_ROOT": str(python_root),
+                                         "RPP_PYTHON_PLAYWRIGHT_TREE_SHA256": "4" * 64}):
+                with self.assertRaisesRegex(RuntimeError, "contract mismatch"):
+                    dispatcher.pinned_python_root()
 
     def snapshot(self, now="2026-09-17T00:00:00Z", generation=7, schedules=None, reservations=None):
         return {

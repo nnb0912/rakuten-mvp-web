@@ -336,6 +336,7 @@ require({json.dumps(str(generator))}).syncTargetProfiles()
                 executed['bytes'] = Path(command[2]).read_bytes()
                 executed['adapterBytes'] = Path(kwargs['env']['RPP_EXCLUSION_ADAPTER_PATH']).read_bytes()
                 executed['adapterPath'] = kwargs['env']['RPP_EXCLUSION_ADAPTER_PATH']
+                executed['env'] = kwargs['env']
                 return SimpleNamespace(returncode=0, stdout='', stderr='')
             try:
                 setattr(module, 'ARTIFACTS', artifacts)
@@ -352,6 +353,10 @@ require({json.dumps(str(generator))}).syncTargetProfiles()
                 self.assertEqual(executed['bytes'], b'ORIGINAL = True\n')
                 self.assertEqual(executed['adapterBytes'], b'export {};\n')
                 self.assertNotEqual(executed['adapterPath'], str(adapter))
+                self.assertEqual(executed['env']['RPP_PYTHON_PLAYWRIGHT_ROOT'], '/tmp/python_modules')
+                self.assertEqual(executed['env']['RPP_PYTHON_PLAYWRIGHT_TREE_SHA256'], '3' * 64)
+                self.assertEqual(executed['env']['PYTHONPATH'].split(os.pathsep)[-1], '/tmp/python_modules')
+                self.assertEqual(executed['env']['PYTHONNOUSERSITE'], '1')
             finally:
                 setattr(module, 'ARTIFACTS', old[0])
                 setattr(module, 'MANIFEST', old[1])
@@ -362,7 +367,9 @@ require({json.dumps(str(generator))}).syncTargetProfiles()
         section = source[source.index('def run_dispatcher_preflight'):source.index('def run_dispatcher_canary')]
         for name in ('RPP_EXCLUSION_ADAPTER_PATH', 'RPP_PLAYWRIGHT_NODE_ROOT',
                      'RPP_PLAYWRIGHT_TREE_SHA256', 'RPP_CHROMIUM_EXECUTABLE',
-                     'RPP_CHROMIUM_BUNDLE_ROOT', 'RPP_CHROMIUM_TREE_SHA256'):
+                     'RPP_CHROMIUM_BUNDLE_ROOT', 'RPP_CHROMIUM_TREE_SHA256',
+                     'RPP_PYTHON_PLAYWRIGHT_ROOT', 'RPP_PYTHON_PLAYWRIGHT_TREE_SHA256',
+                     'dependency["pythonRoot"]'):
             self.assertIn(name, section)
 
     def test_dependency_permissions_preserve_executable_bits(self):
@@ -447,6 +454,10 @@ pid = 123
             (root / 'escape').symlink_to(external)
             with self.assertRaisesRegex(RuntimeError, 'escapes'):
                 module.tree_sha256(root)
+    def test_privileged_entrypoints_verify_dependency_contents(self):
+        source = DEPLOY.read_text(encoding='utf-8')
+        self.assertNotIn('runtime_dependency_contract(manifest, verify_hashes=False)', source)
+        self.assertGreaterEqual(source.count('runtime_dependency_contract(manifest, verify_hashes=True)'), 6)
 
 
 if __name__ == '__main__':

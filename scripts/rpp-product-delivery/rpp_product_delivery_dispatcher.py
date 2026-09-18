@@ -216,6 +216,21 @@ def parse_scheduler_receipt(stdout: str) -> Optional[dict]:
     return None
 
 
+def pinned_python_root() -> str:
+    manifest = json.loads((PROJECT / "rpp_apply_logs" / "rpp_product_delivery_scheduler_deploy.json").read_text(encoding="utf-8"))
+    dependency = manifest.get("runtimeDependencies") or {}
+    root = str(dependency.get("pythonRoot") or "")
+    digest = str(dependency.get("pythonTreeSha256") or "")
+    if (not root or len(digest) != 64
+            or os.environ.get("RPP_PYTHON_PLAYWRIGHT_ROOT") != root
+            or os.environ.get("RPP_PYTHON_PLAYWRIGHT_TREE_SHA256") != digest):
+        raise RuntimeError("dispatcher Python dependency contract mismatch")
+    root_path = Path(root)
+    if not root_path.is_dir() or root_path.is_symlink():
+        raise RuntimeError("dispatcher Python dependency root is unsafe")
+    return root
+
+
 def require_private_generation() -> None:
     generation = Path(__file__).resolve().parent
     runtime_root = (PROJECT / "rpp_apply_logs" / "runtime_exec").resolve()
@@ -224,6 +239,7 @@ def require_private_generation() -> None:
     manifest = json.loads((PROJECT / "rpp_apply_logs" / "rpp_product_delivery_scheduler_deploy.json").read_text(encoding="utf-8"))
     if manifest.get("commit") != RUNTIME_COMMIT:
         raise RuntimeError("dispatcher generation commit mismatch")
+    pinned_python_root()
     expected = manifest.get("artifacts") or {}
     artifacts = {"schedulerDispatcher": Path(__file__), "scheduler": SCHEDULER,
                  "nightPause": SCHEDULER.with_name("rpp_product_night_pause.py"),
@@ -247,8 +263,10 @@ def invoke_scheduler() -> tuple[int, Optional[dict], str]:
     hold_active = activation.get("activated") is True and activation.get("activationHold") is True
     if (not final_active and not probe_active and not hold_active) or activation.get("commit") != RUNTIME_COMMIT:
         raise RuntimeError("dispatcher activation receipt does not match runtime")
+    python_root = pinned_python_root()
     env = os.environ.copy()
-    env.update({"RPP_EVENT_DISPATCHER": "1", "PYTHONPATH": str(SCHEDULER.parent),
+    env.update({"RPP_EVENT_DISPATCHER": "1", "PYTHONNOUSERSITE": "1",
+                "PYTHONPATH": os.pathsep.join((str(SCHEDULER.parent), python_root)),
                 "RPP_PROJECT_DIR": str(PROJECT),
                 "RPP_ENABLE_PRODUCT_DELIVERY_SCHEDULER": "1",
                 "RPP_SETTINGS_REFRESH_SCRIPT": str(SCHEDULER.with_name("scripts_refresh_rpp_settings_csvs.py"))})

@@ -365,7 +365,7 @@ def validate_loaded_dispatcher(output: str) -> int:
 
 def run_verified_scheduler(circuit_probe: bool = False) -> int:
     manifest = json.loads(stable_bytes(MANIFEST).decode("utf-8"))
-    dependency = runtime_dependency_contract(manifest, verify_hashes=False)
+    dependency = runtime_dependency_contract(manifest, verify_hashes=True)
     canary = os.environ.get("RPP_DEPLOYMENT_CANARY") == "1"
     activation_probe = False
     if circuit_probe:
@@ -393,8 +393,9 @@ def run_verified_scheduler(circuit_probe: bool = False) -> int:
             destination.chmod(0o500 if destination.suffix in {".py", ".sh"} else 0o400)
         scheduler = generation / ARTIFACTS["scheduler"][1].name
         env = {"HOME": "/Users/nob", "PATH": "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
-               "LANG": "ja_JP.UTF-8", "PYTHONNOUSERSITE": "1", "PYTHONPATH": str(generation), "RPP_PROJECT_DIR": str(PROJECT),
-               "RPP_ENABLE_PRODUCT_DELIVERY_SCHEDULER": "1"}
+               "LANG": "ja_JP.UTF-8", "PYTHONNOUSERSITE": "1",
+               "PYTHONPATH": os.pathsep.join((str(generation), str(dependency["pythonRoot"]))),
+               "RPP_PROJECT_DIR": str(PROJECT), "RPP_ENABLE_PRODUCT_DELIVERY_SCHEDULER": "1"}
         env["RPP_SETTINGS_REFRESH_SCRIPT"] = str(generation / ARTIFACTS["settingsRefresh"][1].name)
         env["RPP_EXCLUSION_ADAPTER_PATH"] = str(generation / ARTIFACTS["exclusionAdapter"][1].name)
         env["RPP_PLAYWRIGHT_NODE_ROOT"] = str(dependency["nodeRoot"])
@@ -402,6 +403,8 @@ def run_verified_scheduler(circuit_probe: bool = False) -> int:
         env["RPP_CHROMIUM_BUNDLE_ROOT"] = str(dependency["browserRoot"])
         env["RPP_CHROMIUM_TREE_SHA256"] = str(dependency["browserTreeSha256"])
         env["RPP_CHROMIUM_EXECUTABLE"] = str(dependency["chromiumExecutable"])
+        env["RPP_PYTHON_PLAYWRIGHT_ROOT"] = str(dependency["pythonRoot"])
+        env["RPP_PYTHON_PLAYWRIGHT_TREE_SHA256"] = str(dependency["pythonTreeSha256"])
         env["RPP_RUNTIME_COMMIT"] = str(manifest.get("commit") or "")
         env["RPP_ACTIVATION_RECEIPT"] = str(ACTIVATION_RECEIPT)
         command = ([sys.executable, "-s", str(scheduler), "--circuit-probe", "--confirm=RPP_CIRCUIT_PROBE"]
@@ -422,7 +425,7 @@ def run_verified_scheduler(circuit_probe: bool = False) -> int:
 
 def run_verified_dashboard_refresh(mode: str) -> int:
     manifest = json.loads(stable_bytes(MANIFEST).decode("utf-8"))
-    dependency = runtime_dependency_contract(manifest, verify_hashes=False)
+    dependency = runtime_dependency_contract(manifest, verify_hashes=True)
     run_root = PROJECT / "rpp_apply_logs" / "runtime_exec"
     run_root.mkdir(parents=True, exist_ok=True, mode=0o700)
     with tempfile.TemporaryDirectory(prefix="dashboard-generation-", dir=run_root) as directory:
@@ -468,7 +471,7 @@ def run_verified_dashboard_refresh(mode: str) -> int:
 
 def run_verified_auto_apply() -> int:
     manifest = json.loads(stable_bytes(MANIFEST).decode("utf-8"))
-    dependency = runtime_dependency_contract(manifest, verify_hashes=False)
+    dependency = runtime_dependency_contract(manifest, verify_hashes=True)
     activation = require_activation(manifest)
     if activation.get("activated") is not True:
         raise RuntimeError("auto-apply requires final dispatcher activation")
@@ -518,7 +521,7 @@ def run_verified_auto_apply() -> int:
 
 def run_verified_dispatcher() -> int:
     manifest = json.loads(stable_bytes(MANIFEST).decode("utf-8"))
-    dependency = runtime_dependency_contract(manifest, verify_hashes=False)
+    dependency = runtime_dependency_contract(manifest, verify_hashes=True)
     require_activation(manifest)
     run_root = PROJECT / "rpp_apply_logs" / "runtime_exec"
     run_root.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -547,6 +550,8 @@ def run_verified_dispatcher() -> int:
             "RPP_CHROMIUM_BUNDLE_ROOT": str(dependency["browserRoot"]),
             "RPP_CHROMIUM_TREE_SHA256": str(dependency["browserTreeSha256"]),
             "RPP_CHROMIUM_EXECUTABLE": str(dependency["chromiumExecutable"]),
+            "RPP_PYTHON_PLAYWRIGHT_ROOT": str(dependency["pythonRoot"]),
+            "RPP_PYTHON_PLAYWRIGHT_TREE_SHA256": str(dependency["pythonTreeSha256"]),
         }
         os.execve(sys.executable, [sys.executable, "-s", str(dispatcher)], env)
         raise RuntimeError("dispatcher exec unexpectedly returned")
@@ -554,7 +559,7 @@ def run_verified_dispatcher() -> int:
 
 def run_dispatcher_preflight() -> dict:
     manifest = json.loads(stable_bytes(MANIFEST).decode("utf-8"))
-    dependency = runtime_dependency_contract(manifest, verify_hashes=False)
+    dependency = runtime_dependency_contract(manifest, verify_hashes=True)
     run_root = PROJECT / "rpp_apply_logs" / "runtime_exec"
     run_root.mkdir(parents=True, exist_ok=True, mode=0o700)
     with tempfile.TemporaryDirectory(prefix="delivery-preflight-generation-", dir=run_root) as directory:
@@ -571,8 +576,9 @@ def run_dispatcher_preflight() -> dict:
             destination.chmod(0o500 if destination.suffix in {".py", ".sh", ".js"} else 0o400)
         scheduler = generation / ARTIFACTS["scheduler"][1].name
         env = {"HOME": "/Users/nob", "PATH": "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
-               "LANG": "ja_JP.UTF-8", "PYTHONNOUSERSITE": "1", "PYTHONPATH": str(generation), "RPP_PROJECT_DIR": str(PROJECT),
-               "RPP_ENABLE_PRODUCT_DELIVERY_SCHEDULER": "1"}
+               "LANG": "ja_JP.UTF-8", "PYTHONNOUSERSITE": "1",
+               "PYTHONPATH": os.pathsep.join((str(generation), str(dependency["pythonRoot"]))),
+               "RPP_PROJECT_DIR": str(PROJECT), "RPP_ENABLE_PRODUCT_DELIVERY_SCHEDULER": "1"}
         env["RPP_SETTINGS_REFRESH_SCRIPT"] = str(generation / ARTIFACTS["settingsRefresh"][1].name)
         env["RPP_EXCLUSION_ADAPTER_PATH"] = str(generation / ARTIFACTS["exclusionAdapter"][1].name)
         env["RPP_PLAYWRIGHT_NODE_ROOT"] = str(dependency["nodeRoot"])
@@ -580,6 +586,8 @@ def run_dispatcher_preflight() -> dict:
         env["RPP_CHROMIUM_BUNDLE_ROOT"] = str(dependency["browserRoot"])
         env["RPP_CHROMIUM_TREE_SHA256"] = str(dependency["browserTreeSha256"])
         env["RPP_CHROMIUM_EXECUTABLE"] = str(dependency["chromiumExecutable"])
+        env["RPP_PYTHON_PLAYWRIGHT_ROOT"] = str(dependency["pythonRoot"])
+        env["RPP_PYTHON_PLAYWRIGHT_TREE_SHA256"] = str(dependency["pythonTreeSha256"])
         process = subprocess.run([
             sys.executable, str(scheduler), "--deployment-preflight",
             "--confirm=RPP_PRODUCT_DELIVERY_DEPLOYMENT_PREFLIGHT",
@@ -702,7 +710,7 @@ def notify_dispatcher(expected_commit: str) -> None:
     manifest = json.loads(stable_bytes(MANIFEST).decode("utf-8"))
     if manifest.get("commit") != expected_commit:
         raise RuntimeError("dispatcher notification commit does not match manifest")
-    dependency = runtime_dependency_contract(manifest, verify_hashes=False)
+    dependency = runtime_dependency_contract(manifest, verify_hashes=True)
     run_root = PROJECT / "rpp_apply_logs" / "runtime_exec"
     run_root.mkdir(parents=True, exist_ok=True, mode=0o700)
     with tempfile.TemporaryDirectory(prefix="dispatcher-notify-generation-", dir=run_root) as directory:
