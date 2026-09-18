@@ -141,6 +141,25 @@ function validateWalBinding(walPath, operationId, csvPath, csvBuffer, rows, expe
   return payload;
 }
 
+export function parseLoadedDispatcherEnvironment(block) {
+  const environment = Object.create(null);
+  for (const rawLine of String(block || '').split('\n')) {
+    if (!rawLine.trim()) continue;
+    const match = rawLine.match(/^\s*([A-Za-z_][A-Za-z0-9_]*) => ([^\r\n]*)$/);
+    if (!match) throw new Error(`malformed loaded dispatcher environment line: ${rawLine.trim()}`);
+    if (Object.hasOwn(environment, match[1])) throw new Error(`duplicate loaded dispatcher environment key: ${match[1]}`);
+    environment[match[1]] = match[2];
+  }
+  return environment;
+}
+
+export function exactStringMapEqual(actual, expected) {
+  const actualKeys = Object.keys(actual).sort();
+  const expectedKeys = Object.keys(expected).sort();
+  return actualKeys.length === expectedKeys.length
+    && actualKeys.every((key, index) => key === expectedKeys[index] && actual[key] === expected[key]);
+}
+
 function requireRuntimeActivation(walPath, operationId) {
   const payload = JSON.parse(fs.readFileSync(walPath, 'utf8'));
   const runtimeCommit = process.env.RPP_RUNTIME_COMMIT || '';
@@ -163,16 +182,14 @@ function requireRuntimeActivation(walPath, operationId) {
   const argumentBlock = loaded.match(/^\s*arguments\s*=\s*\{(.*?)^\s*\}/ms);
   const argumentsLoaded = argumentBlock ? argumentBlock[1].split('\n').map((line) => line.trim().replace(/^\d+\s*=\s*/, '')).filter(Boolean) : [];
   const environmentBlock = loaded.match(/^\s*environment\s*=\s*\{(.*?)^\s*\}/ms);
-  const environment = {};
-  for (const line of environmentBlock?.[1]?.split('\n') || []) {
-    const match = line.trim().match(/^([^=]+?)\s*=>\s*(.*)$/);
-    if (match) environment[match[1].trim()] = match[2].trim();
-  }
+  if (!environmentBlock) throw new Error('loaded dispatcher environment is missing');
+  const environment = parseLoadedDispatcherEnvironment(environmentBlock[1]);
   const expectedEnvironment = { HOME: '/Users/nob', PATH: '/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin',
-    RPP_PROJECT_DIR: '/Users/nob/Projects/rpp-8am-notify', RPP_EVENT_DISPATCHER: '1', PYTHONNOUSERSITE: '1' };
+    RPP_PROJECT_DIR: '/Users/nob/Projects/rpp-8am-notify', RPP_EVENT_DISPATCHER: '1', PYTHONNOUSERSITE: '1',
+    OSLogRateLimit: '64', XPC_SERVICE_NAME: 'com.rise.rpp-product-delivery-dispatcher' };
   if (programMatch?.[1] !== expectedArguments[0] || JSON.stringify(argumentsLoaded) !== JSON.stringify(expectedArguments)
       || stateMatch?.[1] !== 'running' || !pidMatch
-      || JSON.stringify(environment) !== JSON.stringify(expectedEnvironment)
+      || !exactStringMapEqual(environment, expectedEnvironment)
       || activation.dispatcherPid !== Number(pidMatch[1])) {
     throw new Error('runtime activation is not bound to the attested live dispatcher');
   }

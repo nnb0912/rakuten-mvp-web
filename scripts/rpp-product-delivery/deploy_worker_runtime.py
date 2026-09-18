@@ -345,10 +345,9 @@ def validate_loaded_dispatcher(output: str) -> int:
         raise RuntimeError("dispatcher loaded environment is unavailable")
     loaded_environment: dict[str, str] = {}
     for raw_line in environment_match.group(1).splitlines():
-        line = raw_line.strip()
-        if not line:
+        if not raw_line.strip():
             continue
-        match = re.fullmatch(r"([A-Za-z_][A-Za-z0-9_]*)\s*=>\s*(.*)", line)
+        match = re.fullmatch(r"\s*([A-Za-z_][A-Za-z0-9_]*) => ([^\r\n]*)", raw_line)
         if match is None:
             raise RuntimeError("dispatcher loaded environment is malformed")
         key, value = match.groups()

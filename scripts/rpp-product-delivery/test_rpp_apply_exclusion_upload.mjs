@@ -9,10 +9,70 @@ import { createHash } from 'node:crypto';
 import {
   acquireProfileLock,
   classifyAdapterError,
+  exactStringMapEqual,
+  parseLoadedDispatcherEnvironment,
   pollExactReadback,
   releaseProfileLock,
   treeSha256,
 } from '../rpp_apply_exclusion_upload.mjs';
+
+test('loaded dispatcher environment accepts only the exact launchd mapping', () => {
+  const valid = [
+    'HOME => /Users/nob',
+    'PATH => /opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin',
+    'RPP_PROJECT_DIR => /Users/nob/Projects/rpp-8am-notify',
+    'RPP_EVENT_DISPATCHER => 1',
+    'PYTHONNOUSERSITE => 1',
+    'OSLogRateLimit => 64',
+    'XPC_SERVICE_NAME => com.rise.rpp-product-delivery-dispatcher',
+  ].join('\n');
+  assert.deepEqual({ ...parseLoadedDispatcherEnvironment(valid) }, {
+    HOME: '/Users/nob',
+    PATH: '/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin',
+    RPP_PROJECT_DIR: '/Users/nob/Projects/rpp-8am-notify',
+    RPP_EVENT_DISPATCHER: '1',
+    PYTHONNOUSERSITE: '1',
+    OSLogRateLimit: '64',
+    XPC_SERVICE_NAME: 'com.rise.rpp-product-delivery-dispatcher',
+  });
+  for (const invalid of ['FOO-BAR => 1', 'FOO.BAR => 1', '1BAD => 1', 'MALFORMED LINE']) {
+    assert.throws(() => parseLoadedDispatcherEnvironment(`${valid}\n${invalid}`), /malformed/);
+  }
+  assert.throws(() => parseLoadedDispatcherEnvironment(`${valid}\nHOME => /tmp`), /duplicate/);
+  const protoKey = parseLoadedDispatcherEnvironment(`${valid}\n__proto__ => injected`);
+  assert.equal(Object.hasOwn(protoKey, '__proto__'), true);
+  assert.equal(exactStringMapEqual(protoKey, { ...parseLoadedDispatcherEnvironment(valid) }), false);
+  const expected = { ...parseLoadedDispatcherEnvironment(valid) };
+  assert.equal(exactStringMapEqual(parseLoadedDispatcherEnvironment(valid.replace('HOME => /Users/nob', 'HOME => /Users/nob   ')), expected), false);
+  assert.equal(exactStringMapEqual(parseLoadedDispatcherEnvironment(valid.replace('HOME => /Users/nob', 'HOME =>    /Users/nob')), expected), false);
+});
+
+test('loaded dispatcher environment equality is exact but independent of launchctl order', () => {
+  const expected = {
+    HOME: '/Users/nob',
+    PATH: '/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin',
+    RPP_PROJECT_DIR: '/Users/nob/Projects/rpp-8am-notify',
+    RPP_EVENT_DISPATCHER: '1',
+    PYTHONNOUSERSITE: '1',
+    OSLogRateLimit: '64',
+    XPC_SERVICE_NAME: 'com.rise.rpp-product-delivery-dispatcher',
+  };
+  const actualLaunchctlOrder = parseLoadedDispatcherEnvironment([
+    'OSLogRateLimit => 64',
+    'RPP_EVENT_DISPATCHER => 1',
+    'RPP_PROJECT_DIR => /Users/nob/Projects/rpp-8am-notify',
+    'PATH => /opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin',
+    'PYTHONNOUSERSITE => 1',
+    'HOME => /Users/nob',
+    'XPC_SERVICE_NAME => com.rise.rpp-product-delivery-dispatcher',
+  ].join('\n'));
+  assert.equal(exactStringMapEqual(actualLaunchctlOrder, expected), true);
+  assert.equal(exactStringMapEqual({ ...actualLaunchctlOrder, HOME: '/tmp' }, expected), false);
+  assert.equal(exactStringMapEqual({ ...actualLaunchctlOrder, UNKNOWN: '1' }, expected), false);
+  const missing = { ...actualLaunchctlOrder };
+  delete missing.OSLogRateLimit;
+  assert.equal(exactStringMapEqual(missing, expected), false);
+});
 
 test('persistent RMS profile has an exclusive adapter lock', () => {
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'rpp-profile-'));

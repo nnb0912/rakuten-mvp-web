@@ -73,6 +73,10 @@ pid = 123
             module.validate_loaded_dispatcher(valid.replace('OSLogRateLimit => 64',
                                                               'OSLogRateLimit => 64\n    HOME => /tmp'))
         with self.assertRaisesRegex(RuntimeError, 'environment'):
+            module.validate_loaded_dispatcher(valid.replace('HOME => /Users/nob', 'HOME => /Users/nob   '))
+        with self.assertRaisesRegex(RuntimeError, 'environment'):
+            module.validate_loaded_dispatcher(valid.replace('HOME => /Users/nob', 'HOME =>    /Users/nob'))
+        with self.assertRaisesRegex(RuntimeError, 'environment'):
             module.validate_loaded_dispatcher(valid.replace('com.rise.rpp-product-delivery-dispatcher', 'com.evil.dispatcher'))
         with self.assertRaisesRegex(RuntimeError, 'exactly match'):
             module.validate_loaded_dispatcher(valid.replace('--run-scheduler-dispatcher', '--run-scheduler'))
