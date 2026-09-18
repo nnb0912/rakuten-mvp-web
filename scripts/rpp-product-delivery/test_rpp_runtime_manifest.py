@@ -56,11 +56,24 @@ environment = {
     RPP_PROJECT_DIR => /Users/nob/Projects/rpp-8am-notify
     RPP_EVENT_DISPATCHER => 1
     PYTHONNOUSERSITE => 1
+    OSLogRateLimit => 64
+    XPC_SERVICE_NAME => com.rise.rpp-product-delivery-dispatcher
 }
 state = running
 pid = 123
 '''
         self.assertEqual(123, module.validate_loaded_dispatcher(valid))
+        with self.assertRaisesRegex(RuntimeError, 'environment'):
+            module.validate_loaded_dispatcher(valid.replace('OSLogRateLimit => 64', 'OSLogRateLimit => 64\n    UNEXPECTED => 1'))
+        for malformed in ('FOO-BAR => 1', 'FOO.BAR => 1', '1BAD => 1', 'MALFORMED LINE'):
+            with self.assertRaisesRegex(RuntimeError, 'malformed'):
+                module.validate_loaded_dispatcher(valid.replace('OSLogRateLimit => 64',
+                                                                  f'OSLogRateLimit => 64\n    {malformed}'))
+        with self.assertRaisesRegex(RuntimeError, 'duplicate'):
+            module.validate_loaded_dispatcher(valid.replace('OSLogRateLimit => 64',
+                                                              'OSLogRateLimit => 64\n    HOME => /tmp'))
+        with self.assertRaisesRegex(RuntimeError, 'environment'):
+            module.validate_loaded_dispatcher(valid.replace('com.rise.rpp-product-delivery-dispatcher', 'com.evil.dispatcher'))
         with self.assertRaisesRegex(RuntimeError, 'exactly match'):
             module.validate_loaded_dispatcher(valid.replace('--run-scheduler-dispatcher', '--run-scheduler'))
         with self.assertRaisesRegex(RuntimeError, 'not running'):
@@ -410,6 +423,8 @@ environment = {
  RPP_PROJECT_DIR => /Users/nob/Projects/rpp-8am-notify
  RPP_EVENT_DISPATCHER => 1
  PYTHONNOUSERSITE => 1
+ OSLogRateLimit => 64
+ XPC_SERVICE_NAME => com.rise.rpp-product-delivery-dispatcher
 }
 state = running
 pid = 123

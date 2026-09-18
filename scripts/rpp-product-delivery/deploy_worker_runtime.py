@@ -343,14 +343,27 @@ def validate_loaded_dispatcher(output: str) -> int:
     environment_match = re.search(r"^\s*environment\s*=\s*\{(.*?)^\s*\}", output, re.MULTILINE | re.DOTALL)
     if environment_match is None:
         raise RuntimeError("dispatcher loaded environment is unavailable")
-    loaded_environment = dict(re.findall(r"^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=>\s*(.*?)\s*$",
-                                         environment_match.group(1), re.MULTILINE))
+    loaded_environment: dict[str, str] = {}
+    for raw_line in environment_match.group(1).splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        match = re.fullmatch(r"([A-Za-z_][A-Za-z0-9_]*)\s*=>\s*(.*)", line)
+        if match is None:
+            raise RuntimeError("dispatcher loaded environment is malformed")
+        key, value = match.groups()
+        if key in loaded_environment:
+            raise RuntimeError("dispatcher loaded environment has duplicate keys")
+        loaded_environment[key] = value
     expected_environment = {
         "HOME": "/Users/nob",
         "PATH": "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
         "RPP_PROJECT_DIR": "/Users/nob/Projects/rpp-8am-notify",
         "RPP_EVENT_DISPATCHER": "1",
         "PYTHONNOUSERSITE": "1",
+        # launchd injects these into the loaded process environment on this host.
+        "OSLogRateLimit": "64",
+        "XPC_SERVICE_NAME": DISPATCHER_LABEL,
     }
     if loaded_environment != expected_environment:
         raise RuntimeError("dispatcher loaded environment does not match the attested plist")

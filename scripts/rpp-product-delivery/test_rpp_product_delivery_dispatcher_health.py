@@ -21,6 +21,8 @@ environment = {
     RPP_PROJECT_DIR => /Users/nob/Projects/rpp-8am-notify
     RPP_EVENT_DISPATCHER => 1
     PYTHONNOUSERSITE => 1
+    OSLogRateLimit => 64
+    XPC_SERVICE_NAME => com.rise.rpp-product-delivery-dispatcher
 }
 state = running
 pid = 1234
