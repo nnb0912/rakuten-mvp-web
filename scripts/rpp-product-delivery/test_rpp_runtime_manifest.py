@@ -5,6 +5,7 @@ import fcntl
 import hashlib
 import json
 import os
+import stat
 import subprocess
 import tempfile
 import unittest
@@ -25,6 +26,46 @@ spec.loader.exec_module(module)
 
 
 class RuntimeManifestContractTest(unittest.TestCase):
+    def test_health_wrapper_is_installed_owner_executable(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "wrapper.sh"
+            source.write_text("#!/bin/bash\n", encoding="utf-8")
+            source.chmod(0o600)
+            self.assertEqual(module.deployed_artifact_mode("schedulerDispatcherHealthWrapper", source), 0o700)
+            self.assertEqual(module.deployed_artifact_mode("schedulerWrapper", source), 0o600)
+
+    def test_health_wrapper_mode_is_final_before_atomic_publication(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "source.sh"
+            target = root / "target.sh"
+            source.write_text("#!/bin/bash\n", encoding="utf-8")
+            source.chmod(0o600)
+            original_replace = module.os.replace
+            observed = {}
+
+            def checked_replace(temporary, destination):
+                observed["temporaryMode"] = stat.S_IMODE(Path(temporary).stat().st_mode)
+                original_replace(temporary, destination)
+
+            with mock.patch.object(module.os, "replace", side_effect=checked_replace):
+                module.install_artifact_atomically("schedulerDispatcherHealthWrapper", source, target)
+            self.assertEqual(observed["temporaryMode"], 0o700)
+            self.assertEqual(stat.S_IMODE(target.stat().st_mode), 0o700)
+            module.verify_deployed_artifact_mode("schedulerDispatcherHealthWrapper", target)
+
+            other = root / "other.sh"
+            module.install_artifact_atomically("schedulerWrapper", source, other)
+            self.assertEqual(stat.S_IMODE(other.stat().st_mode), 0o600)
+
+    def test_health_wrapper_verify_rejects_wrong_mode(self):
+        with tempfile.TemporaryDirectory() as directory:
+            target = Path(directory) / "wrapper.sh"
+            target.write_text("#!/bin/bash\n", encoding="utf-8")
+            target.chmod(0o600)
+            with self.assertRaisesRegex(RuntimeError, "ownership or mode"):
+                module.verify_deployed_artifact_mode("schedulerDispatcherHealthWrapper", target)
+
     def test_new_performance_pipeline_and_wrapper_are_attested(self):
         required = {'snapshotSender', 'settingsRefresh', 'settingsRefreshTests', 'dashboardRefreshOrchestrator', 'dashboardRefreshTests', 'recommendationGenerator', 'recommendationCpcAdvisor', 'recommendationAdStatus', 'recommendationPositionData', 'recommendationDisplayNames', 'recommendationNotifyOut', 'recommendationDataGuards', 'recommendationChatwork', 'positionMonitor', 'hourlyDashboardWrapper', 'positionDashboardWrapper', 'productReportDownloader', 'productReportDownloaderTests', 'rmsLoginHelper', 'performanceContract', 'performanceCanonicalVectors', 'snapshotPerformanceCanonicalVectors', 'schedulerWrapper', 'schedulerDispatcher', 'schedulerDispatcherTests', 'schedulerDispatcherHealth', 'schedulerDispatcherHealthTests', 'schedulerDispatcherPlist', 'exclusionAdapter', 'deployVerifier', 'autoApply', 'autoApplyTests', 'autoApplyUploader', 'autoApplyUploaderTests', 'autoApplyWrapper'}
         self.assertTrue(required.issubset(module.ARTIFACTS))

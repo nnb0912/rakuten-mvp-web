@@ -118,6 +118,32 @@ def sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def deployed_artifact_mode(name: str, source: Path) -> int:
+    if name == "schedulerDispatcherHealthWrapper":
+        return 0o700
+    return stat.S_IMODE(source.stat().st_mode)
+
+
+def install_artifact_atomically(name: str, source: Path, target: Path) -> None:
+    fd, temp_name = tempfile.mkstemp(prefix=target.name + ".", suffix=".tmp", dir=target.parent)
+    os.close(fd)
+    temporary = Path(temp_name)
+    try:
+        shutil.copy2(source, temporary)
+        temporary.chmod(deployed_artifact_mode(name, source))
+        os.replace(temporary, target)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def verify_deployed_artifact_mode(name: str, target: Path) -> None:
+    if name != "schedulerDispatcherHealthWrapper":
+        return
+    metadata = target.stat()
+    if metadata.st_uid != os.getuid() or stat.S_IMODE(metadata.st_mode) != 0o700:
+        raise RuntimeError("dispatcher health wrapper ownership or mode is invalid")
+
+
 def tree_sha256(root: Path) -> str:
     if not root.is_dir() or root.is_symlink():
         raise RuntimeError("runtime dependency tree is missing or unsafe")
@@ -268,6 +294,7 @@ def verify_runtime() -> dict:
             raise RuntimeError("stable runtime artifact is missing")
         expected = str((manifest.get("artifacts") or {}).get(name) or "")
         data = verified_bytes(target, expected)
+        verify_deployed_artifact_mode(name, target)
         actual[name] = hashlib.sha256(data).hexdigest()
     runtime_dependency_contract(manifest, verify_hashes=True)
     return {"ok": True, "mode": "verify", "commit": manifest.get("commit"), "artifacts": actual,
@@ -908,13 +935,7 @@ def _deploy_under_lock() -> dict:
         if target.exists() and sha256(target) != source_hashes[name]:
             backup = BACKUP_DIR / f"{target.stem}.pre-{stamp}-{sha256(target)[:12]}{target.suffix}"
             shutil.copy2(target, backup)
-        fd, temp_name = tempfile.mkstemp(prefix=target.name + ".", suffix=".tmp", dir=target.parent)
-        os.close(fd)
-        try:
-            shutil.copy2(source, temp_name)
-            os.replace(temp_name, target)
-        finally:
-            Path(temp_name).unlink(missing_ok=True)
+        install_artifact_atomically(name, source, target)
         backups = sorted(BACKUP_DIR.glob(f"{target.stem}.pre-*{target.suffix}"), key=lambda path: path.stat().st_mtime, reverse=True)
         for old in backups[3:]:
             old.unlink()
