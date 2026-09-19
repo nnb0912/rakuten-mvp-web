@@ -259,6 +259,29 @@ export default async function RppPage({ searchParams }: { searchParams: Promise<
           </video>
           <a href="/rpp/manuals/rpp-control-guide-v13.mp4" download>動画をダウンロード</a>
         </div>
+        <section className="rpp-guide-written" aria-labelledby="rpp-guide-written-title">
+          <div className="rpp-guide-written-intro">
+            <p className="eyebrow">TEXT MANUAL</p>
+            <h3 id="rpp-guide-written-title">文章で見る基本の使い方</h3>
+            <p>動画を見られない場合は、次の順番で操作してください。普段の確認は担当商品だけに絞り、変更前後の値と実行結果を必ず確認します。</p>
+          </div>
+          <ol>
+            <li><b>① 状態を確認</b><span>「ダッシュボード」でデータ更新時刻、配信状態、前日実績、ROAS、検索順位を確認します。</span></li>
+            <li><b>② 担当商品を絞る</b><span>「広告掲載商品リスト」で担当タブを選び、必要に応じて商品番号・商品名・キーワードで検索します。</span></li>
+            <li><b>③ 運用方法を設定</b><span>各行の「設定」から、ROAS・検索順位・バランス・CPC固定を選びます。商品CPCとキーワードCPCは別々に設定します。</span></li>
+            <li><b>④ 除外・時間指定を設定</b><span>商品CPC行で広告除外、再開、毎日停止、単発ON/OFF予約を設定します。時刻はすべて日本時間（JST）です。</span></li>
+            <li><b>⑤ 結果を確認</b><span>「データ・実行履歴」で成功・失敗とRMS読戻しを確認します。設定値とRMSの状態が一致して完了です。</span></li>
+          </ol>
+          <div className="rpp-guide-written-rules">
+            <b>重要ルール</b>
+            <ul>
+              <li>RMSから直接ON/OFFしないでください。配信状態はこのツールを正本として操作します。</li>
+              <li>設定を保存しただけではRMSは変更されません。反映予定・対象件数・変更前後を確認してから実行します。</li>
+              <li>「変更予定」は未反映です。誤操作した場合はRMS反映前に「戻す」で取り消せます。</li>
+              <li>エラーや「未確認」が出た場合は再実行せず、実行履歴とRMS状態を確認します。</li>
+            </ul>
+          </div>
+        </section>
         <ol className="rpp-guide-flow" aria-label="基本操作フロー">
           <li><b>1. 状態確認</b><span>ダッシュボードでデータ状態が「OK」か確認</span></li>
           <li><b>2. 担当で絞る</b><span>商品・KW画面で担当タブと検索を使う</span></li>

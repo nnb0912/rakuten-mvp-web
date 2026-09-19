@@ -106,3 +106,14 @@ test("画面の見方から使い方マニュアル動画を再生できる", ()
   assert.match(css, /\.rpp-guide-video\s+video\s*\{[^}]*width:\s*100%/s);
   assert.ok(readFileSync(video).length > 1_000_000, "動画ファイルが存在しないか小さすぎます");
 });
+
+test("動画の下に文章版の操作説明と重要ルールを表示する", () => {
+  const page = readFileSync(join(rppDir, "page.tsx"), "utf8");
+  const css = readFileSync(join(process.cwd(), "src", "app", "globals.css"), "utf8");
+  assert.match(page, /文章で見る基本の使い方/);
+  assert.match(page, /RMSから直接ON\/OFFしない/);
+  assert.match(page, /設定を保存しただけではRMSは変更されません/);
+  assert.match(page, /商品CPCとキーワードCPCは別々に設定/);
+  assert.match(page, /時刻はすべて日本時間（JST）/);
+  assert.match(css, /\.rpp-guide-written\s*\{/);
+});
