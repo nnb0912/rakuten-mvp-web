@@ -282,6 +282,38 @@ export default async function RppPage({ searchParams }: { searchParams: Promise<
             </ul>
           </div>
         </section>
+        <section className="rpp-guide-actions" aria-labelledby="rpp-guide-actions-title">
+          <div className="rpp-guide-section-head">
+            <p className="eyebrow">BUTTON GUIDE</p>
+            <h3 id="rpp-guide-actions-title">各ボタンの使い方</h3>
+            <p>「いつ押すか」「押した後に何が起きるか」を確認してから操作してください。</p>
+          </div>
+          <div className="rpp-guide-action-grid">
+            <article><b>設定</b><p>商品・KWごとの運用モード、目標ROAS・順位、CPC上下限などを編集します。保存しても、その場でRMSのCPCは変わりません。</p></article>
+            <article><b>CPC変更CSV</b><p>CPC固定の行だけに表示されます。固定額をRMSへ手動アップロードするCSVです。対象・変更前後・戻し用データを確認して使います。</p></article>
+            <article><b>除外</b><p>商品CPC行で、その商品を広告OFFにする変更予定を作ります。押しただけでは未反映です。対象商品を確認してからRMSへ反映します。</p></article>
+            <article><b>再開</b><p>除外中の商品を広告ONへ戻す変更予定を作ります。保存済み目標がない場合は押せません。先に「目標設定」を完了してください。</p></article>
+            <article><b>時間指定</b><p>毎日停止または1回限りのON/OFFを予約します。RMSで広告ONを確認済みの商品だけ使用できます。保存時点ではRMSを変更しません。</p></article>
+            <article><b>夜間停止</b><p>毎日01:30に広告OFF、06:00に広告ONへ戻す固定設定です。元から除外中の商品はONに戻しません。任意時刻は「時間指定」を使います。</p></article>
+            <article><b>戻す</b><p>まだRMSへ反映していない「変更予定」を取り消します。反映済みの変更を戻すボタンではありません。</p></article>
+            <article><b>RMSへ反映</b><p>変更予定を本番へ送ります。商品番号、変更方向、対象件数を確認して実行し、完了後は「データ・実行履歴」でRMS読戻しまで確認します。</p></article>
+          </div>
+        </section>
+        <section className="rpp-guide-faq" aria-labelledby="rpp-guide-faq-title">
+          <div className="rpp-guide-section-head">
+            <p className="eyebrow">TROUBLESHOOTING</p>
+            <h3 id="rpp-guide-faq-title">迷ったとき・困ったとき</h3>
+            <p>次の回答で解決しない場合だけ、最後の「伝える内容」をまとめて連絡してください。</p>
+          </div>
+          <div className="rpp-guide-faq-grid">
+            <article><b>ボタンが押せない</b><p>保護中、他の担当者が編集中、RMS状態が未確認、目標未設定、または実行中です。表示される理由を確認し、条件が整うまで無理に操作しません。</p></article>
+            <article><b>データが「未確認」・「未取得」</b><p>安全に判断できる最新データがありません。CPC変更・除外・再開は行わず、「データ・実行履歴」で最終更新時刻と保留理由を確認します。</p></article>
+            <article><b>エラーが表示された</b><p>同じ操作を連続で再実行しません。「データ・実行履歴」で成功・失敗・処理中を確認し、RMSの現在状態が分からない場合はそのまま止めます。</p></article>
+            <article><b>ツールとRMSの表示が違う</b><p>RMSから直接ON/OFFせず、ツール側の実行履歴と読戻し結果を確認します。差異が残る場合は手動で直さず連絡してください。</p></article>
+            <article><b>自動運用かCPC固定か迷う</b><p>ROAS・検索順位・バランスは自動調整対象です。金額を変えず維持したい行はCPC固定を選びます。商品CPCとキーワードCPCは行ごとに判断します。</p></article>
+            <article><b>誰に何を伝える？</b><p>担当者または管理者へ、商品番号・画面名・表示された文言・発生時刻・実行したかった操作を共有してください。認証情報や顧客情報は送らないでください。</p></article>
+          </div>
+        </section>
         <ol className="rpp-guide-flow" aria-label="基本操作フロー">
           <li><b>1. 状態確認</b><span>ダッシュボードでデータ状態が「OK」か確認</span></li>
           <li><b>2. 担当で絞る</b><span>商品・KW画面で担当タブと検索を使う</span></li>

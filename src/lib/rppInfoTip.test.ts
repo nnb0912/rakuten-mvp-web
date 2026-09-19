@@ -117,3 +117,16 @@ test("動画の下に文章版の操作説明と重要ルールを表示する",
   assert.match(page, /時刻はすべて日本時間（JST）/);
   assert.match(css, /\.rpp-guide-written\s*\{/);
 });
+
+test("各ボタンの操作条件と迷ったときの回答を画面内で完結させる", () => {
+  const page = readFileSync(join(rppDir, "page.tsx"), "utf8");
+  const css = readFileSync(join(process.cwd(), "src", "app", "globals.css"), "utf8");
+  for (const label of ["設定", "CPC変更CSV", "除外", "再開", "時間指定", "夜間停止", "戻す", "RMSへ反映"]) {
+    assert.match(page, new RegExp(`<b>${label}</b>`), `${label} の説明がありません`);
+  }
+  for (const answer of ["ボタンが押せない", "データが「未確認」", "エラーが表示された", "誰に何を伝える"]) {
+    assert.match(page, new RegExp(answer), `${answer} の回答がありません`);
+  }
+  assert.match(page, /商品番号・画面名・表示された文言・発生時刻/);
+  assert.match(css, /\.rpp-guide-actions,\s*\.rpp-guide-faq\s*\{/);
+});
