@@ -1,6 +1,6 @@
 import { promises as fs } from "fs";
 import path from "path";
-import { readLatestRppDashboardSnapshot, type RppSnapshotFile } from "./rppDashboardSnapshots";
+import { readLatestRppDashboardSnapshot, type RppSnapshotFile, type RppSnapshotReadOptions } from "./rppDashboardSnapshots";
 import { recommendationId } from "./rppRecommendationId";
 export { recommendationId } from "./rppRecommendationId";
 
@@ -100,10 +100,10 @@ async function writeApprovals(approvals: ApprovalFile) {
   await fs.writeFile(APPROVAL_PATH, `${JSON.stringify(approvals, null, 2)}\n`, "utf8");
 }
 
-export async function readRppRecommendations() {
+export async function readRppRecommendations(options: RppSnapshotReadOptions = {}) {
   let filePath: string | null = await latestRecommendationPath();
   let data: RecommendationFile | null = null;
-  const syncedSnapshot = await readLatestRppDashboardSnapshot();
+  const syncedSnapshot = await readLatestRppDashboardSnapshot(options);
   if (syncedSnapshot) {
     filePath = "db:rpp_dashboard_snapshots";
     data = syncedSnapshot.recommendations as RecommendationFile;
@@ -250,9 +250,9 @@ async function cronStatus() {
   };
 }
 
-export async function readRppDashboardMeta() {
-  const data = await readRppRecommendations();
-  const syncedSnapshot = await readLatestRppDashboardSnapshot();
+export async function readRppDashboardMeta(options: RppSnapshotReadOptions = {}) {
+  const data = await readRppRecommendations(options);
+  const syncedSnapshot = await readLatestRppDashboardSnapshot(options);
   const actionable = data.recommendations.filter((row) => row.action === "RAISE" || row.action === "LOWER");
   const approvedActionable = actionable.filter((row) => row.approvalStatus === "approved");
   const holdRows = data.recommendations.filter((row) => row.action === "HOLD");
@@ -270,7 +270,7 @@ export async function readRppDashboardMeta() {
 
   return {
     latestFiles,
-    dataReady: latestFiles.every((file) => file.ok),
+    dataReady: !syncedSnapshot?.performanceUnavailable && latestFiles.every((file) => file.ok),
     zeroCandidateReasons: actionable.length === 0 ? reasonCounts(holdRows) : [],
     holdReasonCounts: reasonCounts(holdRows),
     approvedActionableCount: approvedActionable.length,

@@ -140,8 +140,8 @@ export default async function RppPage({ searchParams }: { searchParams: Promise<
   const requestedView = (await searchParams).view;
   const view: RppView = isRppView(requestedView) ? requestedView : "dashboard";
   const [data, meta, targetData, autoSettingsData, experimentHistory, exclusionJobs, budgetData, strategyData, dailyActuals, auditEvents, anomalyData, nightPauseData, dashboardDailyMetrics, latestDashboardSnapshot] = await Promise.all([
-    readRppRecommendations(), readRppDashboardMeta(), readRppAlertTargets(), readRppAutoAdjustmentSettings(),
-    readRppExperimentHistory(), listRecentRppExclusionJobs(8), readRppBudgetSettings(), readRppStrategySettings(), readRppDailySpendActuals(), listRppAuditEvents(30), readRppAnomalyComparison(), readRppNightPauseProducts(), readRppDashboardDailyMetrics(366), readLatestRppDashboardSnapshot(),
+    readRppRecommendations({ forDisplay: true }), readRppDashboardMeta({ forDisplay: true }), readRppAlertTargets({ forDisplay: true }), readRppAutoAdjustmentSettings(),
+    readRppExperimentHistory(), listRecentRppExclusionJobs(8), readRppBudgetSettings(), readRppStrategySettings(), readRppDailySpendActuals(), listRppAuditEvents(30), readRppAnomalyComparison(), readRppNightPauseProducts(), readRppDashboardDailyMetrics(366), readLatestRppDashboardSnapshot({ forDisplay: true }),
   ]);
   const summary = data.summary as { generatedAt?: string; performanceDateRange?: string | null; counts?: { raise?: number; lower?: number; hold?: number; ok?: number }; safety?: { productionChange?: boolean; autoAdjustment?: { enabled?: boolean } }; budgetMetrics?: RppBudgetMetrics } | null;
   const candidateTotal = (summary?.counts?.raise ?? 0) + (summary?.counts?.lower ?? 0);
@@ -202,6 +202,8 @@ export default async function RppPage({ searchParams }: { searchParams: Promise<
           {meta.dataReady ? `最新化済 ${fmtDate(summary?.generatedAt)}` : `要更新・最終候補 ${fmtDate(summary?.generatedAt)}`}
         </div>
       </section>
+
+      {latestDashboardSnapshot?.performanceUnavailable ? <p className="warn-text" role="status">日次実績は未取得・要更新です。検証期限切れ、または検証できない実績を表示から除外しています。設定情報は引き続き確認できます。</p> : null}
 
       {view === "dashboard" ? <>
         <RppDashboardCharts daily={dashboardDailyMetrics} delivery={allRppDelivery} targetRoas={budgetData.settings.targetRoas} />

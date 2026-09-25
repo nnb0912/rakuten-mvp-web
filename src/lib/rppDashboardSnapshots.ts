@@ -33,6 +33,8 @@ export type RppDashboardSnapshot = {
   latestFiles: RppSnapshotFile[];
   cronStatus?: Record<string, unknown> | null;
   performanceDaily?: RppPerformanceDaily | null;
+  // Read-only display state; never accepted as validation evidence.
+  performanceUnavailable?: true;
   rppData?: RppSnapshotOperationalData | null;
   rmsBudget?: RppRmsBudgetObservation | null;
 };
@@ -239,6 +241,21 @@ export function normalizeRppDashboardSnapshot(value: unknown): RppDashboardSnaps
   return { schemaVersion: rmsBudget ? 5 : rppData?.allConfiguredTargets ? 4 : rppData ? 3 : performanceDaily ? 2 : 1, syncedAt, recommendations: { summary: input.recommendations.summary && typeof input.recommendations.summary === "object" ? input.recommendations.summary : {}, recommendations: recommendationRows }, latestFiles, cronStatus: input.cronStatus && typeof input.cronStatus === "object" ? input.cronStatus : null, performanceDaily, rppData, rmsBudget };
 }
 
+export type RppSnapshotReadOptions = { forDisplay?: boolean };
+
+export function normalizeRppDashboardSnapshotForDisplay(value: unknown): RppDashboardSnapshot {
+  if (!value || typeof value !== "object") return normalizeRppDashboardSnapshot(value);
+  const input = value as Partial<RppDashboardSnapshot>;
+  // Validate independent settings normally. Only performance can be quarantined.
+  const snapshot = normalizeRppDashboardSnapshot({ ...input, performanceDaily: null });
+  try {
+    const performanceDaily = normalizePerformanceDaily(input.performanceDaily);
+    return { ...snapshot, schemaVersion: snapshot.schemaVersion === 1 && performanceDaily ? 2 : snapshot.schemaVersion, performanceDaily };
+  } catch {
+    return { ...snapshot, performanceUnavailable: true };
+  }
+}
+
 async function ensureTables(client: Pool | PoolClient | null = pool) {
   if (!client) return false;
   await client.query(`create table if not exists ${TABLE} (id bigserial primary key,synced_at timestamptz not null,payload jsonb not null,created_at timestamptz not null default now())`);
@@ -299,15 +316,16 @@ export async function saveRppDashboardSnapshot(value: unknown) {
   finally { client.release(); }
 }
 
-export async function readRecentRppDashboardSnapshots(limit = 2) {
+export async function readRecentRppDashboardSnapshots(limit = 2, options: RppSnapshotReadOptions = {}) {
   if (!(await ensureTables()) || !pool) return [];
   const safeLimit = Math.max(1, Math.min(10, Math.round(limit)));
   const result = await pool.query<{ payload: RppDashboardSnapshot }>(`select payload from ${TABLE} order by synced_at desc,id desc limit $1`, [safeLimit]);
-  return result.rows.flatMap((row) => row.payload ? [normalizeRppDashboardSnapshot(row.payload)] : []);
+  const normalize = options.forDisplay ? normalizeRppDashboardSnapshotForDisplay : normalizeRppDashboardSnapshot;
+  return result.rows.flatMap((row) => row.payload ? [normalize(row.payload)] : []);
 }
 
-export async function readLatestRppDashboardSnapshot() {
-  return (await readRecentRppDashboardSnapshots(1))[0] ?? null;
+export async function readLatestRppDashboardSnapshot(options: RppSnapshotReadOptions = {}) {
+  return (await readRecentRppDashboardSnapshots(1, options))[0] ?? null;
 }
 
 export async function readRppPerformanceDaily(date: string) {
