@@ -39,7 +39,7 @@ test("売上とROASは720時間帰属を画面とARIAに明記する", () => {
 });
 
 test("全グラフは自動モード以外を含む全RPP母集団を表示する", () => {
-  assert.match(source, /readLatestRppDashboardSnapshot\(\)/);
+  assert.match(source, /readLatestRppDashboardSnapshot\(\{ forDisplay: true \}\)/);
   assert.match(source, /buildRppDeliveryComposition\(latestDashboardSnapshot\)/);
   assert.match(source, /delivery=\{allRppDelivery\}/);
   assert.match(chartSource, /ALL RPP DELIVERY/);

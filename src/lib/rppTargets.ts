@@ -6,7 +6,7 @@ import { resolveKeywordTargetContext } from "@/lib/rppConfiguredTargetRules";
 import { readRppExclusionOverrides } from "@/lib/rppExclusionJobs";
 import { normalizeRppOptimizationMode, validateRppModeCpcBounds, type RppOptimizationMode } from "@/lib/rppOptimization";
 import { readRppStrategySettings, resolveRppRoas } from "@/lib/rppStrategySettings";
-import { readLatestRppDashboardSnapshot } from "@/lib/rppDashboardSnapshots";
+import { readLatestRppDashboardSnapshot, type RppSnapshotReadOptions } from "@/lib/rppDashboardSnapshots";
 import { validateRppTargetInputValues } from "@/lib/rppTargetValidation";
 
 
@@ -547,7 +547,7 @@ async function deleteRawTarget(id: string) {
   return result.rowCount ?? 0;
 }
 
-export async function readRppConfiguredTargets(options: { includeExcluded?: boolean } = {}) {
+export async function readRppConfiguredTargets(options: { includeExcluded?: boolean } & RppSnapshotReadOptions = {}) {
   const includeExcluded = options.includeExcluded === true;
   const [itemRows, keywordRows, excludeRows, ownerMap, positionMap, exclusionOverrides] = await Promise.all([
     readCsv(ITEM_SETTINGS_PATH),
@@ -621,7 +621,7 @@ export async function readRppConfiguredTargets(options: { includeExcluded?: bool
   const liveRows = [...configured.values()].sort((a, b) => a.itemCode.localeCompare(b.itemCode, "ja") || a.keyword.localeCompare(b.keyword, "ja"));
   if (liveRows.length) return liveRows;
   try {
-    const snapshotData = (await readLatestRppDashboardSnapshot())?.rppData;
+    const snapshotData = (await readLatestRppDashboardSnapshot(options))?.rppData;
     const syncedRows = includeExcluded ? snapshotData?.allConfiguredTargets ?? [] : snapshotData?.configuredTargets ?? [];
     if (syncedRows.length) return syncedRows
       .filter((row) => includeExcluded || !exclusionOverrides[row.itemCode.trim().toLowerCase()])
@@ -644,7 +644,7 @@ export async function readRppConfiguredTargets(options: { includeExcluded?: bool
   }
 }
 
-export async function readRppExclusionProducts(): Promise<RppExclusionProduct[]> {
+export async function readRppExclusionProducts(options: RppSnapshotReadOptions = {}): Promise<RppExclusionProduct[]> {
   const [itemRows, keywordRows, excludeRows, ownerMap, exclusionOverrides] = await Promise.all([readCsv(ITEM_SETTINGS_PATH), readCsv(KEYWORD_SETTINGS_PATH), readCsv(EXCLUDE_ITEMS_PATH), readOwnerMap(), readRppExclusionOverrides()]);
   const excludedItems = new Set(excludeRows.map((row) => cleanText(row["商品管理番号"]).toLowerCase()).filter(Boolean));
   const liveProducts = new Map<string, RppExclusionProduct>();
@@ -671,7 +671,7 @@ export async function readRppExclusionProducts(): Promise<RppExclusionProduct[]>
   const liveRows = [...liveProducts.values()].sort((a, b) => a.itemCode.localeCompare(b.itemCode, "ja"));
   if (liveRows.length) return liveRows;
   try {
-    const syncedRows = (await readLatestRppDashboardSnapshot())?.rppData?.exclusionProducts ?? [];
+    const syncedRows = (await readLatestRppDashboardSnapshot(options))?.rppData?.exclusionProducts ?? [];
     if (syncedRows.length) return syncedRows.map((row) => ({ ...row, excluded: exclusionOverrides[row.itemCode.toLowerCase()] ?? row.excluded })).sort((a, b) => a.itemCode.localeCompare(b.itemCode, "ja"));
     const envProducts = process.env.RPP_EXCLUSION_PRODUCTS_JSON;
     if (envProducts) {
@@ -700,8 +700,8 @@ export async function readRppProductCpcItemCodes(): Promise<string[]> {
   return [...codes].sort((a, b) => a.localeCompare(b, "ja"));
 }
 
-export async function readRppAlertTargets() {
-  const [rawTargets, configuredTargets, exclusionProducts, strategy, ownerNames] = await Promise.all([readRawTargets(), readRppConfiguredTargets(), readRppExclusionProducts(), readRppStrategySettings(), readRppOwnerNames()]);
+export async function readRppAlertTargets(options: RppSnapshotReadOptions = {}) {
+  const [rawTargets, configuredTargets, exclusionProducts, strategy, ownerNames] = await Promise.all([readRawTargets(), readRppConfiguredTargets(options), readRppExclusionProducts(options), readRppStrategySettings(), readRppOwnerNames()]);
   const targets = rawTargets.map((row) => {
     const resolution = resolveRppRoas(row.roasFloor, row.itemCode, row.adGroup, strategy.settings);
     return { ...row, roasFloor: resolution.effectiveRoasFloor, baseRoasFloor: resolution.baseRoasFloor, effectiveRoasFloor: resolution.effectiveRoasFloor, effectiveRoasSource: resolution.effectiveRoasSource, activeScheduleId: resolution.activeScheduleId };

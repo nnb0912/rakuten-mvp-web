@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import { createHash, createHmac } from "node:crypto";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import { normalizeRppDashboardSnapshot, performanceDecimalUnits, performanceItemSetSha256, performanceRowsSha256 } from "./rppDashboardSnapshots.ts";
+import { spawnSync } from "node:child_process";
+import { normalizeRppDashboardSnapshot, normalizeRppDashboardSnapshotForDisplay, performanceDecimalUnits, performanceItemSetSha256, performanceRowsSha256 } from "./rppDashboardSnapshots.ts";
 
 const snapshotSource = readFileSync(new URL("./rppDashboardSnapshots.ts", import.meta.url), "utf8");
 const receiptKey = "test-only-rpp-performance-receipt-key-123456";
@@ -55,6 +56,75 @@ test("RPP dashboard snapshot accepts validated single-day performance rows", () 
   const readback = normalizeRppDashboardSnapshot(snapshot);
   assert.deepEqual(readback.performanceDaily?.receipt, receipt);
   assert.deepEqual(readback, snapshot);
+});
+
+function displayFixture() {
+  return normalizeRppDashboardSnapshot({
+    syncedAt: fixtureNow.toISOString(), recommendations: { summary: {}, recommendations: [] }, latestFiles: [],
+    rppData: { configuredTargets: [{ id: "r0579__item", itemCode: "r0579", keyword: "商品CPC", source: "商品CPC", itemCpc: 30 }], exclusionProducts: [{ itemCode: "r0579", excluded: false }], owners: ["担当者"] },
+    performanceDaily: { source: "rpp_item_reports.csv", sourceMtime: fixtureSourceMtime, date: performanceDate, rows: [{ itemCode: "r0579", ctr: 1.2, clicks: 10, spend: 300, sales12h: 500, orders12h: 1, sales720h: 700, orders720h: 2 }], receipt: signedReceipt(performanceDate, 1) },
+  });
+}
+
+test("display isolates an originally valid receipt after 36 hours without weakening ingestion", (t) => {
+  const stored = displayFixture();
+  assert.deepEqual(normalizeRppDashboardSnapshotForDisplay(stored), stored);
+  t.mock.method(Date, "now", () => fixtureNow.getTime() + 37 * 60 * 60_000);
+  assert.throws(() => normalizeRppDashboardSnapshot(stored), /verified receipt is invalid/);
+  const display = normalizeRppDashboardSnapshotForDisplay(stored);
+  assert.equal(display.performanceDaily, null);
+  assert.equal(display.performanceUnavailable, true);
+  assert.deepEqual(display.rppData, stored.rppData);
+  assert.equal(display.syncedAt, stored.syncedAt);
+  assert.notEqual(stored.performanceDaily, null);
+});
+
+test("display quarantines malformed or forged performance but not invalid settings", () => {
+  const stored = displayFixture();
+  const invalid = { ...stored, performanceDaily: { ...stored.performanceDaily!, receipt: { ...stored.performanceDaily!.receipt, signature: "0".repeat(64) } } };
+  assert.throws(() => normalizeRppDashboardSnapshot(invalid), /verified receipt/);
+  assert.equal(normalizeRppDashboardSnapshotForDisplay(invalid).performanceUnavailable, true);
+  assert.equal(normalizeRppDashboardSnapshotForDisplay({ ...stored, performanceDaily: "broken" }).performanceDaily, null);
+  assert.throws(() => normalizeRppDashboardSnapshotForDisplay({ ...invalid, rppData: { owners: [] } }), /rppData arrays/);
+  const absent = { ...stored, performanceDaily: null };
+  assert.deepEqual(normalizeRppDashboardSnapshotForDisplay(absent), normalizeRppDashboardSnapshot(absent));
+});
+
+test("display treats missing receipt key as unavailable while strict validation rejects", () => {
+  const stored = displayFixture();
+  const key = process.env.RPP_PERFORMANCE_RECEIPT_HMAC_KEY;
+  try {
+    delete process.env.RPP_PERFORMANCE_RECEIPT_HMAC_KEY;
+    assert.throws(() => normalizeRppDashboardSnapshot(stored), /verified receipt/);
+    assert.equal(normalizeRppDashboardSnapshotForDisplay(stored).performanceUnavailable, true);
+  } finally { process.env.RPP_PERFORMANCE_RECEIPT_HMAC_KEY = key; }
+});
+
+test("stored readers require explicit display opt-in; save still rejects before connecting", () => {
+  const stored = displayFixture();
+  stored.performanceDaily!.receipt.signature = "0".repeat(64);
+  const script = `
+    import assert from 'node:assert/strict';
+    const stored = ${JSON.stringify(stored)};
+    let connects = 0;
+    globalThis.rakutenMvpPool = {
+      query: async (sql) => ({ rows: sql.startsWith('select payload') ? [{ payload: stored }] : [] }),
+      connect: async () => { connects++; throw new Error('must not connect'); }
+    };
+    const { readLatestRppDashboardSnapshot, readRecentRppDashboardSnapshots, saveRppDashboardSnapshot } = await import(${JSON.stringify(new URL("./rppDashboardSnapshots.ts", import.meta.url).href)});
+    await assert.rejects(readLatestRppDashboardSnapshot(), /verified receipt/);
+    await assert.rejects(readRecentRppDashboardSnapshots(2), /verified receipt/);
+    const display = await readLatestRppDashboardSnapshot({ forDisplay: true });
+    assert.equal(display.performanceDaily, null);
+    assert.equal(display.performanceUnavailable, true);
+    assert.deepEqual(JSON.parse(JSON.stringify(display.rppData)), stored.rppData);
+    await assert.rejects(saveRppDashboardSnapshot(stored), /verified receipt/);
+    assert.equal(connects, 0);
+  `;
+  const result = spawnSync(process.execPath, ["--experimental-strip-types", "--input-type=module", "-e", script], {
+    env: { ...process.env, DATABASE_URL: "postgres://fixture.invalid/test", NODE_ENV: "test" }, encoding: "utf8", timeout: 10_000,
+  });
+  assert.equal(result.status, 0, result.stderr);
 });
 
 test("RPP dashboard snapshot rejects a forged performance receipt", () => {
